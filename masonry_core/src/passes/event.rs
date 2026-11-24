@@ -38,12 +38,12 @@ fn get_pointer_target(
 }
 
 /// `true` if this [`PointerEvent`] type is likely to occur every frame.
-fn is_very_frequent(e: &PointerEvent) -> bool {
+const fn is_very_frequent(e: &PointerEvent) -> bool {
     matches!(e, PointerEvent::Move(..) | PointerEvent::Scroll { .. })
 }
 
 /// Short name for a [`PointerEvent`].
-fn pointer_event_short_name(e: &PointerEvent) -> &'static str {
+const fn pointer_event_short_name(e: &PointerEvent) -> &'static str {
     match e {
         PointerEvent::Down(..) => "Down",
         PointerEvent::Up(..) => "Up",
@@ -57,7 +57,7 @@ fn pointer_event_short_name(e: &PointerEvent) -> &'static str {
 }
 
 /// A position if the event has one.
-fn try_event_position(event: &PointerEvent) -> Option<PhysicalPosition<f64>> {
+const fn try_event_position(event: &PointerEvent) -> Option<PhysicalPosition<f64>> {
     match event {
         PointerEvent::Down(PointerButtonEvent { state, .. })
         | PointerEvent::Up(PointerButtonEvent { state, .. })
@@ -79,19 +79,16 @@ fn run_event_pass<E>(
 ) -> Handled {
     let mut pass_fn = pass_fn;
 
-    if let Some(id) = target
-        && !root.has_widget(id)
-    {
-        debug_panic!("Cannot send event to non-existent widget {id}.");
+    let Some(original_target) = target else {
         return Handled::No;
-    }
-
-    let original_target = target;
-    let mut target_widget_id = target;
+    };
+    let mut target_widget_id = Some(original_target);
     let mut is_handled = false;
     while let Some(widget_id) = target_widget_id {
         let parent_id = root.widget_arena.parent_of(widget_id);
-        let mut node = root.widget_arena.get_node_mut(widget_id);
+        let Some(mut node) = root.widget_arena.nodes.find_mut(widget_id) else {
+            break;
+        };
 
         if skip_if_disabled && node.item.state.is_disabled {
             // If the widget is disabled, we skip it and bubble to its parent.
@@ -110,7 +107,7 @@ fn run_event_pass<E>(
                 widget_state: &mut node.item.state,
                 children: node.children.reborrow_mut(),
                 property_arena: &root.property_arena,
-                target: original_target.unwrap(),
+                target: original_target,
                 allow_pointer_capture,
                 is_handled: false,
             };
@@ -187,7 +184,9 @@ pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEv
     let root_node = root.widget_arena.get_node_mut(root.root_id());
     let layer_ids = root_node.item.widget.children_ids();
     for layer_id in layer_ids {
-        let mut layer_root = root.widget_arena.get_node_mut(layer_id);
+        let Some(mut layer_root) = root.widget_arena.nodes.find_mut(layer_id) else {
+            continue;
+        };
         let layer_type_id = layer_root.item.widget.as_ref().type_id();
         if let Some(layer) = layer_root.item.widget.as_layer() {
             let stack = root
@@ -392,12 +391,13 @@ pub(crate) fn run_on_access_event_pass(
             handled = Handled::Yes;
         }
         accesskit::Action::ScrollIntoView if !handled.is_handled() => {
-            let widget_state = root.widget_arena.get_state(target);
-            let rect = widget_state.border_box();
-            root.global_state
-                .scroll_request_targets
-                .push((target, rect));
-            handled = Handled::Yes;
+            if let Some(widget_state) = root.widget_arena.get_state(target) {
+                let rect = widget_state.border_box();
+                root.global_state
+                    .scroll_request_targets
+                    .push((target, rect));
+                handled = Handled::Yes;
+            }
         }
         _ => {}
     }

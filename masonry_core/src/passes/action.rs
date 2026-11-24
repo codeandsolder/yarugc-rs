@@ -14,7 +14,9 @@ fn handle_action(root: &mut RenderRoot, action: &ErasedAction, source: WidgetId)
 
     while let Some(widget_id) = next_widget_id {
         next_widget_id = root.widget_arena.parent_of(widget_id);
-        let mut node = root.widget_arena.get_node_mut(widget_id);
+        let Some(mut node) = root.widget_arena.nodes.find_mut(widget_id) else {
+            break;
+        };
 
         // Even disabled widgets take part in action propagation.
         // This keeps the action handling logic consistent.

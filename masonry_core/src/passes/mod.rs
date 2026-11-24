@@ -43,9 +43,10 @@ pub(crate) fn recurse_on_children(
     for child_id in widget.children_ids() {
         let Some(node) = children.item_mut(child_id) else {
             let parent_name = widget.short_type_name();
-            panic!(
+            debug_panic!(
                 "Error in '{parent_name}' {parent_id}: cannot find child {child_id} returned by children_ids()"
             );
+            continue;
         };
 
         callback(node);
@@ -60,13 +61,14 @@ pub(crate) fn merge_state_up(arena: &mut WidgetArena, widget_id: WidgetId) {
         return;
     };
 
-    let mut parent_node_mut = arena.nodes.find_mut(parent_id).unwrap();
-    let child_node_mut = parent_node_mut.children.item_mut(widget_id).unwrap();
+    let Some(parent_node_mut) = arena.nodes.find_mut(parent_id) else {
+        return;
+    };
+    let Some(child_node) = parent_node_mut.children.item(widget_id) else {
+        return;
+    };
 
-    parent_node_mut
-        .item
-        .state
-        .merge_up(&child_node_mut.item.state);
+    parent_node_mut.item.state.merge_up(&child_node.item.state);
 }
 
 /// Masonry has a significant number of passes which may traverse a significant number of

@@ -294,12 +294,13 @@ pub(crate) fn run_paint_pass(root: &mut RenderRoot) -> VisualLayerPlan {
     let mut layers = Vec::new();
 
     for (idx, &layer_widget_id) in layer_root_ids.iter().enumerate() {
+        let Some(state) = root.widget_arena.get_state(layer_widget_id) else {
+            continue;
+        };
         let transform = if idx == 0 {
             Affine::IDENTITY
         } else {
-            root.widget_arena
-                .get_state(layer_widget_id)
-                .window_transform
+            state.window_transform
         };
 
         let mut collector = LayerCollector::new(layer_widget_id, transform);
@@ -331,17 +332,16 @@ fn paint_layer(
 ) {
     // Clear the LayerStack's own paint flags (its paint is a no-op).
     // This is idempotent so safe to call per-layer.
-    {
-        let root_node = root.widget_arena.get_node_mut(root_id);
-        let state = &mut root_node.item.state;
-        state.request_pre_paint = false;
-        state.request_paint = false;
-        state.request_post_paint = false;
-        state.needs_paint = false;
-    }
+    let Some(root_node) = root.widget_arena.nodes.find_mut(root_id) else {
+        return;
+    };
+    let state = &mut root_node.item.state;
+    state.request_pre_paint = false;
+    state.request_paint = false;
+    state.request_post_paint = false;
+    state.needs_paint = false;
 
-    // Get the layer child from the arena, then pass split borrows to paint_widget.
-    let root_node = root.widget_arena.get_node_mut(root_id);
+    // Get the layer child from the same arena handle.
     let Some(layer_node) = root_node.children.into_item_mut(layer_widget_id) else {
         debug_panic!(
             "Error in paint pass: cannot find layer child {layer_widget_id:?} in LayerStack"

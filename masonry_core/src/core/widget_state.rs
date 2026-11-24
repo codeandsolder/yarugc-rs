@@ -382,7 +382,7 @@ impl WidgetState {
     // TODO: Add WidgetState::add_diff method that merges a ClassSetDiff into the WidgetState's class_diff.
 
     /// Returns `true` if this widget or a descendant explicitly requested layout.
-    pub(crate) fn needs_layout(&self) -> bool {
+    pub(crate) const fn needs_layout(&self) -> bool {
         self.needs_layout
     }
 
@@ -421,7 +421,7 @@ impl WidgetState {
     ///
     /// Add this [`Vec2`] to translate from content-box to border-box,
     /// and subtract this [`Vec2`] to translate from border-box to content-box.
-    pub(crate) fn border_box_translation(&self) -> Vec2 {
+    pub(crate) const fn border_box_translation(&self) -> Vec2 {
         Vec2::new(self.border_box_insets.x0, self.border_box_insets.y0)
     }
 
@@ -438,7 +438,7 @@ impl WidgetState {
     }
 
     /// Returns the first baseline relative to the top of the widget's layout border-box.
-    pub(crate) fn layout_first_baseline(&self) -> f64 {
+    pub(crate) const fn layout_first_baseline(&self) -> f64 {
         if self.first_baseline.is_nan() {
             self.layout_border_box_size.height
         } else {
@@ -447,7 +447,7 @@ impl WidgetState {
     }
 
     /// Returns the last baseline relative to the top of the widget's layout border-box.
-    pub(crate) fn layout_last_baseline(&self) -> f64 {
+    pub(crate) const fn layout_last_baseline(&self) -> f64 {
         if self.last_baseline.is_nan() {
             self.layout_border_box_size.height
         } else {
@@ -501,7 +501,7 @@ impl WidgetState {
         }
     }
 
-    pub(crate) fn needs_rewrite_passes(&self) -> bool {
+    pub(crate) const fn needs_rewrite_passes(&self) -> bool {
         self.needs_layout
             || self.needs_compose
             || self.needs_update_disabled

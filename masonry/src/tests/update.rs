@@ -935,7 +935,7 @@ fn property_stack_selector_changes_notify_only_affected_values() {
 }
 
 #[test]
-fn widget_access_resolves_the_childs_own_defaults() {
+fn widget_access_resolves_child_specific_defaults() {
     use crate::peniko::color::AlphaColor;
     use crate::properties::ContentColor;
 

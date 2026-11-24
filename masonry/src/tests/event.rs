@@ -634,3 +634,28 @@ fn downcast_untyped_action() {
         Some((ArbitraryAction, _))
     );
 }
+
+#[test]
+fn accessibility_requests_for_removed_widgets_are_ignored() {
+    let tag = WidgetTag::named("removed-button");
+    let child = NewWidget::new(Button::with_text("")).with_tag(tag);
+    let mut harness =
+        TestHarness::create(test_property_set(), NewWidget::new(SizedBox::new(child)));
+    let id = harness.get_widget(tag).id();
+    harness.edit_root_widget(|mut root| SizedBox::remove_child(&mut root));
+    for action in [
+        accesskit::Action::Focus,
+        accesskit::Action::Blur,
+        accesskit::Action::ScrollIntoView,
+        accesskit::Action::Click,
+    ] {
+        harness.process_access_event(ActionRequest {
+            action,
+            target_tree: TreeId::ROOT,
+            target_node: id.into(),
+            data: None,
+        });
+    }
+    assert_eq!(harness.focused_widget_id(), None);
+    assert!(harness.try_get_widget(id).is_none());
+}

@@ -4,14 +4,14 @@
 use std::collections::{HashMap, HashSet};
 
 use tracing::{info_span, trace};
-use tree_arena::{ArenaMut, ArenaMutList};
+use tree_arena::{ArenaMut, ArenaMutList, ArenaRef};
 use ui_events::pointer::PointerType;
 
 use crate::app::{RenderRoot, RenderRootSignal, RenderRootState};
 use crate::core::{
     ClassSetDiff, CursorIcon, DefaultProperties, Ime, PointerEvent, PointerInfo, PropertiesMut,
-    PropertiesRef, PropertyArena, PropertyCache, PseudoClass, RegisterCtx, TextEvent, Update,
-    UpdateCtx, Widget, WidgetArenaNode, WidgetId, WidgetState,
+    PropertyArena, PropertyCache, PseudoClass, RegisterCtx, TextEvent, Update, UpdateCtx, Widget,
+    WidgetArenaNode, WidgetId, WidgetState,
 };
 use crate::passes::event::{run_on_pointer_event_pass, run_on_text_event_pass};
 use crate::passes::{enter_span, enter_span_if, merge_state_up, recurse_on_children};
@@ -23,16 +23,7 @@ use crate::util::ParentLinkedList;
 ///
 /// If `widget_id` is `None`, returns an empty `Vec`.
 fn get_id_path(root: &RenderRoot, widget_id: Option<WidgetId>) -> Vec<WidgetId> {
-    let Some(widget_id) = widget_id else {
-        return Vec::new();
-    };
-
-    root.widget_arena
-        .nodes
-        .get_id_path(widget_id)
-        .iter()
-        .map(|&id| WidgetId(id.try_into().unwrap()))
-        .collect()
+    widget_id.map_or_else(Vec::new, |id| root.widget_path(id))
 }
 
 fn is_ancestor_of(root: &RenderRoot, ancestor_id: WidgetId, widget_id: Option<WidgetId>) -> bool {
@@ -42,8 +33,7 @@ fn is_ancestor_of(root: &RenderRoot, ancestor_id: WidgetId, widget_id: Option<Wi
     root.widget_arena
         .nodes
         .get_id_path(id)
-        .iter()
-        .any(|id| *id == ancestor_id.to_raw())
+        .contains(&ancestor_id.to_raw())
 }
 
 /// Make a dummy [`PointerEvent::Cancel`].
@@ -63,7 +53,9 @@ fn run_targeted_update_pass(
     let mut current_id = target;
     while let Some(widget_id) = current_id {
         let parent_id = root.widget_arena.parent_of(widget_id);
-        let node = root.widget_arena.get_node_mut(widget_id);
+        let Some(node) = root.widget_arena.nodes.find_mut(widget_id) else {
+            break;
+        };
 
         let children = node.children;
         let widget = &mut *node.item.widget;
@@ -105,11 +97,9 @@ fn run_single_update_pass(
     let Some(target) = target else {
         return;
     };
-    if !root.widget_arena.has(target) {
+    let Some(node) = root.widget_arena.nodes.find_mut(target) else {
         return;
-    }
-
-    let node = root.widget_arena.get_node_mut(target);
+    };
 
     let children = node.children;
     let widget = &mut *node.item.widget;
@@ -615,108 +605,76 @@ pub(crate) fn run_update_focusable_pass(root: &mut RenderRoot) {
     update_focusable_for_widget(root_node);
 }
 
-pub(crate) fn find_next_focusable(root: &mut RenderRoot, forward: bool) -> Option<WidgetId> {
-    let mut focus_anchor_id = root.global_state.focus_anchor;
+pub(crate) fn find_next_focusable(root: &RenderRoot, forward: bool) -> Option<WidgetId> {
+    let node = root.widget_arena.nodes.find(root.root_id())?;
+    let anchor = root
+        .global_state
+        .focus_anchor
+        .filter(|id| root.has_widget(*id));
 
-    if let Some(id) = focus_anchor_id
-        && !root.has_widget(id)
-    {
-        focus_anchor_id = None;
-    }
-
-    // The idea of this algorithm is that we iterate through the entire tree in preorder
-    // (or reversed post-order), skipping everything before the ancestors of the anchor.
-    // We return the first focusable widget we find that way *except* the anchor widget,
-    // which we've temporarily "yanked" out of the search.
-    if let Some(id) = focus_anchor_id {
-        let anchor_state = root.widget_arena.get_state_mut(id);
-        let anchor_was_focusable = anchor_state.accepts_focus;
-        let anchor_had_focusable = anchor_state.descendant_is_focusable;
-        if forward {
-            anchor_state.accepts_focus = false;
-        } else {
-            anchor_state.descendant_is_focusable = false;
-        }
-
-        // The list of items to skip, from the anchor to the root (which we immediately pop).
-        let mut anchor_path = get_id_path(root, focus_anchor_id);
-        let _ = anchor_path.pop();
-
-        let found = find_first_focusable(root, &anchor_path, root.root_id(), forward);
-
-        // Restore the anchor.
-        let anchor_state = root.widget_arena.get_state_mut(id);
-        anchor_state.accepts_focus = anchor_was_focusable;
-        anchor_state.descendant_is_focusable = anchor_had_focusable;
-
-        if found.is_some() {
-            return found;
+    if let Some(anchor) = anchor {
+        // The anchor path is ordered from the anchor towards the root. Exclude
+        // the root itself before descending it.
+        let mut path = root.widget_path(anchor);
+        path.pop();
+        if let Some(found) = find_first_focusable(node, &path, Some(anchor), forward) {
+            return Some(found);
         }
     }
 
-    // If nothing is focused, or if we haven't found anything after the anchor,
-    // we iterate through the entire tree again, this time without the anchor path.
-    find_first_focusable(root, &[], root.root_id(), forward)
+    // Wrap at either end of the focus order.
+    find_first_focusable(node, &[], None, forward)
 }
 
 fn find_first_focusable(
-    root: &mut RenderRoot,
+    node: ArenaRef<'_, WidgetArenaNode>,
     anchor_path: &[WidgetId],
-    node: WidgetId,
+    anchor: Option<WidgetId>,
     forward: bool,
 ) -> Option<WidgetId> {
-    let item = root.widget_arena.get_node_mut(node);
-    let widget = &mut *item.item.widget;
-    let state = &mut item.item.state;
-    let accepts_focus = state.accepts_focus;
-
+    let state = &node.item.state;
     if !state.descendant_is_focusable {
         return None;
     }
 
-    let children = widget.children_ids();
-    let children = if let Some((anchor, anchor_path)) = anchor_path.split_last() {
-        let anchor_idx = children.iter().position(|id| *id == *anchor).unwrap();
+    let is_anchor = anchor == Some(state.id);
+    let can_focus = state.accepts_focus && !state.is_disabled && !state.is_stashed && !is_anchor;
+    let children = node.item.widget.children_ids();
 
-        // First we try the anchor
-        if let Some(found) = find_first_focusable(root, anchor_path, children[anchor_idx], forward)
+    if forward && anchor_path.is_empty() && can_focus {
+        return Some(state.id);
+    }
+
+    let candidates = if let Some((anchor_child, remaining)) = anchor_path.split_last() {
+        let index = children.iter().position(|id| id == anchor_child)?;
+        if let Some(child) = node.children.item(*anchor_child)
+            && let Some(found) = find_first_focusable(child, remaining, anchor, forward)
         {
             return Some(found);
         }
-
-        // Then everything after, at which point we're outside the anchor path.
         if forward {
-            &children[anchor_idx + 1..]
+            children.get(index + 1..)?
         } else {
-            &children[..anchor_idx]
+            children.get(..index)?
         }
+    } else if is_anchor && !forward {
+        // Reverse preorder: descendants occur after the anchor, not before it.
+        &[]
     } else {
-        // If our parent didn't get an anchor path,
-        // or went past it, just check all children.
         &children[..]
     };
 
+    let visit =
+        |id: &WidgetId| find_first_focusable(node.children.item(*id)?, &[], anchor, forward);
     if forward {
-        if anchor_path.is_empty() && accepts_focus {
-            return Some(node);
-        }
-        for child in children.iter() {
-            if let Some(found) = find_first_focusable(root, &[], *child, forward) {
-                return Some(found);
-            }
-        }
+        candidates.iter().find_map(visit)
     } else {
-        for child in children.iter().rev() {
-            if let Some(found) = find_first_focusable(root, &[], *child, forward) {
-                return Some(found);
-            }
-        }
-        if accepts_focus {
-            return Some(node);
-        }
+        candidates
+            .iter()
+            .rev()
+            .find_map(visit)
+            .or_else(|| can_focus.then_some(state.id))
     }
-
-    None
 }
 
 // ----------------
@@ -822,15 +780,12 @@ pub(crate) fn run_update_focus_pass(root: &mut RenderRoot) {
             ctx.widget_state.needs_accessibility = true;
         });
 
-        if let Some(next_focused) = next_focused {
-            let widget_state = root.widget_arena.get_state(next_focused);
-
-            root.global_state.is_ime_active = widget_state.accepts_text_input;
-            if widget_state.accepts_text_input {
-                root.global_state.emit_signal(RenderRootSignal::StartIme);
-            }
-        } else {
-            root.global_state.is_ime_active = false;
+        let accepts_text = next_focused
+            .and_then(|id| root.widget_arena.get_state(id))
+            .is_some_and(|state| state.accepts_text_input);
+        root.global_state.is_ime_active = accepts_text;
+        if accepts_text {
+            root.global_state.emit_signal(RenderRootSignal::StartIme);
         }
     }
 
@@ -953,7 +908,10 @@ pub(crate) fn run_update_pointer_pass(root: &mut RenderRoot) {
     }
     // Check if hovered widget is disabled
     if let Some(id) = next_hovered_widget
-        && root.widget_arena.get_state(id).is_disabled
+        && root
+            .widget_arena
+            .get_state(id)
+            .is_none_or(|state| state.is_disabled)
     {
         next_hovered_widget = None;
     }

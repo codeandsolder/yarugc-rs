@@ -16,7 +16,7 @@ use crate::core::Widget;
 ///
 /// You can only add one widget with a given tag to the entire widget tree.
 /// Trying to add another widget with the same tag will debug-panic or fail silently.
-/// Tags currently aren't garbage-collected even when the widget is removed from the tree.
+/// Removing a widget releases its tag for reuse.
 ///
 /// [`NewWidget::with_tag`]: crate::core::NewWidget::with_tag
 pub struct WidgetTag<W: Widget + ?Sized> {

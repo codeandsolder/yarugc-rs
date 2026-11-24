@@ -3,7 +3,7 @@
 
 use tree_arena::{ArenaMut, TreeArena};
 
-use crate::core::{ClassSet, PropertySet, Widget, WidgetId, WidgetState};
+use crate::core::{ClassSet, PropertySet, Widget, WidgetId, WidgetState, WidgetTagInner};
 
 pub(crate) struct WidgetArena {
     pub(crate) nodes: TreeArena<WidgetArenaNode>,
@@ -14,6 +14,7 @@ pub(crate) struct WidgetArenaNode {
     pub(crate) state: WidgetState,
     pub(crate) properties: PropertySet,
     pub(crate) class_set: ClassSet,
+    pub(crate) tag: Option<WidgetTagInner>,
 }
 
 impl WidgetArena {
@@ -34,23 +35,7 @@ impl WidgetArena {
             .expect("get_pair_mut: widget not in widget tree")
     }
 
-    #[track_caller]
-    pub(crate) fn get_state(&self, widget_id: WidgetId) -> &WidgetState {
-        &self
-            .nodes
-            .find(widget_id)
-            .expect("get_state: widget state not in widget tree")
-            .item
-            .state
-    }
-
-    #[track_caller]
-    pub(crate) fn get_state_mut(&mut self, widget_id: WidgetId) -> &mut WidgetState {
-        &mut self
-            .nodes
-            .find_mut(widget_id)
-            .expect("get_state_mut: widget state not in widget tree")
-            .item
-            .state
+    pub(crate) fn get_state(&self, widget_id: WidgetId) -> Option<&WidgetState> {
+        self.nodes.find(widget_id).map(|node| &node.item.state)
     }
 }

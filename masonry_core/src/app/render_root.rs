@@ -409,7 +409,7 @@ impl RenderRoot {
     }
 
     /// Returns a mutable reference to the `PropertyArena`.
-    pub fn property_arena(&mut self) -> &mut PropertyArena {
+    pub const fn property_arena(&mut self) -> &mut PropertyArena {
         &mut self.property_arena
     }
 
@@ -449,7 +449,7 @@ impl RenderRoot {
         self.run_rewrite_passes();
     }
 
-    pub(crate) fn root_id(&self) -> WidgetId {
+    pub(crate) const fn root_id(&self) -> WidgetId {
         self.layer_stack.id()
     }
 
@@ -622,7 +622,7 @@ impl RenderRoot {
     }
 
     /// Returns the current icon that the mouse should display.
-    pub fn cursor_icon(&self) -> CursorIcon {
+    pub const fn cursor_icon(&self) -> CursorIcon {
         self.global_state.cursor_icon
     }
 
@@ -659,7 +659,7 @@ impl RenderRoot {
             .nodes
             .get_id_path(id)
             .into_iter()
-            .map(|id| WidgetId(id.try_into().unwrap()))
+            .filter_map(|id| std::num::NonZeroU64::new(id).map(WidgetId))
             .collect()
     }
 
@@ -794,14 +794,14 @@ impl RenderRoot {
     }
 
     /// Returns the current size of the window.
-    pub fn size(&self) -> PhysicalSize<u32> {
+    pub const fn size(&self) -> PhysicalSize<u32> {
         self.global_state.size
     }
 
     /// Returns the current DPI scale factor of the window.
     ///
     /// This is the number of physical pixels per logical pixel.
-    pub fn scale_factor(&self) -> f64 {
+    pub const fn scale_factor(&self) -> f64 {
         self.global_state.scale_factor
     }
 
@@ -869,11 +869,16 @@ impl RenderRoot {
         }
 
         if self.global_state.is_ime_active {
-            let widget = self
+            let Some(state) = self
                 .global_state
                 .focused_widget
-                .expect("IME is active without a focused widget");
-            let ime_area = self.widget_arena.get_state(widget).get_ime_area();
+                .and_then(|id| self.widget_arena.get_state(id))
+            else {
+                self.global_state.is_ime_active = false;
+                self.global_state.emit_signal(RenderRootSignal::EndIme);
+                return;
+            };
+            let ime_area = state.get_ime_area();
             // Certain desktop environments (primarily KDE on Wayland) re-synchronise IME state
             // with the client (this app) in response to the safe area changing.
             // Our handling of that ultimately results in us sending the safe area again,
@@ -948,12 +953,12 @@ impl RenderRoot {
     }
 
     /// Returns the [`WidgetId`] of the [focused widget](crate::doc::masonry_concepts#text-focus).
-    pub fn focused_widget(&self) -> Option<WidgetId> {
+    pub const fn focused_widget(&self) -> Option<WidgetId> {
         self.global_state.focused_widget
     }
 
     /// Returns the [`WidgetId`] of the widget which [captures pointer events](crate::doc::masonry_concepts#pointer-capture).
-    pub fn pointer_capture_target(&self) -> Option<WidgetId> {
+    pub const fn pointer_capture_target(&self) -> Option<WidgetId> {
         self.global_state.pointer_capture_target
     }
 
@@ -1131,7 +1136,7 @@ impl RenderRootState {
 }
 
 impl RenderRootSignal {
-    pub(crate) fn new_ime_moved_signal(area: Rect) -> Self {
+    pub(crate) const fn new_ime_moved_signal(area: Rect) -> Self {
         Self::ImeMoved(
             LogicalPosition {
                 x: area.origin().x,
