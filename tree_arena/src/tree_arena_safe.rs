@@ -31,20 +31,7 @@ pub struct TreeArena<T> {
     parents_map: HashMap<NodeId, Option<NodeId>>,
 }
 
-/// A reference type giving shared access to an arena item and its children.
-///
-/// When you borrow an item from a [`TreeArena`], it returns an `ArenaRef`.
-/// You can iterate over its children to get access to child `ArenaRef` handles.
-#[derive(Debug)]
-pub struct ArenaRef<'arena, T> {
-    id: NodeId,
-    /// The parent of this node
-    pub parent_id: Option<NodeId>,
-    /// The payload of the node
-    pub item: &'arena T,
-    /// Reference to the children of the node
-    pub children: ArenaRefList<'arena, T>,
-}
+define_node_handles!();
 
 /// A handle giving shared access to a set of arena items.
 ///
@@ -54,29 +41,6 @@ pub struct ArenaRefList<'arena, T> {
     parent_id: Option<NodeId>,
     children: &'arena HashMap<NodeId, TreeNode<T>>,
     parents_map: ArenaMapRef<'arena>,
-}
-
-/// A reference type giving mutable access to an arena item and its children.
-///
-/// When you borrow an item from a [`TreeArena`], it returns an `ArenaMut`.
-/// This struct holds three fields:
-///  - the id of its parent.
-///  - a reference to the item itself.
-///  - an [`ArenaMutList`] handle to access its children.
-///
-/// Because the latter two are disjoint references, you can mutate the node's value
-/// and its children independently without invalidating the references.
-///
-/// You can iterate over its children to get access to child `ArenaMut` handles.
-#[derive(Debug)]
-pub struct ArenaMut<'arena, T> {
-    id: NodeId,
-    /// The parent of the node
-    pub parent_id: Option<NodeId>,
-    /// The payload of the node
-    pub item: &'arena mut T,
-    /// Reference to the children of the node
-    pub children: ArenaMutList<'arena, T>,
 }
 
 /// A handle giving mutable access to a set of arena items.
@@ -102,14 +66,6 @@ struct ArenaMapMut<'arena> {
 }
 
 // -- MARK: IMPLS
-
-impl<T> Clone for ArenaRef<'_, T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for ArenaRef<'_, T> {}
 
 impl<T> Clone for ArenaRefList<'_, T> {
     fn clone(&self) -> Self {
@@ -346,21 +302,11 @@ impl<T> TreeNode<T> {
     }
 }
 
-impl<T> ArenaRef<'_, T> {
-    /// Id of the item this handle is associated with.
-    #[must_use = "Identifies the node associated with this handle."]
-    pub const fn id(&self) -> NodeId {
-        self.id
-    }
-
-    /// An iterator visiting all child ids in arbitrary order.
-    #[must_use = "Iterate the returned child identifiers."]
-    pub fn child_ids(&self) -> impl IntoIterator<Item = NodeId> {
-        self.children.children.keys().copied()
-    }
-}
-
 impl<'arena, T> ArenaRefList<'arena, T> {
+    fn ids(&self) -> impl Iterator<Item = NodeId> {
+        self.children.keys().copied()
+    }
+
     /// Returns `true` if the list has an element with the given id.
     pub fn has(self, id: impl Into<NodeId>) -> bool {
         let id = id.into();
@@ -404,37 +350,6 @@ impl<'arena, T> ArenaRefList<'arena, T> {
 
         let node = node_children.get(&id)?;
         Some(node.arena_ref(*parent_id, self.parents_map.parents_map))
-    }
-}
-
-impl<T> ArenaMut<'_, T> {
-    /// Id of the item this handle is associated with.
-    #[must_use = "Identifies the node associated with this handle."]
-    pub const fn id(&self) -> NodeId {
-        self.id
-    }
-
-    /// Returns a shared reference equivalent to this one.
-    #[must_use = "Use the returned shared handle to inspect the node."]
-    pub const fn reborrow(&self) -> ArenaRef<'_, T> {
-        ArenaRef {
-            id: self.id,
-            parent_id: self.parent_id,
-            item: self.item,
-            children: self.children.reborrow(),
-        }
-    }
-
-    /// Returns a mutable reference equivalent to this one.
-    ///
-    /// This is sometimes useful to work with the borrow checker.
-    pub const fn reborrow_mut(&mut self) -> ArenaMut<'_, T> {
-        ArenaMut {
-            id: self.id,
-            parent_id: self.parent_id,
-            item: self.item,
-            children: self.children.reborrow_mut(),
-        }
     }
 }
 

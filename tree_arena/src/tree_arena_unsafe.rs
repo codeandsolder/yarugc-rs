@@ -42,20 +42,7 @@ pub struct TreeArena<T> {
     roots: Vec<NodeId>,
 }
 
-/// A reference type giving shared access to an arena item and its children.
-///
-/// When you borrow an item from a [`TreeArena`], it returns an `ArenaRef`.
-/// You can access its children to get access to child `ArenaRef` handles.
-#[derive(Debug)]
-pub struct ArenaRef<'arena, T> {
-    id: NodeId,
-    /// Parent of the Node
-    pub parent_id: Option<NodeId>,
-    /// Item in the node
-    pub item: &'arena T,
-    /// Children of the node
-    pub children: ArenaRefList<'arena, T>,
-}
+define_node_handles!();
 
 /// A handle giving shared access to a set of arena items.
 ///
@@ -67,29 +54,6 @@ pub struct ArenaRefList<'arena, T> {
     child_ids: &'arena [NodeId],
     /// The parent id for the items
     parent_id: Option<NodeId>,
-}
-
-/// A reference type giving mutable access to an arena item and its children.
-///
-/// When you borrow an item from a [`TreeArena`], it returns an `ArenaMut`.
-/// This struct holds three fields:
-///  - the id of its parent.
-///  - a reference to the item itself.
-///  - an [`ArenaMutList`] handle to access its children.
-///
-/// Because the latter two are disjoint references, you can mutate the node's value
-/// and its children independently without invalidating the references.
-///
-/// You can iterate over its children to get access to child `ArenaMut` handles.
-#[derive(Debug)]
-pub struct ArenaMut<'arena, T> {
-    id: NodeId,
-    /// Parent of the Node
-    pub parent_id: Option<NodeId>,
-    /// Item in the node
-    pub item: &'arena mut T,
-    /// Children of the node
-    pub children: ArenaMutList<'arena, T>,
 }
 
 /// A handle giving mutable access to a set of arena items.
@@ -106,14 +70,6 @@ pub struct ArenaMutList<'arena, T> {
 }
 
 // -- MARK: IMPLS
-
-impl<Item> Clone for ArenaRef<'_, Item> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<Item> Copy for ArenaRef<'_, Item> {}
 
 impl<T> Clone for ArenaRefList<'_, T> {
     fn clone(&self) -> Self {
@@ -367,21 +323,11 @@ impl<T> TreeArena<T> {
     }
 }
 
-impl<T> ArenaRef<'_, T> {
-    /// Id of the item this handle is associated with.
-    #[must_use = "Identifies the node associated with this handle."]
-    pub const fn id(&self) -> NodeId {
-        self.id
-    }
-
-    /// An iterator visiting all child ids in arbitrary order.
-    #[must_use = "Iterate the returned child identifiers."]
-    pub fn child_ids(&self) -> impl IntoIterator<Item = NodeId> {
-        self.children.child_ids.iter().copied()
-    }
-}
-
 impl<'arena, T> ArenaRefList<'arena, T> {
+    fn ids(&self) -> impl Iterator<Item = NodeId> {
+        self.child_ids.iter().copied()
+    }
+
     /// Checks if id is a descendant of self
     /// O(depth) and the limiting factor for find methods
     /// not from the root
@@ -443,37 +389,6 @@ impl<'arena, T> ArenaRefList<'arena, T> {
             self.parent_arena.find_inner(id)
         } else {
             None
-        }
-    }
-}
-
-impl<T> ArenaMut<'_, T> {
-    /// Id of the item this handle is associated with
-    #[must_use = "Identifies the node associated with this handle."]
-    pub const fn id(&self) -> NodeId {
-        self.id
-    }
-
-    /// Returns a shared reference equivalent to this one.
-    #[must_use = "Use the returned shared handle to inspect the node."]
-    pub const fn reborrow(&self) -> ArenaRef<'_, T> {
-        ArenaRef {
-            id: self.id,
-            parent_id: self.parent_id,
-            item: self.item,
-            children: self.children.reborrow(),
-        }
-    }
-
-    /// Returns a mutable reference equivalent to this one.
-    ///
-    /// This is sometimes useful to work with the borrow checker.
-    pub const fn reborrow_mut(&mut self) -> ArenaMut<'_, T> {
-        ArenaMut {
-            id: self.id,
-            parent_id: self.parent_id,
-            item: self.item,
-            children: self.children.reborrow_mut(),
         }
     }
 }

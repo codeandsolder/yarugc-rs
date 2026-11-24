@@ -180,6 +180,103 @@ fn validate_reparent(
     Ok(old_parent)
 }
 
+// Both storage backends expose the same payload handles. Keep identity and
+// borrow semantics defined once, independent of the child-list storage.
+macro_rules! define_node_handles {
+    () => {
+        /// A reference type giving shared access to an arena item and its children.
+        ///
+        /// When you borrow an item from a [`TreeArena`], it returns an `ArenaRef`.
+        /// You can iterate over its children to get access to child `ArenaRef` handles.
+        #[derive(Debug)]
+        pub struct ArenaRef<'arena, T> {
+            id: NodeId,
+            /// The parent of this node
+            pub parent_id: Option<NodeId>,
+            /// The payload of the node
+            pub item: &'arena T,
+            /// Reference to the children of the node
+            pub children: ArenaRefList<'arena, T>,
+        }
+
+        /// A reference type giving mutable access to an arena item and its children.
+        ///
+        /// When you borrow an item from a [`TreeArena`], it returns an `ArenaMut`.
+        /// This struct holds four fields:
+        ///  - the identity of the node and the id of its parent.
+        ///  - a reference to the item itself.
+        ///  - an [`ArenaMutList`] handle to access its children.
+        ///
+        /// Because the latter two are disjoint references, you can mutate the node's value
+        /// and its children independently without invalidating the references.
+        ///
+        /// You can iterate over its children to get access to child `ArenaMut` handles.
+        #[derive(Debug)]
+        pub struct ArenaMut<'arena, T> {
+            id: NodeId,
+            /// The parent of the node
+            pub parent_id: Option<NodeId>,
+            /// The payload of the node
+            pub item: &'arena mut T,
+            /// Reference to the children of the node
+            pub children: ArenaMutList<'arena, T>,
+        }
+
+        impl<T> Clone for ArenaRef<'_, T> {
+            fn clone(&self) -> Self {
+                *self
+            }
+        }
+
+        impl<T> Copy for ArenaRef<'_, T> {}
+
+        impl<T> ArenaRef<'_, T> {
+            /// Id of the item this handle is associated with.
+            #[must_use = "Identifies the node associated with this handle."]
+            pub const fn id(&self) -> NodeId {
+                self.id
+            }
+
+            /// An iterator visiting all child ids in arbitrary order.
+            #[must_use = "Iterate the returned child identifiers."]
+            pub fn child_ids(&self) -> impl IntoIterator<Item = NodeId> {
+                self.children.ids()
+            }
+        }
+
+        impl<T> ArenaMut<'_, T> {
+            /// Id of the item this handle is associated with.
+            #[must_use = "Identifies the node associated with this handle."]
+            pub const fn id(&self) -> NodeId {
+                self.id
+            }
+
+            /// Returns a shared reference equivalent to this one.
+            #[must_use = "Use the returned shared handle to inspect the node."]
+            pub const fn reborrow(&self) -> ArenaRef<'_, T> {
+                ArenaRef {
+                    id: self.id,
+                    parent_id: self.parent_id,
+                    item: self.item,
+                    children: self.children.reborrow(),
+                }
+            }
+
+            /// Returns a mutable reference equivalent to this one.
+            ///
+            /// This is sometimes useful to work with the borrow checker.
+            pub const fn reborrow_mut(&mut self) -> ArenaMut<'_, T> {
+                ArenaMut {
+                    id: self.id,
+                    parent_id: self.parent_id,
+                    item: self.item,
+                    children: self.children.reborrow_mut(),
+                }
+            }
+        }
+    };
+}
+
 // We instantiate both modules when `cfg(test)` is true.
 // This tricks IDEs (at least VSCode) into always building both modules
 // and giving us completions, jump to definition, etc, at all times.
