@@ -955,15 +955,14 @@ mod tests {
         assert_render_snapshot!(harness, "virtual_scroll_scrolled");
     }
 
-    #[test]
-    /// We shouldn't panic or loop if there are small gaps in the items provided by the driver.
-    /// Again, this isn't valid code for a user to write, but we should just warn and deal with it
-    fn small_gaps() {
+    // The driver intentionally violates the contract; verify that sparse items
+    // do not prevent the scroll implementation from converging.
+    fn sparse_driver_gaps(step: usize, remainder: usize, target: usize) {
         let widget = VirtualScroll::new(0, usize::MAX).prepare();
-
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (100, 200));
         let virtual_scroll_id = harness.root_id();
-        fn driver(action: VirtualScrollFetchAction, mut scroll: WidgetMut<'_, VirtualScroll>) {
+        let driver = |action: VirtualScrollFetchAction,
+                      mut scroll: WidgetMut<'_, VirtualScroll>| {
             VirtualScroll::will_handle_action(&mut scroll, &action);
             for idx in action.old_active.clone() {
                 if !action.target.contains(&idx) {
@@ -971,7 +970,7 @@ mod tests {
                 }
             }
             for idx in action.target {
-                if !action.old_active.contains(&idx) && idx % 2 == 0 {
+                if !action.old_active.contains(&idx) && idx % step == remainder {
                     VirtualScroll::add_child(
                         &mut scroll,
                         idx,
@@ -982,13 +981,10 @@ mod tests {
                     );
                 }
             }
-        }
-
+        };
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
         harness
-            .edit_root_widget(|mut scroll| {
-                VirtualScroll::scroll_to(&mut scroll, 100);
-            })
+            .edit_root_widget(|mut scroll| VirtualScroll::scroll_to(&mut scroll, target))
             .unwrap();
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
         harness.mouse_move_to(virtual_scroll_id).unwrap();
@@ -997,44 +993,13 @@ mod tests {
     }
 
     #[test]
-    /// We shouldn't panic or loop if there are big gaps in the items provided by the driver.
-    /// Note that we don't test rendering in this case, because this is a driver which breaks our contract.
+    fn small_gaps() {
+        sparse_driver_gaps(2, 0, 100);
+    }
+
+    #[test]
     fn big_gaps() {
-        let widget = VirtualScroll::new(0, usize::MAX).prepare();
-
-        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (100, 200));
-        let virtual_scroll_id = harness.root_id();
-        fn driver(action: VirtualScrollFetchAction, mut scroll: WidgetMut<'_, VirtualScroll>) {
-            VirtualScroll::will_handle_action(&mut scroll, &action);
-            for idx in action.old_active.clone() {
-                if !action.target.contains(&idx) {
-                    VirtualScroll::remove_child(&mut scroll, idx);
-                }
-            }
-            for idx in action.target {
-                if !action.old_active.contains(&idx) && idx % 100 == 1 {
-                    VirtualScroll::add_child(
-                        &mut scroll,
-                        idx,
-                        NewWidget::new(
-                            Label::new(format!("{idx}")).with_style(StyleProperty::FontSize(30.)),
-                        )
-                        .erased(),
-                    );
-                }
-            }
-        }
-
-        drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
-        harness
-            .edit_root_widget(|mut scroll| {
-                VirtualScroll::scroll_to(&mut scroll, 200);
-            })
-            .unwrap();
-        drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
-        harness.mouse_move_to(virtual_scroll_id).unwrap();
-        harness.mouse_wheel(Vec2 { x: 0., y: 200. });
-        drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
+        sparse_driver_gaps(100, 1, 200);
     }
 
     #[test]

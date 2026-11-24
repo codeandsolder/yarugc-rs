@@ -1402,49 +1402,7 @@ mod tests {
         )
         .with_props((BorderWidth::all(2.px()), BorderColor::new(ACCENT_COLOR)));
 
-        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (200, 150));
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_main_axis_alignment(&mut flex, MainAxisAlignment::Start);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_row_fixed_children_start");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_main_axis_alignment(&mut flex, MainAxisAlignment::Center);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_row_fixed_children_center");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_main_axis_alignment(&mut flex, MainAxisAlignment::End);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_row_fixed_children_end");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_main_axis_alignment(&mut flex, MainAxisAlignment::SpaceBetween);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_row_fixed_children_spaceBetween");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_main_axis_alignment(&mut flex, MainAxisAlignment::SpaceEvenly);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_row_fixed_children_spaceEvenly");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_main_axis_alignment(&mut flex, MainAxisAlignment::SpaceAround);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_row_fixed_children_spaceAround");
+        check_main_axis_snapshots(widget, "flex_row_fixed_children");
     }
 
     #[test]
@@ -1534,11 +1492,26 @@ mod tests {
         assert_eq!(rect, Rect::new(0., 2., 10., 8.));
     }
 
-    // TODO - Reduce copy-pasting?
-    #[test]
-    fn flex_row_cross_axis_snapshots() {
+    fn check_main_axis_snapshots(widget: NewWidget<Flex>, prefix: &str) {
+        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (200, 150));
+        for (alignment, suffix) in [
+            (MainAxisAlignment::Start, "start"),
+            (MainAxisAlignment::Center, "center"),
+            (MainAxisAlignment::End, "end"),
+            (MainAxisAlignment::SpaceBetween, "spaceBetween"),
+            (MainAxisAlignment::SpaceEvenly, "spaceEvenly"),
+            (MainAxisAlignment::SpaceAround, "spaceAround"),
+        ] {
+            harness
+                .edit_root_widget(|mut flex| Flex::set_main_axis_alignment(&mut flex, alignment))
+                .unwrap();
+            assert_render_snapshot!(harness, &format!("{prefix}_{suffix}"));
+        }
+    }
+
+    fn check_cross_axis_snapshots(axis: Axis, prefix: &str) {
         let widget = NewWidget::new(
-            Flex::row()
+            Flex::for_axis(axis)
                 .with_fixed(Label::new("hello").prepare())
                 .with(Label::new("world").prepare(), 1.0)
                 .with_fixed(Label::new("foo").prepare())
@@ -1550,229 +1523,57 @@ mod tests {
         .with_props((BorderWidth::all(2.px()), BorderColor::new(ACCENT_COLOR)));
 
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (200, 150));
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_cross_axis_alignment(&mut flex, CrossAxisAlignment::Start);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_row_cross_axis_start");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_cross_axis_alignment(&mut flex, CrossAxisAlignment::Center);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_row_cross_axis_center");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_cross_axis_alignment(&mut flex, CrossAxisAlignment::End);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_row_cross_axis_end");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_cross_axis_alignment(&mut flex, CrossAxisAlignment::FirstBaseline);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_row_cross_axis_first_baseline");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_cross_axis_alignment(&mut flex, CrossAxisAlignment::LastBaseline);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_row_cross_axis_last_baseline");
-
-        // TODO: Stretch with text doesn't make sense, it's not visible,
-        //       unless we paint borders or background for the Label widget.
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_cross_axis_alignment(&mut flex, CrossAxisAlignment::Stretch);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_row_cross_axis_stretch");
+        for (alignment, suffix) in [
+            (CrossAxisAlignment::Start, "start"),
+            (CrossAxisAlignment::Center, "center"),
+            (CrossAxisAlignment::End, "end"),
+            (CrossAxisAlignment::FirstBaseline, "first_baseline"),
+            (CrossAxisAlignment::LastBaseline, "last_baseline"),
+            (CrossAxisAlignment::Stretch, "stretch"),
+        ] {
+            harness
+                .edit_root_widget(|mut flex| Flex::set_cross_axis_alignment(&mut flex, alignment))
+                .unwrap();
+            assert_render_snapshot!(harness, &format!("{prefix}_{suffix}"));
+        }
     }
 
-    #[test]
-    fn flex_row_main_axis_snapshots() {
-        // ALl children need to be fixed, otherwise a flexible child will use up all the space.
-        let widget = NewWidget::new(
-            Flex::row()
+    fn fixed_children_for_axis(axis: Axis) -> NewWidget<Flex> {
+        // Children must be fixed: flexible children would consume the available space.
+        NewWidget::new(
+            Flex::for_axis(axis)
                 .with_fixed(Label::new("hello").prepare())
                 .with_fixed(Label::new("world").prepare())
                 .with_fixed(Label::new("foo").prepare())
                 .with(Label::new("bar").prepare(), CrossAxisAlignment::Start),
         )
-        .with_props((BorderWidth::all(2.px()), BorderColor::new(ACCENT_COLOR)));
+        .with_props((BorderWidth::all(2.px()), BorderColor::new(ACCENT_COLOR)))
+    }
 
-        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (200, 150));
-
-        // MAIN AXIS ALIGNMENT
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_main_axis_alignment(&mut flex, MainAxisAlignment::Start);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_row_main_axis_start");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_main_axis_alignment(&mut flex, MainAxisAlignment::Center);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_row_main_axis_center");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_main_axis_alignment(&mut flex, MainAxisAlignment::End);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_row_main_axis_end");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_main_axis_alignment(&mut flex, MainAxisAlignment::SpaceBetween);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_row_main_axis_spaceBetween");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_main_axis_alignment(&mut flex, MainAxisAlignment::SpaceEvenly);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_row_main_axis_spaceEvenly");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_main_axis_alignment(&mut flex, MainAxisAlignment::SpaceAround);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_row_main_axis_spaceAround");
+    #[test]
+    fn flex_row_cross_axis_snapshots() {
+        check_cross_axis_snapshots(Axis::Horizontal, "flex_row_cross_axis");
     }
 
     #[test]
     fn flex_col_cross_axis_snapshots() {
-        let widget = NewWidget::new(
-            Flex::column()
-                .with_fixed(Label::new("hello").prepare())
-                .with(Label::new("world").prepare(), 1.0)
-                .with_fixed(Label::new("foo").prepare())
-                .with(
-                    Label::new("bar").prepare(),
-                    FlexParams::new(2.0, None, CrossAxisAlignment::Start),
-                ),
-        )
-        .with_props((BorderWidth::all(2.px()), BorderColor::new(ACCENT_COLOR)));
+        check_cross_axis_snapshots(Axis::Vertical, "flex_col_cross_axis");
+    }
 
-        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (200, 150));
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_cross_axis_alignment(&mut flex, CrossAxisAlignment::Start);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_col_cross_axis_start");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_cross_axis_alignment(&mut flex, CrossAxisAlignment::Center);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_col_cross_axis_center");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_cross_axis_alignment(&mut flex, CrossAxisAlignment::End);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_col_cross_axis_end");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_cross_axis_alignment(&mut flex, CrossAxisAlignment::FirstBaseline);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_col_cross_axis_first_baseline");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_cross_axis_alignment(&mut flex, CrossAxisAlignment::LastBaseline);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_col_cross_axis_last_baseline");
-
-        // TODO: Stretch with text doesn't make sense, it's not visible,
-        //       unless we paint borders or background for the Label widget.
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_cross_axis_alignment(&mut flex, CrossAxisAlignment::Stretch);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_col_cross_axis_stretch");
+    #[test]
+    fn flex_row_main_axis_snapshots() {
+        check_main_axis_snapshots(
+            fixed_children_for_axis(Axis::Horizontal),
+            "flex_row_main_axis",
+        );
     }
 
     #[test]
     fn flex_col_main_axis_snapshots() {
-        // ALl children need to be fixed, otherwise a flexible child will use up all the space.
-        let widget = NewWidget::new(
-            Flex::column()
-                .with_fixed(Label::new("hello").prepare())
-                .with_fixed(Label::new("world").prepare())
-                .with_fixed(Label::new("foo").prepare())
-                .with(Label::new("bar").prepare(), CrossAxisAlignment::Start),
-        )
-        .with_props((BorderWidth::all(2.px()), BorderColor::new(ACCENT_COLOR)));
-
-        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (200, 150));
-
-        // MAIN AXIS ALIGNMENT
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_main_axis_alignment(&mut flex, MainAxisAlignment::Start);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_col_main_axis_start");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_main_axis_alignment(&mut flex, MainAxisAlignment::Center);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_col_main_axis_center");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_main_axis_alignment(&mut flex, MainAxisAlignment::End);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_col_main_axis_end");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_main_axis_alignment(&mut flex, MainAxisAlignment::SpaceBetween);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_col_main_axis_spaceBetween");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_main_axis_alignment(&mut flex, MainAxisAlignment::SpaceEvenly);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_col_main_axis_spaceEvenly");
-
-        harness
-            .edit_root_widget(|mut flex| {
-                Flex::set_main_axis_alignment(&mut flex, MainAxisAlignment::SpaceAround);
-            })
-            .unwrap();
-        assert_render_snapshot!(harness, "flex_col_main_axis_spaceAround");
+        check_main_axis_snapshots(
+            fixed_children_for_axis(Axis::Vertical),
+            "flex_col_main_axis",
+        );
     }
 
     #[test]

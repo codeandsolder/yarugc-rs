@@ -890,48 +890,29 @@ mod tests {
         assert!(child1_width > child1_initial_width);
     }
 
+    fn check_pixel_size_on_resize(point: SplitPoint, child_index: usize) {
+        let widget = Split::new(Label::new("Hello").prepare(), Label::new("World").prepare())
+            .split_point(point)
+            .prepare();
+        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (200, 100));
+        let check_width = |harness: &TestHarness<Split<Label, Label>>| {
+            let root = harness.root_widget().unwrap();
+            let width = root.children()[child_index].ctx().border_box().size().width;
+            assert!((width - 50.0).abs() < 0.01);
+        };
+        check_width(&harness);
+        harness.process_window_event(WindowEvent::Resize(PhysicalSize::new(300, 100)));
+        check_width(&harness);
+    }
+
     #[test]
     fn from_start_keeps_pixel_size_on_resize() {
-        let widget = Split::new(Label::new("Hello").prepare(), Label::new("World").prepare())
-            .split_point(SplitPoint::FromStart(50.px()))
-            .prepare();
-
-        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (200, 100));
-
-        let child1_width = {
-            let root = harness.root_widget().unwrap();
-            root.children()[0].ctx().border_box().size().width
-        };
-        assert!((child1_width - 50.0).abs() < 0.01);
-
-        harness.process_window_event(WindowEvent::Resize(PhysicalSize::new(300, 100)));
-        let child1_width = {
-            let root = harness.root_widget().unwrap();
-            root.children()[0].ctx().border_box().size().width
-        };
-        assert!((child1_width - 50.0).abs() < 0.01);
+        check_pixel_size_on_resize(SplitPoint::FromStart(50.px()), 0);
     }
 
     #[test]
     fn from_end_keeps_pixel_size_on_resize() {
-        let widget = Split::new(Label::new("Hello").prepare(), Label::new("World").prepare())
-            .split_point(SplitPoint::FromEnd(50.px()))
-            .prepare();
-
-        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (200, 100));
-
-        let child2_width = {
-            let root = harness.root_widget().unwrap();
-            root.children()[1].ctx().border_box().size().width
-        };
-        assert!((child2_width - 50.0).abs() < 0.01);
-
-        harness.process_window_event(WindowEvent::Resize(PhysicalSize::new(300, 100)));
-        let child2_width = {
-            let root = harness.root_widget().unwrap();
-            root.children()[1].ctx().border_box().size().width
-        };
-        assert!((child2_width - 50.0).abs() < 0.01);
+        check_pixel_size_on_resize(SplitPoint::FromEnd(50.px()), 1);
     }
 
     #[test]
