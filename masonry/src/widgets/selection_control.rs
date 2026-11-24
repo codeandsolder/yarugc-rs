@@ -100,3 +100,33 @@ pub(super) fn pre_paint(
     }
     // Skip painting the regular border while the check border uses that property
 }
+
+// Both selection controls expose the same measurement, layout and background painting.
+macro_rules! control_methods {
+    () => {
+        fn measure(
+            &mut self,
+            ctx: &mut MeasureCtx<'_>,
+            _props: &PropertiesRef<'_>,
+            axis: Axis,
+            len_req: LenReq,
+            cross_length: Option<Length>,
+        ) -> Length {
+            super::selection_control::measure(&self.label, ctx, axis, len_req, cross_length)
+        }
+
+        fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
+            super::selection_control::layout(&self.label, ctx, size);
+        }
+
+        fn pre_paint(
+            &mut self,
+            ctx: &mut PaintCtx<'_>,
+            props: &PropertiesRef<'_>,
+            painter: &mut Painter<'_>,
+        ) {
+            super::selection_control::pre_paint(ctx, props, painter);
+        }
+    };
+}
+pub(super) use control_methods;
