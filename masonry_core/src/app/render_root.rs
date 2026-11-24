@@ -1,7 +1,7 @@
 // Copyright 2019 the Xilem Authors and the Druid Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -453,34 +453,18 @@ impl RenderRoot {
         self.layer_stack.id()
     }
 
-    /// `WidgetId` of the given layer's root widget.
-    pub(crate) fn layer_root_id(&self, layer_idx: usize) -> WidgetId {
-        let node_ref = self
-            .widget_arena
-            .nodes
-            .find(self.root_id())
-            .expect("root widget not in widget tree");
-        let widget = &*node_ref.item.widget;
-
-        let stack = (widget as &dyn Any).downcast_ref::<LayerStack>().unwrap();
-        stack.layer_root_id(layer_idx)
+    fn layer_stack(&self) -> Option<WidgetRef<'_, LayerStack>> {
+        self.get_widget(self.root_id())?.downcast()
     }
 
-    /// Returns the widget ID of each layer, in stack order.
-    ///
-    /// Index 0 is the base layer; subsequent entries are overlay layers.
-    pub(crate) fn layer_root_ids(&self) -> Vec<WidgetId> {
-        let node_ref = self
-            .widget_arena
-            .nodes
-            .find(self.root_id())
-            .expect("root widget not in widget tree");
-        let widget = &*node_ref.item.widget;
+    fn layer_root_id(&self, layer_idx: usize) -> Option<WidgetId> {
+        self.layer_stack()?.layer_root_id(layer_idx)
+    }
 
-        let stack = (widget as &dyn Any).downcast_ref::<LayerStack>().unwrap();
-        (0..stack.layer_count())
-            .map(|i| stack.layer_root_id(i))
-            .collect()
+    /// Returns the root identifiers in layer order (base layer first).
+    pub(crate) fn layer_root_ids(&self) -> Vec<WidgetId> {
+        self.layer_stack()
+            .map_or_else(Vec::new, |stack| stack.layer_root_ids().collect())
     }
 
     pub(crate) fn root_state(&self) -> &WidgetState {
@@ -628,9 +612,8 @@ impl RenderRoot {
 
     // --- MARK: ACCESS WIDGETS
     /// Returns a [`WidgetRef`] to the root widget of the given [layer](crate::doc::masonry_concepts#layers).
-    pub fn get_layer_root(&self, layer_idx: usize) -> WidgetRef<'_, dyn Widget> {
-        self.get_widget(self.layer_root_id(layer_idx))
-            .expect("layer root not in widget tree")
+    pub fn get_layer_root(&self, layer_idx: usize) -> Option<WidgetRef<'_, dyn Widget>> {
+        self.get_widget(self.layer_root_id(layer_idx)?)
     }
 
     /// Returns a [`WidgetRef`] to a specific widget.
@@ -668,80 +651,42 @@ impl RenderRoot {
         self.widget_arena.has(id)
     }
 
-    /// Returns a [`WidgetMut`] to the root widget of the [base layer](crate::doc::masonry_concepts#layers).
-    ///
-    /// Because of how `WidgetMut` works, it can only be passed to a user-provided callback.
-    pub fn edit_base_layer<R>(&mut self, f: impl FnOnce(WidgetMut<'_, dyn Widget>) -> R) -> R {
-        let layer_id = self.layer_root_id(0);
-        let res = mutate_widget(self, layer_id, f);
-
-        self.run_rewrite_passes();
-
-        res
+    /// Edits the base layer's root widget, returning None for a missing or mismatched widget.
+    pub fn edit_base_layer<R, W: Widget + FromDynWidget + ?Sized>(
+        &mut self,
+        f: impl FnOnce(WidgetMut<'_, W>) -> R,
+    ) -> Option<R> {
+        self.edit_layer(0, f)
     }
 
-    /// Returns a [`WidgetMut`] to the root widget of the given [layer](crate::doc::masonry_concepts#layers).
-    ///
-    /// Because of how `WidgetMut` works, it can only be passed to a user-provided callback.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `idx` is out of bounds.
-    pub fn edit_layer<R>(
+    /// Edits the root of the given layer, if it exists and has the requested type.
+    pub fn edit_layer<R, W: Widget + FromDynWidget + ?Sized>(
         &mut self,
         layer_idx: usize,
-        f: impl FnOnce(WidgetMut<'_, dyn Widget>) -> R,
-    ) -> R {
-        let layer_id = self.layer_root_id(layer_idx);
-        let res = mutate_widget(self, layer_id, f);
-
-        self.run_rewrite_passes();
-
-        res
+        f: impl FnOnce(WidgetMut<'_, W>) -> R,
+    ) -> Option<R> {
+        self.edit_widget(self.layer_root_id(layer_idx)?, f)
     }
 
-    /// Returns a [`WidgetMut`] to a specific widget.
-    ///
-    /// Because of how `WidgetMut` works, it can only be passed to a user-provided callback.
-    ///
-    /// # Panics
-    ///
-    /// Panics if there is no widget with the given id in the tree.
-    #[track_caller]
-    pub fn edit_widget<R>(
+    /// Edits a specific widget, if it exists and has the requested type.
+    pub fn edit_widget<R, W: Widget + FromDynWidget + ?Sized>(
         &mut self,
         id: WidgetId,
-        f: impl FnOnce(WidgetMut<'_, dyn Widget>) -> R,
-    ) -> R {
-        if !self.widget_arena.has(id) {
-            panic!("Could not find widget {id} in tree.");
-        }
-
-        let res = mutate_widget(self, id, f);
-
+        f: impl FnOnce(WidgetMut<'_, W>) -> R,
+    ) -> Option<R> {
+        let result = mutate_widget(self, id, f)?;
         self.run_rewrite_passes();
-
-        res
+        Some(result)
     }
 
-    /// Returns a [`WidgetMut`] to the widget with the given tag.
-    ///
-    /// Because of how `WidgetMut` works, it can only be passed to a user-provided callback.
-    #[track_caller]
+    /// Edits the widget with the given tag, if it exists and has the requested type.
     pub fn edit_widget_with_tag<R, W: Widget + FromDynWidget + ?Sized>(
         &mut self,
         tag: WidgetTag<W>,
         f: impl FnOnce(WidgetMut<'_, W>) -> R,
-    ) -> R {
-        let Some(id) = self.global_state.widget_tags.get(&tag.inner).copied() else {
-            panic!("Could not find widget with tag '{tag}' in widget tree.");
-        };
-
-        let res = mutate_widget(self, id, |mut widget_mut| f(widget_mut.downcast()));
-
-        self.run_rewrite_passes();
-
-        res
+    ) -> Option<R> {
+        let id = *self.global_state.widget_tags.get(&tag.inner)?;
+        self.edit_widget(id, f)
     }
 
     /// Adds a new layer at the end of the stack, with the given widget as its root, at the given position.
@@ -749,10 +694,13 @@ impl RenderRoot {
     /// The given `pos` must be in the window's coordinate space.
     pub fn add_layer(&mut self, root: NewWidget<impl Widget + ?Sized>, pos: Point) {
         debug!("added layer to stack");
-        mutate_widget(self, self.root_id(), |mut layer_stack| {
-            let mut layer_stack = layer_stack.downcast::<LayerStack>();
-            LayerStack::add_layer(&mut layer_stack, root, pos);
-        });
+        let _ = mutate_widget(
+            self,
+            self.root_id(),
+            |mut layer_stack: WidgetMut<'_, LayerStack>| {
+                LayerStack::add_layer(&mut layer_stack, root, pos);
+            },
+        );
 
         self.run_rewrite_passes();
     }
@@ -766,10 +714,13 @@ impl RenderRoot {
     /// Panics in debug mode if the intended layer is the base layer or
     /// is not found.
     pub fn remove_layer(&mut self, root_id: WidgetId) {
-        mutate_widget(self, self.root_id(), |mut layer_stack| {
-            let mut layer_stack = layer_stack.downcast::<LayerStack>();
-            LayerStack::remove_layer(&mut layer_stack, root_id);
-        });
+        let _ = mutate_widget(
+            self,
+            self.root_id(),
+            |mut layer_stack: WidgetMut<'_, LayerStack>| {
+                LayerStack::remove_layer(&mut layer_stack, root_id);
+            },
+        );
 
         self.run_rewrite_passes();
     }
@@ -785,10 +736,13 @@ impl RenderRoot {
     /// Panics in debug mode if the intended layer is the base layer or
     /// is not found.
     pub fn reposition_layer(&mut self, root_id: WidgetId, new_origin: Point) {
-        mutate_widget(self, self.root_id(), |mut layer_stack| {
-            let mut layer_stack = layer_stack.downcast::<LayerStack>();
-            LayerStack::reposition_layer(&mut layer_stack, root_id, new_origin);
-        });
+        let _ = mutate_widget(
+            self,
+            self.root_id(),
+            |mut layer_stack: WidgetMut<'_, LayerStack>| {
+                LayerStack::reposition_layer(&mut layer_stack, root_id, new_origin);
+            },
+        );
 
         self.run_rewrite_passes();
     }

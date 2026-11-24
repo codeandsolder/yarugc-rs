@@ -22,6 +22,7 @@ impl<W: Widget> UsesProperty<BoxShadow> for W {}
 ///
 /// Will be invisible if default values are kept.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[must_use = "Use the configured shadow in painting."]
 pub struct BoxShadow {
     /// The shadow's color.
     pub color: AlphaColor<Srgb>,
@@ -73,6 +74,7 @@ impl BoxShadow {
     /// Returns `false` if the shadow can be safely treated as non-existent.
     ///
     /// May have false positives.
+    #[must_use = "Check whether shadow painting can be skipped."]
     pub const fn is_visible(&self) -> bool {
         let alpha = self.color.components[3];
         alpha != 0.0
@@ -119,6 +121,7 @@ impl BoxShadow {
     /// Helper function that returns how much a given shadow expands the paint rect.
     ///
     /// The returned [`Insets`] are guaranteed to be non-negative.
+    #[must_use = "Use the shadow paint bounds."]
     pub fn get_insets(&self) -> Insets {
         let blur_radius = self.blur_radius.get();
         Insets {

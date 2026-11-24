@@ -44,6 +44,7 @@ impl Background {
     /// CSS spec.
     ///
     /// (See [`Gradient::get_peniko_gradient_for_rect`])
+    #[must_use = "Use the brush for painting."]
     pub fn get_peniko_brush_for_rect(&self, rect: Rect) -> peniko::Brush {
         match self {
             Self::Color(color) => (*color).into(),
@@ -54,6 +55,7 @@ impl Background {
     /// Returns `false` if the background can be safely treated as non-existent.
     ///
     /// May have false positives.
+    #[must_use = "Check whether background painting can be skipped."]
     pub const fn is_visible(&self) -> bool {
         match self {
             Self::Color(color) => {

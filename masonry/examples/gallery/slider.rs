@@ -156,11 +156,11 @@ impl DemoPage for SliderDemo {
     ) -> Handled {
         if let Some(value) = action.downcast_ref::<ColorSelected>() {
             if get_id(render_root, self.thumb_color) == widget_id {
-                render_root.edit_widget_with_tag(self.slider, |mut slider| {
+                let _ = render_root.edit_widget_with_tag(self.slider, |mut slider| {
                     slider.insert_prop(ThumbColor(value.color));
                 });
             } else if get_id(render_root, self.track_active_color) == widget_id {
-                render_root.edit_widget_with_tag(self.slider, |mut slider| {
+                let _ = render_root.edit_widget_with_tag(self.slider, |mut slider| {
                     if let Some(mut prop) = slider.insert_prop(TrackColor {
                         ..Default::default()
                     }) {
@@ -174,7 +174,7 @@ impl DemoPage for SliderDemo {
                     }
                 });
             } else if get_id(render_root, self.track_inactive_color) == widget_id {
-                render_root.edit_widget_with_tag(self.slider, |mut slider| {
+                let _ = render_root.edit_widget_with_tag(self.slider, |mut slider| {
                     if let Some(mut prop) = slider.insert_prop(TrackColor {
                         ..Default::default()
                     }) {
@@ -195,7 +195,7 @@ impl DemoPage for SliderDemo {
             let value = value.value;
 
             if get_id(render_root, self.slider) == widget_id {
-                render_root.edit_widget_with_tag(self.value_label, |mut label| {
+                let _ = render_root.edit_widget_with_tag(self.value_label, |mut label| {
                     Label::set_text(&mut label, format!("Value: {value:.3}"));
                 });
             }
@@ -208,11 +208,11 @@ impl DemoPage for SliderDemo {
             };
 
             if get_id(render_root, self.thumb_radius) == widget_id {
-                render_root.edit_widget_with_tag(self.slider, |mut slider| {
+                let _ = render_root.edit_widget_with_tag(self.slider, |mut slider| {
                     slider.insert_prop(ThumbRadius(value));
                 });
             } else if get_id(render_root, self.track_thickness) == widget_id {
-                render_root.edit_widget_with_tag(self.slider, |mut slider| {
+                let _ = render_root.edit_widget_with_tag(self.slider, |mut slider| {
                     slider.insert_prop(TrackThickness(value));
                 });
             }

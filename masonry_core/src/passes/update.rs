@@ -1,7 +1,7 @@
 // Copyright 2024 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use tracing::{info_span, trace};
 use tree_arena::{ArenaMut, ArenaMutList, ArenaRef};
@@ -981,44 +981,43 @@ fn update_props_for_widget(
         return;
     }
 
-    if state.request_update_props {
+    // Consume this pass's requests before invoking user callbacks. Requests
+    // made by property_changed must survive for the next rewrite pass.
+    state.needs_update_props = false;
+    if std::mem::take(&mut state.request_update_props) {
         let class_diff = std::mem::take(&mut state.class_diff);
         class_set.apply(&class_diff);
 
-        // Check whether to update cache entries before applying the diff.
-        let reset_cache = cached_props_changed(&class_diff, &state.property_cache);
-
-        if reset_cache {
+        if cached_props_changed(&class_diff, &state.property_cache) {
+            let invalidated = std::mem::take(&mut state.property_cache.invalidated);
             let old_entries = std::mem::take(&mut state.property_cache.entries);
-            let mut new_entries = HashMap::with_capacity(old_entries.len());
+            state.property_cache.clear_dependencies();
 
-            // For now we just check the entire cache, which might be expensive
-            // if a widget has a lot of properties.
-            for (type_id, index) in &old_entries {
-                let new_index = stack.resolve_index(class_set, *type_id);
+            // Rebuild the whole dependency set before notifying widgets.
+            // A changed resolution is still a cached dependency even if the
+            // next paint/layout does not immediately read the property again.
+            let changed: Vec<_> = old_entries
+                .into_iter()
+                .filter_map(|(type_id, old_index)| {
+                    let new_index =
+                        stack.resolve_index(class_set, type_id, &mut state.property_cache);
+                    (invalidated || new_index != old_index).then_some(type_id)
+                })
+                .collect();
 
-                if new_index != *index || state.property_cache.invalidated {
-                    let mut ctx = UpdateCtx {
-                        global_state,
-                        widget_state: state,
-                        children: children.reborrow_mut(),
-                        ancestors: None,
-                        property_arena,
-                    };
-
-                    core_property_changed(&mut ctx, *type_id);
-                    widget.property_changed(&mut ctx, *type_id);
-                } else {
-                    new_entries.insert(*type_id, *index);
-                }
+            for type_id in changed {
+                let mut ctx = UpdateCtx {
+                    global_state,
+                    widget_state: state,
+                    children: children.reborrow_mut(),
+                    ancestors: None,
+                    property_arena,
+                };
+                core_property_changed(&mut ctx, type_id);
+                widget.property_changed(&mut ctx, type_id);
             }
-            state.property_cache.entries = new_entries;
         }
     }
-
-    state.request_update_props = false;
-    state.needs_update_props = false;
-    state.property_cache.invalidated = false;
 
     let parent_state = state;
     recurse_on_children(id, widget, children, |mut node| {

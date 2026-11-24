@@ -42,7 +42,7 @@ impl Driver {
         self.mode = mode;
 
         let render_root = ctx.render_root(self.window_id);
-        render_root.edit_widget_with_tag(SPLIT_TAG, |mut split| {
+        let _ = render_root.edit_widget_with_tag(SPLIT_TAG, |mut split| {
             let split_point = match mode {
                 SplitPointMode::Fraction => SplitPoint::Fraction(0.5),
                 SplitPointMode::FromStart => SplitPoint::FromStart(220.px()),
@@ -51,7 +51,7 @@ impl Driver {
             Split::set_split_point(&mut split, split_point);
         });
 
-        render_root.edit_widget_with_tag(STATUS_TAG, |mut label| {
+        let _ = render_root.edit_widget_with_tag(STATUS_TAG, |mut label| {
             let text = match mode {
                 SplitPointMode::Fraction => "Mode: fraction (0.5)",
                 SplitPointMode::FromStart => "Mode: from start (220px)",

@@ -67,6 +67,7 @@ pub enum GradientShape {
 /// "The gradient goes from point A to point B", we declare things like
 /// "The gradient has angle X", and A and B and computed dynamically from widget layout.
 #[derive(Clone, Debug, PartialEq)]
+#[must_use = "Use the configured gradient as a brush."]
 pub struct Gradient {
     /// Shape and coordinates of the gradient.
     pub shape: GradientShape,
@@ -114,7 +115,7 @@ pub enum RadialGradientShape {
 /// Matches the `radial-extent` parameter of the [`radial-gradient()`] syntax.
 ///
 /// [`radial-gradient()`]: https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/radial-gradient#size
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RadialGradientExtent {
     /// Interpreted like CSS `closest-corner` size.
     ClosestCorner,
@@ -218,6 +219,7 @@ impl Gradient {
     /// Returns gradient brush covering the given Rect.
     ///
     /// This matches the CSS spec for [`linear-gradient()`](https://drafts.csswg.org/css-images-3/#linear-gradient-syntax).
+    #[must_use = "Use the gradient brush."]
     pub fn get_peniko_gradient_for_rect(&self, rect: Rect) -> peniko::Gradient {
         peniko::Gradient {
             kind: self.shape.get_peniko_kind_for_rect(rect),
@@ -230,14 +232,11 @@ impl Gradient {
     }
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "no other way to go from f64 to f32"
-)]
 impl GradientShape {
     /// Returns gradient coordinates for a gradient covering the given Rect.
     ///
     /// This matches the CSS spec for [`linear-gradient()`](https://drafts.csswg.org/css-images-3/#linear-gradient-syntax).
+    #[must_use = "Use the resolved gradient geometry."]
     pub fn get_peniko_kind_for_rect(&self, rect: Rect) -> peniko::GradientKind {
         match self {
             Self::Linear { angle } => Self::get_peniko_linear_for_rect(*angle, rect),
@@ -272,6 +271,10 @@ impl GradientShape {
         LinearGradientPosition { start, end }.into()
     }
 
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "Peniko uses f32 radii; input is saturated to its finite range"
+    )]
     fn get_peniko_radial_for_rect(
         center: UnitPoint,
         shape: RadialGradientShape,
@@ -315,6 +318,10 @@ impl GradientShape {
         }
     }
 
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "Peniko represents gradient angles as f32"
+    )]
     fn get_peniko_sweep_for_rect(
         center: UnitPoint,
         start_angle: f64,

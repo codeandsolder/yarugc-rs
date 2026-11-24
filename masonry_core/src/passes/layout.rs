@@ -349,9 +349,8 @@ pub(crate) fn run_layout_on(
     let padding = props.get::<Padding>(&mut state.property_cache);
 
     // Force the border-box size to be large enough to actually contain the border and padding.
-    let minimum_size = Size::ZERO;
-    let minimum_size = border_width.size_up(minimum_size);
-    let minimum_size = padding.size_up(minimum_size);
+    let border_box_insets = border_width.insets() + padding.insets();
+    let minimum_size = border_box_insets.size();
     let border_box_size = minimum_size.max(chosen_size);
 
     if !state.needs_layout() && state.layout_border_box_size == border_box_size {
@@ -397,13 +396,13 @@ pub(crate) fn run_layout_on(
     state.paint_box_insets = Insets::ZERO;
 
     // Compute the insets for deriving the content-box from the border-box
-    let border_box_insets = border_width.insets_up(Insets::ZERO);
-    let border_box_insets = padding.insets_up(border_box_insets);
     state.border_box_insets = border_box_insets;
 
     // Compute the content-box size
-    let content_box_size = border_width.size_down(border_box_size);
-    let content_box_size = padding.size_down(content_box_size);
+    let content_box_size = Size::new(
+        (border_box_size.width - minimum_size.width).max(0.0),
+        (border_box_size.height - minimum_size.height).max(0.0),
+    );
 
     let mut ctx = LayoutCtx {
         global_state,

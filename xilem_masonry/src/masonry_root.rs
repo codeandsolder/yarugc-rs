@@ -51,19 +51,19 @@ impl<State> View<State, (), ViewCtx> for MasonryRoot<State> {
         app_state: &mut State,
     ) {
         let mut root_id = None;
-        render_root.edit_base_layer(|mut root| {
-            let mut root = root.downcast();
-            ctx.reset_changed_props();
-            ctx.reset_changed_transforms();
-            self.root_widget_view.rebuild(
-                &prev.root_widget_view,
-                root_widget_view_state,
-                ctx,
-                root.reborrow_mut(),
-                app_state,
-            );
-            root_id = Some(root.widget.inner_id());
-        });
+        let _ =
+            render_root.edit_base_layer(|mut root: masonry::core::WidgetMut<'_, Passthrough>| {
+                ctx.reset_changed_props();
+                ctx.reset_changed_transforms();
+                self.root_widget_view.rebuild(
+                    &prev.root_widget_view,
+                    root_widget_view_state,
+                    ctx,
+                    root.reborrow_mut(),
+                    app_state,
+                );
+                root_id = Some(root.widget.inner_id());
+            });
         render_root.set_focus_fallback(root_id);
         if cfg!(debug_assertions) && !render_root.needs_rewrite_passes() {
             tracing::debug!("Widget tree didn't change as result of rebuild");
@@ -76,9 +76,8 @@ impl<State> View<State, (), ViewCtx> for MasonryRoot<State> {
         ctx: &mut ViewCtx,
         render_root: Mut<'_, Self::Element>,
     ) {
-        render_root.edit_base_layer(|mut root| {
-            self.root_widget_view
-                .teardown(view_state, ctx, root.downcast());
+        let _ = render_root.edit_base_layer(|root| {
+            self.root_widget_view.teardown(view_state, ctx, root);
         });
     }
 
@@ -89,9 +88,11 @@ impl<State> View<State, (), ViewCtx> for MasonryRoot<State> {
         render_root: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> xilem_core::MessageResult<()> {
-        render_root.edit_base_layer(|mut root| {
-            self.root_widget_view
-                .message(view_state, message, root.downcast(), app_state)
-        })
+        render_root
+            .edit_base_layer(|root| {
+                self.root_widget_view
+                    .message(view_state, message, root, app_state)
+            })
+            .unwrap_or(xilem_core::MessageResult::Stale)
     }
 }

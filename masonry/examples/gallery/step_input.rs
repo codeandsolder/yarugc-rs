@@ -103,7 +103,7 @@ impl DemoPage for StepInputDemo {
         );
 
         let id = render_root.property_arena().insert(stack);
-        render_root.edit_widget_with_tag(self.tag_custom, |mut widget| {
+        let _ = render_root.edit_widget_with_tag(self.tag_custom, |mut widget| {
             widget.set_property_stack(Some(id));
         });
 
@@ -122,10 +122,10 @@ impl DemoPage for StepInputDemo {
                 .unwrap()
                 .id();
             if widget_id == id_balance {
-                render_root.edit_widget_with_tag(self.tag_left, |mut widget| {
+                let _ = render_root.edit_widget_with_tag(self.tag_left, |mut widget| {
                     StepInput::set_base(&mut widget, BALANCE_TOTAL / 2);
                 });
-                render_root.edit_widget_with_tag(self.tag_right, |mut widget| {
+                let _ = render_root.edit_widget_with_tag(self.tag_right, |mut widget| {
                     StepInput::set_base(&mut widget, BALANCE_TOTAL / 2);
                 });
                 return Handled::Yes;
@@ -142,12 +142,12 @@ impl DemoPage for StepInputDemo {
                 .id();
 
             if widget_id == id_left {
-                render_root.edit_widget_with_tag(self.tag_right, |mut widget| {
+                let _ = render_root.edit_widget_with_tag(self.tag_right, |mut widget| {
                     StepInput::set_base(&mut widget, BALANCE_TOTAL - value);
                 });
                 return Handled::Yes;
             } else if widget_id == id_right {
-                render_root.edit_widget_with_tag(self.tag_left, |mut widget| {
+                let _ = render_root.edit_widget_with_tag(self.tag_left, |mut widget| {
                     StepInput::set_base(&mut widget, BALANCE_TOTAL - value);
                 });
                 return Handled::Yes;

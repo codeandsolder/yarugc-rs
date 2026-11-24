@@ -86,34 +86,34 @@ impl DemoPage for PaginationDemo {
                 .id();
 
             if widget_id == id_page_count {
-                render_root.edit_widget_with_tag(self.tag_pagination, |mut widget| {
+                let _ = render_root.edit_widget_with_tag(self.tag_pagination, |mut widget| {
                     Pagination::set_page_count(&mut widget, value as usize);
                 });
                 return Handled::Yes;
             }
             if widget_id == id_page_active {
-                render_root.edit_widget_with_tag(self.tag_content, |mut content| {
+                let _ = render_root.edit_widget_with_tag(self.tag_content, |mut content| {
                     Label::set_text(&mut content, format!("Now on page {}", value));
                 });
-                render_root.edit_widget_with_tag(self.tag_pagination, |mut widget| {
+                let _ = render_root.edit_widget_with_tag(self.tag_pagination, |mut widget| {
                     Pagination::set_active_page(&mut widget, (value - 1) as usize);
                 });
                 return Handled::Yes;
             }
             if widget_id == id_buttons_start {
-                render_root.edit_widget_with_tag(self.tag_pagination, |mut widget| {
+                let _ = render_root.edit_widget_with_tag(self.tag_pagination, |mut widget| {
                     Pagination::set_buttons_start(&mut widget, value as u8);
                 });
                 return Handled::Yes;
             }
             if widget_id == id_buttons_end {
-                render_root.edit_widget_with_tag(self.tag_pagination, |mut widget| {
+                let _ = render_root.edit_widget_with_tag(self.tag_pagination, |mut widget| {
                     Pagination::set_buttons_end(&mut widget, value as u8);
                 });
                 return Handled::Yes;
             }
             if widget_id == id_buttons_total {
-                render_root.edit_widget_with_tag(self.tag_pagination, |mut widget| {
+                let _ = render_root.edit_widget_with_tag(self.tag_pagination, |mut widget| {
                     Pagination::set_buttons_total(&mut widget, value as u8);
                 });
                 return Handled::Yes;
@@ -131,10 +131,10 @@ impl DemoPage for PaginationDemo {
                 return Handled::No;
             }
 
-            render_root.edit_widget_with_tag(self.tag_content, |mut content| {
+            let _ = render_root.edit_widget_with_tag(self.tag_content, |mut content| {
                 Label::set_text(&mut content, format!("Now on page {}", page_idx + 1));
             });
-            render_root.edit_widget_with_tag(self.tag_page_active, |mut widget| {
+            let _ = render_root.edit_widget_with_tag(self.tag_page_active, |mut widget| {
                 StepInput::set_base(&mut widget, (page_idx + 1).cast_signed());
             });
             return Handled::Yes;

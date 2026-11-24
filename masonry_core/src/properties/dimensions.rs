@@ -16,6 +16,7 @@ impl<W: Widget> UsesProperty<Dimensions> for W {}
 /// Generally this is meant to be used as a write-only property.
 /// Masonry will automatically resolve the dimensions to actual numbers during the layout pass.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[must_use = "Use the configured dimensions in layout."]
 pub struct Dimensions {
     width: Dim,
     height: Dim,

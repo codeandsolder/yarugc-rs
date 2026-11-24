@@ -57,11 +57,11 @@ impl BadgeDemo {
     }
 
     fn apply_count(&self, render_root: &mut RenderRoot) {
-        render_root.edit_widget_with_tag(self.count_label, |mut label| {
+        let _ = render_root.edit_widget_with_tag(self.count_label, |mut label| {
             Label::set_text(&mut label, format!("count: {}", self.count));
         });
 
-        render_root.edit_widget_with_tag(self.inbox_badged, |mut badged| {
+        let _ = render_root.edit_widget_with_tag(self.inbox_badged, |mut badged| {
             if let Some(badge) = Self::make_count_badge(self.count) {
                 Badged::set_badge(&mut badged, badge);
             } else {

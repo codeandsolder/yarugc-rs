@@ -10,6 +10,7 @@ impl<W: Widget> UsesProperty<CornerRadius> for W {}
 /// The radius of a widget's box corners.
 #[expect(missing_docs, reason = "field names are self-descriptive")]
 #[derive(Default, Clone, Copy, Debug, PartialEq)]
+#[must_use = "Use the configured corner radius."]
 pub struct CornerRadius {
     pub radius: Length,
 }

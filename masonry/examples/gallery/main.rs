@@ -77,10 +77,10 @@ impl Driver {
         let shell = self.demos[demo_idx].shell_tags();
 
         let render_root = ctx.render_root(window_id);
-        render_root.edit_widget_with_tag(shell.disabled_toggle, |mut checkbox| {
+        let _ = render_root.edit_widget_with_tag(shell.disabled_toggle, |mut checkbox| {
             Checkbox::set_checked(&mut checkbox, disabled);
         });
-        render_root.edit_widget_with_tag(shell.content_wrapper, |mut content| {
+        let _ = render_root.edit_widget_with_tag(shell.content_wrapper, |mut content| {
             content.ctx.set_disabled(disabled);
         });
     }
@@ -95,10 +95,10 @@ impl Driver {
         {
             let name = self.demos[idx].name();
             let render_root = ctx.render_root(window_id);
-            render_root.edit_widget_with_tag(self.title_tag, |mut label| {
+            let _ = render_root.edit_widget_with_tag(self.title_tag, |mut label| {
                 Label::set_text(&mut label, name);
             });
-            render_root.edit_widget_with_tag(self.stack_tag, |mut stack| {
+            let _ = render_root.edit_widget_with_tag(self.stack_tag, |mut stack| {
                 IndexedStack::set_active_child(&mut stack, idx);
             });
         }

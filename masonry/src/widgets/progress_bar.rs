@@ -221,7 +221,7 @@ impl Widget for ProgressBar {
                 // Currently bg_rect() gives a rect without borders, so we can use it.
                 // However in the future when bg_rect() gets expanded to include borders,
                 // we'll need to create a special sans-border rect for this fill.
-                let bg_rect = border_width.bg_rect(border_box, &corner_radius);
+                let bg_rect = border_width.bg_rect(border_box, corner_radius);
 
                 painter.fill(bg_rect, &gradient).draw();
             }

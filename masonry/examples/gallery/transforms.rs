@@ -50,10 +50,10 @@ impl TransformsDemo {
             .then_scale(self.scale)
             .then_translate(-pivot);
 
-        render_root.edit_widget_with_tag(self.target, |mut target| {
+        let _ = render_root.edit_widget_with_tag(self.target, |mut target| {
             target.set_transform(transform);
         });
-        render_root.edit_widget_with_tag(self.state_label, |mut label| {
+        let _ = render_root.edit_widget_with_tag(self.state_label, |mut label| {
             Label::set_text(
                 &mut label,
                 format!(

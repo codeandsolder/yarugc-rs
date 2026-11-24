@@ -1804,7 +1804,11 @@ impl_context_method!(
         ) {
             let callback = MutateCallback {
                 id: child.id(),
-                callback: Box::new(|mut widget_mut| f(widget_mut.downcast())),
+                callback: Box::new(|mut widget_mut| {
+                    if let Some(widget) = widget_mut.try_downcast() {
+                        f(widget);
+                    }
+                }),
             };
             self.global_state.mutate_callbacks.push(callback);
         }

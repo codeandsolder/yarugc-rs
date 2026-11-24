@@ -50,6 +50,10 @@ impl PropertyCache {
     /// until the update pass can notify the widgets that read them.
     pub(crate) fn invalidate(&mut self) {
         self.invalidated = true;
+        self.clear_dependencies();
+    }
+
+    pub(crate) fn clear_dependencies(&mut self) {
         self.relevant_classes.clear();
         self.relevant_pseudo = PseudoClasses::default();
     }

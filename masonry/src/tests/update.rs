@@ -966,3 +966,50 @@ fn widget_access_resolves_child_specific_defaults() {
         assert_eq!(*child.get_prop::<ContentColor>(), child_color);
     });
 }
+
+#[test]
+fn property_change_callbacks_preserve_followup_invalidations() {
+    use crate::core::{PropertyStack, Selector};
+    use crate::peniko::color::AlphaColor;
+    use crate::properties::ContentColor;
+    use std::any::TypeId;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    let calls = Rc::new(Cell::new(0_u32));
+    let armed = Rc::new(Cell::new(false));
+    let count = calls.clone();
+    let trigger = armed.clone();
+    let widget = ModularWidget::new(()).property_change_fn(move |_, ctx, ty| {
+        if ty == TypeId::of::<ContentColor>() {
+            count.set(count.get() + 1);
+            if trigger.replace(false) {
+                ctx.add_class("followup");
+            }
+        }
+    });
+    let black = ContentColor::new(AlphaColor::BLACK);
+    let white = ContentColor::new(AlphaColor::WHITE);
+    let red = ContentColor::new(AlphaColor::from_rgb8(255, 0, 0));
+    let mut stack = PropertyStack::new();
+    stack.push_layer(Selector::new(), black);
+    stack.push_layer(Selector::classes(&["selected"]), white);
+    stack.push_layer(Selector::classes(&["followup"]), red);
+    let mut harness = TestHarness::create(test_property_set(), NewWidget::new(widget));
+    let id = harness.render_root().insert_property_stack(stack);
+    harness.edit_root_widget(|mut root| {
+        root.set_property_stack(Some(id));
+        assert_eq!(*root.get_prop::<ContentColor>(), black);
+    });
+    calls.set(0);
+    armed.set(true);
+
+    // Neither a paint callback nor a fresh mutable read re-registers this
+    // property dependency after the first notification.
+    harness.edit_root_widget(|mut root| root.ctx.add_class("selected"));
+    assert_eq!(calls.get(), 2);
+    assert_eq!(*harness.root_widget().get_prop::<ContentColor>(), red);
+    harness.edit_root_widget(|mut root| root.ctx.remove_class("followup"));
+    assert_eq!(calls.get(), 3);
+    assert_eq!(*harness.root_widget().get_prop::<ContentColor>(), white);
+}

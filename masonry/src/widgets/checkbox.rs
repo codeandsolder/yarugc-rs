@@ -292,7 +292,7 @@ impl Widget for Checkbox {
         let border_width = *props.get::<BorderWidth>(cache);
         let border_radius = *props.get::<CornerRadius>(cache);
 
-        let border_rect = border_width.border_rect(check_size.to_rect(), &border_radius);
+        let border_rect = border_width.border_rect(check_size.to_rect(), border_radius);
 
         let border_color = *props.get::<BorderColor>(cache);
 

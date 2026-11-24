@@ -39,11 +39,11 @@ impl Driver {
 
     fn ui_update(&mut self, render_root: &mut RenderRoot, action: ErasedAction) {
         if action.is::<ButtonPress>() {
-            render_root.edit_widget_with_tag(TEXT_INPUT_TAG, |mut text_input| {
+            let _ = render_root.edit_widget_with_tag(TEXT_INPUT_TAG, |mut text_input| {
                 let mut text_area = TextInput::text_mut(&mut text_input);
                 TextArea::reset_text(&mut text_area, "");
             });
-            render_root.edit_widget_with_tag(LIST_TAG, |mut list| {
+            let _ = render_root.edit_widget_with_tag(LIST_TAG, |mut list| {
                 let child = Label::new(self.next_task.clone()).prepare();
                 Flex::add_fixed(&mut list, child);
             });

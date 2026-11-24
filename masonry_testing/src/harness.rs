@@ -708,7 +708,7 @@ impl<W: Widget> TestHarness<W> {
         if self
             .render_root
             .get_layer_root(0)
-            .find_widget_under_pointer(widget_center)
+            .and_then(|root| root.find_widget_under_pointer(widget_center))
             .map(|w| w.id())
             != Some(id)
         {
@@ -869,12 +869,18 @@ impl<W: Widget> TestHarness<W> {
 
     /// Returns a [`WidgetRef`] to the root widget.
     pub fn root_widget(&self) -> WidgetRef<'_, W> {
-        self.render_root.get_layer_root(0).downcast().unwrap()
+        self.render_root
+            .get_layer_root(0)
+            .and_then(|root| root.downcast())
+            .expect("test root has expected type")
     }
 
     /// Returns the [`WidgetId`] of the root widget.
     pub fn root_id(&self) -> WidgetId {
-        self.render_root.get_layer_root(0).id()
+        self.render_root
+            .get_layer_root(0)
+            .expect("test root exists")
+            .id()
     }
 
     /// Replace the tree-wide default properties at runtime.
@@ -939,7 +945,7 @@ impl<W: Widget> TestHarness<W> {
     /// Returns a [`WidgetRef`] to the [focused widget](masonry_core::doc::masonry_concepts#text-focus).
     pub fn focused_widget(&self) -> Option<WidgetRef<'_, dyn Widget>> {
         self.render_root
-            .get_layer_root(0)
+            .get_layer_root(0)?
             .find_widget_by_id(self.render_root.focused_widget()?)
     }
 
@@ -972,17 +978,19 @@ impl<W: Widget> TestHarness<W> {
             }
         }
 
-        inspect(self.render_root.get_layer_root(0), &mut f);
+        if let Some(root) = self.render_root.get_layer_root(0) {
+            inspect(root, &mut f);
+        }
     }
 
     /// Returns a [`WidgetMut`] to the root widget.
     ///
     /// Because of how `WidgetMut` works, it can only be passed to a user-provided callback.
     pub fn edit_root_widget<R>(&mut self, f: impl FnOnce(WidgetMut<'_, W>) -> R) -> R {
-        let ret = self.render_root.edit_base_layer(|mut root| {
-            let root = root.downcast::<W>();
-            f(root)
-        });
+        let ret = self
+            .render_root
+            .edit_base_layer(f)
+            .expect("test root has expected type");
         self.process_signals();
         ret
     }
@@ -995,7 +1003,10 @@ impl<W: Widget> TestHarness<W> {
         id: WidgetId,
         f: impl FnOnce(WidgetMut<'_, dyn Widget>) -> R,
     ) -> R {
-        let ret = self.render_root.edit_widget(id, f);
+        let ret = self
+            .render_root
+            .edit_widget(id, f)
+            .expect("test widget exists");
         self.process_signals();
         ret
     }
@@ -1009,7 +1020,10 @@ impl<W: Widget> TestHarness<W> {
         tag: WidgetTag<W2>,
         f: impl FnOnce(WidgetMut<'_, W2>) -> R,
     ) -> R {
-        let ret = self.render_root.edit_widget_with_tag(tag, f);
+        let ret = self
+            .render_root
+            .edit_widget_with_tag(tag, f)
+            .expect("test widget has expected tag and type");
         self.process_signals();
         ret
     }

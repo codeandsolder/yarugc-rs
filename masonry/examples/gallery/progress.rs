@@ -38,11 +38,11 @@ impl ProgressDemo {
             Some(self.value)
         };
 
-        render_root.edit_widget_with_tag(self.bar, |mut bar| {
+        let _ = render_root.edit_widget_with_tag(self.bar, |mut bar| {
             ProgressBar::set_progress(&mut bar, progress);
         });
 
-        render_root.edit_widget_with_tag(self.value_label, |mut label| {
+        let _ = render_root.edit_widget_with_tag(self.value_label, |mut label| {
             Label::set_text(
                 &mut label,
                 if let Some(value) = progress {
@@ -53,7 +53,7 @@ impl ProgressDemo {
             );
         });
 
-        render_root.edit_widget_with_tag(self.indeterminate, |mut checkbox| {
+        let _ = render_root.edit_widget_with_tag(self.indeterminate, |mut checkbox| {
             Checkbox::set_checked(&mut checkbox, self.is_indeterminate);
         });
     }

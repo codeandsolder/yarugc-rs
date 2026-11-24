@@ -66,10 +66,10 @@ impl DemoPage for CheckboxDemo {
             return Handled::No;
         }
 
-        render_root.edit_widget_with_tag(self.state_label, |mut label| {
+        let _ = render_root.edit_widget_with_tag(self.state_label, |mut label| {
             Label::set_text(&mut label, format!("Checked: {checked}"));
         });
-        render_root.edit_widget_with_tag(self.checkbox, |mut checkbox| {
+        let _ = render_root.edit_widget_with_tag(self.checkbox, |mut checkbox| {
             Checkbox::set_checked(&mut checkbox, checked);
         });
         Handled::Yes

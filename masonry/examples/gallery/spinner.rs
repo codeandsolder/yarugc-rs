@@ -98,7 +98,7 @@ impl DemoPage for SpinnerDemo {
                 _ => None,
             };
             if let Some(prop) = track_color {
-                render_root.edit_widget_with_tag(self.tag_spinner, |mut w| {
+                let _ = render_root.edit_widget_with_tag(self.tag_spinner, |mut w| {
                     w.insert_prop(prop);
                 });
                 return Handled::Yes;
@@ -113,28 +113,28 @@ impl DemoPage for SpinnerDemo {
         match () {
             _ if matches_tag!(self.tag_duration_input) => {
                 self.duration = value;
-                render_root.edit_widget_with_tag(self.tag_spinner, |mut w| {
+                let _ = render_root.edit_widget_with_tag(self.tag_spinner, |mut w| {
                     w.insert_prop(AnimationDuration { seconds: value });
                 });
                 Handled::Yes
             }
             _ if matches_tag!(self.tag_thickness_input) => {
                 self.thickness = value;
-                render_root.edit_widget_with_tag(self.tag_spinner, |mut w| {
+                let _ = render_root.edit_widget_with_tag(self.tag_spinner, |mut w| {
                     w.insert_prop(TrackThickness(value.px()));
                 });
                 Handled::Yes
             }
             _ if matches_tag!(self.tag_width_input) => {
                 self.width = value;
-                render_root.edit_widget_with_tag(self.tag_spinner_box, |mut w| {
+                let _ = render_root.edit_widget_with_tag(self.tag_spinner_box, |mut w| {
                     SizedBox::set_width(&mut w, value.px());
                 });
                 Handled::Yes
             }
             _ if matches_tag!(self.tag_height_input) => {
                 self.height = value;
-                render_root.edit_widget_with_tag(self.tag_spinner_box, |mut w| {
+                let _ = render_root.edit_widget_with_tag(self.tag_spinner_box, |mut w| {
                     SizedBox::set_height(&mut w, value.px());
                 });
                 Handled::Yes

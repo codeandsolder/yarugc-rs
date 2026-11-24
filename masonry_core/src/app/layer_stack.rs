@@ -56,18 +56,13 @@ impl LayerStack {
         }
     }
 
-    /// Returns the number of layers, including the base layer.
-    pub(crate) fn layer_count(&self) -> usize {
-        self.layers.len()
+    /// The root identifiers, in layer order.
+    pub(crate) fn layer_root_ids(&self) -> impl Iterator<Item = WidgetId> + '_ {
+        self.layers.iter().map(|layer| layer.root.id())
     }
-
-    /// The [`WidgetId`] of the root widget of the given layer.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `idx` is out of bounds.
-    pub(crate) fn layer_root_id(&self, idx: usize) -> WidgetId {
-        self.layers[idx].root.id()
+    /// The root identifier of a layer, if present.
+    pub(crate) fn layer_root_id(&self, idx: usize) -> Option<WidgetId> {
+        self.layers.get(idx).map(|layer| layer.root.id())
     }
 }
 
@@ -89,20 +84,6 @@ impl LayerStack {
         };
         this.widget.layers.push(layer);
         this.ctx.children_changed();
-    }
-
-    /// Returns a mutable reference to the root widget of the layer at `idx`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `idx` is out of bounds.
-    #[expect(dead_code, reason = "Might be useful later")]
-    pub(crate) fn layer_root_mut<'t>(
-        this: &'t mut WidgetMut<'_, Self>,
-        idx: usize,
-    ) -> WidgetMut<'t, dyn Widget> {
-        let layer = &mut this.widget.layers[idx].root;
-        this.ctx.get_mut(layer)
     }
 
     /// Removes the layer with the given widget as root.

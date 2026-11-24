@@ -89,7 +89,7 @@ pub fn paint_background(
     // TODO: Fix remaining issues, see https://github.com/linebender/xilem/issues/1592
     //    1. Don't subtract the border from the background rect. Will need solution for border
     //       painting, as background should go exactly to the outer border and not beyond.
-    let bg_rect = border_width.bg_rect(border_box, corner_radius);
+    let bg_rect = border_width.bg_rect(border_box, *corner_radius);
     let bg_brush = background.get_peniko_brush_for_rect(bg_rect.rect());
     painter.fill(bg_rect, &bg_brush).draw();
 }
@@ -106,7 +106,7 @@ pub fn paint_border(
     if border_width_value == 0. || !border_color.is_visible() {
         return;
     }
-    let border_rect = border_width.border_rect(border_box, corner_radius);
+    let border_rect = border_width.border_rect(border_box, *corner_radius);
     // Using Join::Miter avoids rounding corners when a widget has a wide border.
     let border_style = Stroke {
         width: border_width_value,

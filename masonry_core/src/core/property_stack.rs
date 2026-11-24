@@ -131,13 +131,21 @@ impl PropertyStack {
             })
     }
 
-    pub(crate) fn resolve_index(&self, classes: &ClassSet, prop_type: TypeId) -> Option<usize> {
-        self.find_matching(
-            classes,
-            |props| props.map.as_raw().contains_key(&prop_type).then_some(()),
-            |_| {},
-        )
-        .map(|(index, ())| index)
+    pub(crate) fn resolve_index(
+        &self,
+        classes: &ClassSet,
+        prop_type: TypeId,
+        cache: &mut PropertyCache,
+    ) -> Option<usize> {
+        let index = self
+            .find_matching(
+                classes,
+                |props| props.map.as_raw().contains_key(&prop_type).then_some(()),
+                |selector| cache.extend_relevant(selector),
+            )
+            .map(|(index, ())| index);
+        cache.entries.insert(prop_type, index);
+        index
     }
 
     fn cached_or_resolve<'a, P: Property>(
@@ -241,7 +249,7 @@ mod tests {
         let readonly = props.as_ref();
         assert_eq!(readonly.get_without_saving::<Value>(&cache), &Value(3));
         assert_eq!(
-            stack.resolve_index(&classes, TypeId::of::<Value>()),
+            stack.resolve_index(&classes, TypeId::of::<Value>(), &mut cache),
             Some(1)
         );
 
