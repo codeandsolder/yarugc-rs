@@ -972,9 +972,6 @@ dom_interface!(SvgAnimationElement: SvgElement => SvgAnimationElement {
 });
 
 dom_interface!(SvgCircleElement: SvgGeometryElement => SvgCircleElement {
-    fn fill(self, color: impl Into<peniko::Color>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, color)
-    }
 });
 
 dom_interface!(SvgClipPathElement: SvgElement => SvgClipPathElement {
@@ -990,12 +987,19 @@ dom_interface!(SvgDescElement: SvgElement => SvgDescElement {
 });
 
 dom_interface!(SvgElement: Element => SvgElement {
-});
-
-dom_interface!(SvgEllipseElement: SvgGeometryElement => SvgEllipseElement {
     fn fill(self, color: impl Into<peniko::Color>) -> crate::svg::Fill<Self, State, Action> {
         crate::svg::fill(self, color)
     }
+    fn stroke(
+        self,
+        color: impl Into<peniko::Color>,
+        style: peniko::kurbo::Stroke,
+    ) -> crate::svg::Stroke<Self, State, Action> {
+        crate::svg::stroke(self, color, style)
+    }
+});
+
+dom_interface!(SvgEllipseElement: SvgGeometryElement => SvgEllipseElement {
 });
 
 dom_interface!(SvgfeBlendElement: SvgElement => SvgfeBlendElement {
@@ -1080,26 +1084,9 @@ dom_interface!(SvgForeignObjectElement: SvgGraphicsElement => SvgForeignObjectEl
 });
 
 dom_interface!(SvggElement: SvgGraphicsElement => SvggElement {
-    fn fill(self, color: impl Into<peniko::Color>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, color)
-    }
-    fn stroke(
-        self,
-        color: impl Into<peniko::Color>,
-        style: peniko::kurbo::Stroke,
-    ) -> crate::svg::Stroke<Self, State, Action> {
-        crate::svg::stroke(self, color, style)
-    }
 });
 
 dom_interface!(SvgGeometryElement: SvgGraphicsElement => SvgGeometryElement {
-    fn stroke(
-        self,
-        color: impl Into<peniko::Color>,
-        style: peniko::kurbo::Stroke,
-    ) -> crate::svg::Stroke<Self, State, Action> {
-        crate::svg::stroke(self, color, style)
-    }
 });
 
 dom_interface!(SvgGradientElement: SvgElement => SvgGradientElement {
@@ -1130,30 +1117,18 @@ dom_interface!(SvgmPathElement: SvgElement => SvgmPathElement {
 });
 
 dom_interface!(SvgPathElement: SvgGeometryElement => SvgPathElement {
-    fn fill(self, color: impl Into<peniko::Color>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, color)
-    }
 });
 
 dom_interface!(SvgPatternElement: SvgElement => SvgPatternElement {
 });
 
 dom_interface!(SvgPolygonElement: SvgGeometryElement => SvgPolygonElement {
-    fn fill(self, color: impl Into<peniko::Color>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, color)
-    }
 });
 
 dom_interface!(SvgPolylineElement: SvgGeometryElement => SvgPolylineElement {
-    fn fill(self, color: impl Into<peniko::Color>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, color)
-    }
 });
 
 dom_interface!(SvgRectElement: SvgGeometryElement => SvgRectElement {
-    fn fill(self, color: impl Into<peniko::Color>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, color)
-    }
 });
 
 dom_interface!(SvgScriptElement: SvgElement => SvgScriptElement {
@@ -1175,16 +1150,6 @@ dom_interface!(SvgSymbolElement: SvgElement => SvgSymbolElement {
 });
 
 dom_interface!(SvgTextContentElement: SvgGraphicsElement => SvgTextContentElement {
-    fn fill(self, color: impl Into<peniko::Color>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, color)
-    }
-    fn stroke(
-        self,
-        color: impl Into<peniko::Color>,
-        style: peniko::kurbo::Stroke,
-    ) -> crate::svg::Stroke<Self, State, Action> {
-        crate::svg::stroke(self, color, style)
-    }
 });
 
 dom_interface!(SvgTextPathElement: SvgTextContentElement => SvgTextPathElement {
