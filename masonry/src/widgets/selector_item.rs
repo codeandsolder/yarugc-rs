@@ -10,7 +10,7 @@ use crate::core::{
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Size};
-use crate::layout::{LayoutSize, LenReq, Length, SizeDef};
+use crate::layout::{LenReq, Length, SizeDef};
 use crate::widgets::Label;
 
 /// An option in a [`SelectorMenu`](crate::layers::SelectorMenu).
@@ -64,16 +64,7 @@ impl Widget for SelectorItem {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        let auto_length = len_req.into();
-        let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-
-        ctx.compute_length(
-            &mut self.child,
-            auto_length,
-            context_size,
-            axis,
-            cross_length,
-        )
+        ctx.measure_child(&mut self.child, axis, len_req, cross_length)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {

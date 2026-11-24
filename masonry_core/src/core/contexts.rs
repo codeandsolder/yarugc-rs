@@ -649,6 +649,28 @@ impl_context_method!(MeasureCtx<'_>, LayoutCtx<'_>, {
 
 // --- MARK: MEASURE
 impl MeasureCtx<'_> {
+    /// Measures a child within this widget's local content box.
+    ///
+    /// The child's automatic size follows the current length request and its
+    /// relative cross-axis size resolves against the available cross length.
+    /// Unlike [`redirect_measurement`](Self::redirect_measurement), this does not
+    /// propagate the outer container's measurement context or disable caching.
+    pub fn measure_child(
+        &mut self,
+        child: &mut WidgetPod<impl Widget + ?Sized>,
+        axis: Axis,
+        len_req: crate::layout::LenReq,
+        cross_length: Option<Length>,
+    ) -> Length {
+        self.compute_length(
+            child,
+            len_req.into(),
+            LayoutSize::maybe(axis.cross(), cross_length),
+            axis,
+            cross_length,
+        )
+    }
+
     /// Returns the fallback [`LenDef`] of this measurement.
     ///
     /// This is essential information for widgets that want pass through measurements.

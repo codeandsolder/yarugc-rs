@@ -17,7 +17,7 @@ use crate::core::{
 use crate::core::{MeasureCtx, WidgetMut};
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Rect, Size};
-use crate::layout::{AsUnit, LayoutSize, LenReq, Length, SizeDef, UnitPoint};
+use crate::layout::{AsUnit, LenReq, Length, SizeDef, UnitPoint};
 
 // TODO - Have child widget type as generic argument
 
@@ -127,16 +127,7 @@ impl Widget for Align {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        let auto_length = len_req.into();
-        let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-
-        let child_length = ctx.compute_length(
-            &mut self.child,
-            auto_length,
-            context_size,
-            axis,
-            cross_length,
-        );
+        let child_length = ctx.measure_child(&mut self.child, axis, len_req, cross_length);
 
         // Default to child length
         let mut length = child_length;

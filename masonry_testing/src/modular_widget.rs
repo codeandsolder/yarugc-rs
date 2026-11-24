@@ -122,10 +122,7 @@ impl<W: Widget + ?Sized> ModularWidget<WidgetPod<W>> {
                 ctx.register_child(child);
             })
             .measure_fn(move |child, ctx, _props, axis, len_req, cross_length| {
-                let auto_length = len_req.into();
-                let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-
-                ctx.compute_length(child, auto_length, context_size, axis, cross_length)
+                ctx.measure_child(child, axis, len_req, cross_length)
             })
             .layout_fn(move |child, ctx, _props, size| {
                 let child_size = ctx.compute_size(child, SizeDef::fit(size), size.into());
