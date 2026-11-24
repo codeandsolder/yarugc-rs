@@ -30,7 +30,7 @@ use crate::layout::{LenReq, Length};
 /// Optionally, specify minimum horizontal and vertical lengths.
 #[macro_export]
 macro_rules! single_child_container {
-    ($child:ident, $alignment:expr $(, min = ($width:expr, $height:expr))?) => {
+    ($child:ident, $alignment:expr $(, min = ($width:expr, $height:expr $(,)?))? $(,)?) => {
         fn register_children(&mut self, ctx: &mut $crate::core::RegisterCtx<'_>) {
             ctx.register_child(&mut self.$child);
         }
