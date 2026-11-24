@@ -214,7 +214,19 @@ fn fixed_readouts_share_one_dynamic_layer() {
 
     let instance = wgpu::Instance::default();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+    let timestamp_features =
+        wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
+    let timestamps_available = adapter.features().contains(timestamp_features);
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_features: if timestamps_available {
+            timestamp_features
+        } else {
+            wgpu::Features::empty()
+        },
+        ..Default::default()
+    }))
+    .unwrap();
+    eprintln!("readout adapter: {:?}", adapter.get_info());
     let compositor = Compositor::new(&device, wgpu::TextureFormat::Rgba8Unorm);
     let mut renderer = Renderer::new();
     let mut grid = Grid::with_dimensions(usize::from(COLUMNS), usize::from(ROWS));
@@ -271,6 +283,8 @@ fn fixed_readouts_share_one_dynamic_layer() {
     .unwrap();
     let mut batch = glyphs.prepare(&compositor, EXTENT, &slots).unwrap();
     assert_eq!(batch.cell_count(), COUNT * 10);
+    assert!(batch.set_text(0, "−1.0 µm").unwrap());
+    assert!(!batch.set_text(0, "−1.0 µm").unwrap());
     for i in 0..COUNT {
         assert!(batch.set_text(i, "999 m").unwrap());
     }
@@ -294,6 +308,10 @@ fn fixed_readouts_share_one_dynamic_layer() {
         }
         rendered
     };
+    let mut discarded = device.create_command_encoder(&Default::default());
+    assert!(batch.render(&mut discarded));
+    drop(discarded);
+    batch.invalidate_surface();
     assert!(draw_batch(&mut batch));
     assert!(
         !draw_batch(&mut batch),
@@ -345,7 +363,7 @@ fn fixed_readouts_share_one_dynamic_layer() {
 
     // Exercise the CPU-only update path without measuring text formatting,
     // layout, GPU execution, or texture allocation. This is not a frame benchmark.
-    for count in [8, 64, COUNT] {
+    for count in [1, 8, 64, COUNT] {
         const ITERATIONS: u32 = 1000;
         let start = std::time::Instant::now();
         for frame in 0..ITERATIONS {
@@ -365,6 +383,18 @@ fn fixed_readouts_share_one_dynamic_layer() {
         Refresh::Unchanged
     ));
 
+    if timestamps_available {
+        measure_readout_gpu(
+            &device,
+            &queue,
+            &compositor,
+            &composition,
+            &target,
+            &mut batch,
+            COUNT,
+        );
+    }
+
     // Resizing resolves new geometry; telemetry itself never changes it.
     window
         .root()
@@ -381,4 +411,99 @@ fn fixed_readouts_share_one_dynamic_layer() {
         refresh(&mut window, &mut renderer),
         Refresh::Unchanged
     ));
+}
+
+// Isolate GPU raster/composition using timestamps. Queue staging uploads happen
+// before the first encoder timestamp, and formatting is outside these intervals.
+fn measure_readout_gpu(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    compositor: &Compositor,
+    composition: &Composition,
+    target: &Surface,
+    batch: &mut yarugc::ReadoutBatch,
+    count: usize,
+) {
+    const SAMPLES: u32 = 64;
+    const QUERY_COUNT: u32 = SAMPLES * 3;
+    const BYTES: u64 = QUERY_COUNT as u64 * 8;
+    let query_set = device.create_query_set(&wgpu::QuerySetDescriptor {
+        label: Some("readout timings"),
+        ty: wgpu::QueryType::Timestamp,
+        count: QUERY_COUNT,
+    });
+    let resolve = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("readout timestamp resolve"),
+        size: BYTES,
+        usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let read = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("readout timestamp readback"),
+        size: BYTES,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    for changed in [1, count] {
+        for frame in 0..SAMPLES {
+            let text = if frame % 2 == 0 { "999 m" } else { "1.00 km" };
+            for i in 0..changed {
+                assert!(batch.set_text(i, text).unwrap());
+            }
+            let mut encoder = device.create_command_encoder(&Default::default());
+            let base = frame * 3;
+            encoder.write_timestamp(&query_set, base);
+            assert!(batch.render(&mut encoder));
+            encoder.write_timestamp(&query_set, base + 1);
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("readout host composition"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: target.view(),
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    ..Default::default()
+                });
+                compositor.draw(&mut pass, composition);
+            }
+            encoder.write_timestamp(&query_set, base + 2);
+            queue.submit(Some(encoder.finish()));
+        }
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.resolve_query_set(&query_set, 0..QUERY_COUNT, &resolve, 0);
+        encoder.copy_buffer_to_buffer(&resolve, 0, &read, 0, Some(BYTES));
+        queue.submit(Some(encoder.finish()));
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        read.slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| tx.send(result).unwrap());
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        rx.recv().unwrap().unwrap();
+        {
+            let bytes = read.slice(..).get_mapped_range().unwrap();
+            let stamps: &[u64] = bytemuck::cast_slice(&bytes);
+            let period = f64::from(queue.get_timestamp_period());
+            let mut raster: Vec<_> = stamps
+                .chunks_exact(3)
+                .map(|s| (s[1] - s[0]) as f64 * period / 1000.0)
+                .collect();
+            let mut compose: Vec<_> = stamps
+                .chunks_exact(3)
+                .map(|s| (s[2] - s[1]) as f64 * period / 1000.0)
+                .collect();
+            raster.sort_by(f64::total_cmp);
+            compose.sort_by(f64::total_cmp);
+            let mid = raster.len() / 2;
+            let p95 = raster.len() * 95 / 100;
+            eprintln!(
+                "GPU ({changed} changed, {count} visible): raster median {:.1} µs p95 {:.1} µs; compose median {:.1} µs p95 {:.1} µs",
+                raster[mid], raster[p95], compose[mid], compose[p95]
+            );
+        }
+        read.unmap();
+    }
 }

@@ -64,7 +64,7 @@ impl std::error::Error for ReadoutError {}
 #[derive(Debug)]
 pub struct ReadoutRenderer {
     device: wgpu::Device,
-    glyphs: Arc<BTreeMap<char, u32>>,
+    glyphs: Arc<GlyphMap>,
     queue: wgpu::Queue,
     cell_size: [u32; 2],
     atlas: wgpu::TextureView,
@@ -78,7 +78,7 @@ pub struct ReadoutRenderer {
 #[derive(Debug)]
 pub struct ReadoutBatch {
     surface: Surface,
-    glyphs: Arc<BTreeMap<char, u32>>,
+    glyphs: Arc<GlyphMap>,
     pipeline: wgpu::RenderPipeline,
     queue: wgpu::Queue,
     ranges: Vec<Range<usize>>,
@@ -207,7 +207,7 @@ impl ReadoutRenderer {
         });
         Ok(Self {
             device: device.clone(),
-            glyphs: Arc::new(atlas.glyphs),
+            glyphs: Arc::new(GlyphMap::new(atlas.glyphs)),
             queue: queue.clone(),
             cell_size: atlas.cell_size,
             atlas: view,
@@ -347,12 +347,14 @@ impl ReadoutBatch {
             return Err(ReadoutError::TextTooLong);
         }
         for ch in text.chars() {
-            if !self.glyphs.contains_key(&ch) {
+            if self.glyphs.get(ch).is_none() {
                 return Err(ReadoutError::UnknownCharacter(ch));
             }
         }
-        let glyphs = std::iter::repeat_n(0, range.len() - len)
-            .chain(text.chars().map(|ch| self.glyphs[&ch]));
+        let glyphs = std::iter::repeat_n(0, range.len() - len).chain(
+            text.chars()
+                .map(|ch| self.glyphs.get(ch).expect("validated glyph")),
+        );
         let mut changed: Option<Range<usize>> = None;
         for (index, glyph) in range.zip(glyphs) {
             if self.values[index] != glyph {
@@ -374,6 +376,7 @@ impl ReadoutBatch {
     /// Upload changed glyph IDs and redraw the dynamic layer in one draw call.
     /// Returns false for an unchanged batch. Submit the encoder before changing
     /// its values again; the caller owns frame scheduling and submission.
+    /// If the encoder is discarded, call [`Self::invalidate_surface`] before retrying.
     pub fn render(&mut self, encoder: &mut wgpu::CommandEncoder) -> bool {
         let Some(dirty) = self.dirty.take() else {
             return false;
@@ -407,6 +410,14 @@ impl ReadoutBatch {
         true
     }
 
+    /// Request another raster pass without changing glyph IDs. Use after discarding
+    /// an encoded frame; queued buffer uploads are retained by the queue.
+    pub fn invalidate_surface(&mut self) {
+        if self.dirty.is_none() {
+            self.dirty = Some(0..0);
+        }
+    }
+
     fn mark_dirty(&mut self, changed: Range<usize>) {
         self.dirty = Some(match self.dirty.take() {
             Some(range) if !range.is_empty() => {
@@ -419,6 +430,36 @@ impl ReadoutBatch {
     /// Number of glyph cells allocated for this layer.
     pub fn cell_count(&self) -> usize {
         self.ranges.last().map_or(0, |r| r.end)
+    }
+}
+
+#[derive(Debug)]
+struct GlyphMap {
+    ascii: [u32; 128],
+    unicode: BTreeMap<char, u32>,
+}
+
+impl GlyphMap {
+    fn new(glyphs: BTreeMap<char, u32>) -> Self {
+        let mut ascii = [u32::MAX; 128];
+        let mut unicode = BTreeMap::new();
+        for (ch, glyph) in glyphs {
+            if ch.is_ascii() {
+                ascii[usize::try_from(u32::from(ch)).expect("ASCII index")] = glyph;
+            } else {
+                unicode.insert(ch, glyph);
+            }
+        }
+        Self { ascii, unicode }
+    }
+
+    fn get(&self, ch: char) -> Option<u32> {
+        if ch.is_ascii() {
+            let glyph = self.ascii[usize::try_from(u32::from(ch)).expect("ASCII index")];
+            (glyph != u32::MAX).then_some(glyph)
+        } else {
+            self.unicode.get(&ch).copied()
+        }
     }
 }
 

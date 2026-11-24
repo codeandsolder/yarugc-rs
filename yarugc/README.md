@@ -43,3 +43,15 @@ moving/clipping, resizing, and 256 visible Masonry grid readouts changing
 magnitude/units without modifying layout or repainting the static surface.
 The CPU timing printed by the readout test measures only value updates, not
 formatting or GPU frame time.
+
+### Optimized telemetry benchmark
+
+```sh
+cargo test -p yarugc --locked --release --test host_gpu -- --ignored --nocapture
+```
+
+The 256-visible-readout fixture measures preformatted string updates for 1, 8,
+64 and 256 changing slots. On devices supporting encoder timestamp queries it
+also measures dynamic-layer rasterization and two-layer host composition over
+64 submissions, reporting median and p95 GPU intervals separately. It excludes
+3D work, presentation, text formatting and CPU-to-GPU staging upload time.
