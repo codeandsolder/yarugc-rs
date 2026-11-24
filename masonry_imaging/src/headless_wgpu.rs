@@ -7,23 +7,32 @@ use std::task::{Context, Poll, Wake, Waker};
 
 /// Errors that can occur while creating a headless WGPU device.
 #[derive(Debug)]
-pub(crate) enum InitError {
-    NoAdapter,
+pub enum InitError {
+    /// No compatible adapter was available.
+    NoAdapter(wgpu::RequestAdapterError),
+    /// The selected adapter could not create a device.
     RequestDevice(wgpu::RequestDeviceError),
 }
 
 impl core::fmt::Display for InitError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::NoAdapter => write!(f, "no compatible WGPU adapter found"),
+            Self::NoAdapter(err) => write!(f, "no compatible WGPU adapter found: {err}"),
             Self::RequestDevice(err) => write!(f, "requesting WGPU device failed: {err}"),
         }
     }
 }
 
-impl std::error::Error for InitError {}
+impl std::error::Error for InitError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::NoAdapter(err) => Some(err),
+            Self::RequestDevice(err) => Some(err),
+        }
+    }
+}
 
-pub(crate) fn try_init_device_and_queue() -> Result<(wgpu::Device, wgpu::Queue), InitError> {
+pub(super) fn try_init_device_and_queue() -> Result<(wgpu::Device, wgpu::Queue), InitError> {
     block_on(async {
         let instance = wgpu::Instance::default();
         let adapter = instance
@@ -34,7 +43,7 @@ pub(crate) fn try_init_device_and_queue() -> Result<(wgpu::Device, wgpu::Queue),
                 apply_limit_buckets: false,
             })
             .await
-            .map_err(|_| InitError::NoAdapter)?;
+            .map_err(InitError::NoAdapter)?;
 
         adapter
             .request_device(&wgpu::DeviceDescriptor {

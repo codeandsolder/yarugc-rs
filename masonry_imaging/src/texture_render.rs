@@ -46,11 +46,16 @@ impl Renderer {
     pub const BACKEND_NAME: &str = imp::Renderer::BACKEND_NAME;
 
     /// Create an empty renderer state.
-    pub fn new() -> Self {
+    #[must_use = "Use the created texture renderer."]
+    pub const fn new() -> Self {
         Self(imp::Renderer::new())
     }
 
     /// Render the given Masonry paint output into the provided target texture.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no backend is configured or if creation or rendering fails.
     pub fn render_to_texture(
         &mut self,
         target: RenderTarget<'_>,
@@ -76,21 +81,16 @@ mod shared_texture_renderer {
 
     use crate::PreparedFrame;
 
+    // Store key and value together: an initialized renderer always has its
+    // corresponding GPU identity, and failed replacement retains the old entry.
     #[derive(Debug)]
     pub(super) struct RendererCache<R, K> {
-        key: Option<K>,
-        inner: Option<R>,
+        entry: Option<(K, R)>,
     }
 
-    impl<R, K> RendererCache<R, K>
-    where
-        K: Copy + Eq,
-    {
-        pub(super) fn new() -> Self {
-            Self {
-                key: None,
-                inner: None,
-            }
+    impl<R, K: Eq> RendererCache<R, K> {
+        pub(super) const fn new() -> Self {
+            Self { entry: None }
         }
 
         pub(super) fn get_or_try_init<E>(
@@ -98,25 +98,62 @@ mod shared_texture_renderer {
             key: K,
             create: impl FnOnce() -> Result<R, E>,
         ) -> Result<&mut R, E> {
-            if self.key != Some(key) {
-                self.inner = Some(create()?);
-                self.key = Some(key);
+            match &mut self.entry {
+                Some((cached, renderer)) if *cached == key => Ok(renderer),
+                entry => Ok(&mut entry.insert((key, create()?)).1),
             }
-
-            Ok(self
-                .inner
-                .as_mut()
-                .expect("cached renderer should be initialized"))
         }
     }
 
+    #[cfg(test)]
+    mod tests {
+        use super::RendererCache;
+
+        #[test]
+        fn cache_reuses_equal_keys_and_preserves_old_renderer_on_failure() {
+            let mut cache = RendererCache::new();
+            let first_key = String::from("first device");
+            let second_key = String::from("second device");
+            assert_eq!(
+                *cache
+                    .get_or_try_init(first_key.clone(), || Ok::<_, &str>(17))
+                    .unwrap(),
+                17
+            );
+            // Independent wrappers containing the same identity must not recreate the renderer.
+            assert_eq!(
+                *cache
+                    .get_or_try_init(first_key.clone(), || Err::<i32, _>("unexpected creation"))
+                    .unwrap(),
+                17
+            );
+            assert_eq!(
+                cache.get_or_try_init(second_key.clone(), || Err::<i32, _>(
+                    "device creation failed"
+                )),
+                Err("device creation failed")
+            );
+            assert_eq!(
+                *cache
+                    .get_or_try_init(first_key, || Err::<i32, _>("old renderer was lost"))
+                    .unwrap(),
+                17
+            );
+            assert_eq!(
+                *cache
+                    .get_or_try_init(second_key, || Ok::<_, &str>(42))
+                    .unwrap(),
+                42
+            );
+        }
+    }
+
+    // WGPU handles implement equality using their underlying resource identity.
+    // Cloned handles compare equal, unlike addresses of wrapper objects.
     #[cfg(any(feature = "imaging_vello", feature = "imaging_vello_hybrid"))]
     #[inline]
-    pub(super) fn device_queue_key(target: super::RenderTarget<'_>) -> (usize, usize) {
-        (
-            target.device as *const _ as usize,
-            target.queue as *const _ as usize,
-        )
+    pub(super) fn device_queue_key(target: super::RenderTarget<'_>) -> (wgpu::Device, wgpu::Queue) {
+        (target.device.clone(), target.queue.clone())
     }
 
     pub(super) fn render_window_source_to_texture<R>(
@@ -141,11 +178,11 @@ mod imp {
     use crate::PreparedFrame;
 
     #[derive(Debug)]
-    pub(super) enum Error {}
+    pub(super) struct Error;
 
     impl core::fmt::Display for Error {
-        fn fmt(&self, _: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            match *self {}
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.write_str("no texture renderer backend selected")
         }
     }
 
@@ -155,9 +192,9 @@ mod imp {
     pub(super) struct Renderer;
 
     impl Renderer {
-        pub(super) const BACKEND_NAME: &str = "";
+        pub(super) const BACKEND_NAME: &str = "no_backend";
 
-        pub(super) fn new() -> Self {
+        pub(super) const fn new() -> Self {
             Self
         }
 
@@ -166,7 +203,7 @@ mod imp {
             _: super::RenderTarget<'_>,
             _: PreparedFrame<'_>,
         ) -> Result<(), Error> {
-            unreachable!("a renderer backend feature is required")
+            Err(Error)
         }
     }
 }
@@ -207,7 +244,7 @@ mod imp {
     /// Runtime renderer state for the Skia backend.
     #[derive(Debug)]
     pub(super) struct Renderer {
-        inner: RendererCache<TargetRenderer, (usize, usize, usize)>,
+        inner: RendererCache<TargetRenderer, (wgpu::Adapter, wgpu::Device, wgpu::Queue)>,
     }
 
     impl Renderer {
@@ -215,7 +252,7 @@ mod imp {
         pub(super) const BACKEND_NAME: &str = crate::skia::BACKEND_NAME;
 
         /// Create an empty renderer state.
-        pub(super) fn new() -> Self {
+        pub(super) const fn new() -> Self {
             Self {
                 inner: RendererCache::new(),
             }
@@ -229,9 +266,9 @@ mod imp {
         ) -> Result<(), Error> {
             let renderer = self.inner.get_or_try_init(
                 (
-                    target.adapter as *const _ as usize,
-                    target.device as *const _ as usize,
-                    target.queue as *const _ as usize,
+                    target.adapter.clone(),
+                    target.device.clone(),
+                    target.queue.clone(),
                 ),
                 || {
                     new_target_renderer(
@@ -283,7 +320,7 @@ mod imp {
     /// Runtime renderer state for the Vello backend.
     #[derive(Debug)]
     pub(super) struct Renderer {
-        inner: RendererCache<TargetRenderer, (usize, usize)>,
+        inner: RendererCache<TargetRenderer, (wgpu::Device, wgpu::Queue)>,
     }
 
     impl Renderer {
@@ -291,7 +328,7 @@ mod imp {
         pub(super) const BACKEND_NAME: &str = crate::vello::BACKEND_NAME;
 
         /// Create an empty renderer state.
-        pub(super) fn new() -> Self {
+        pub(super) const fn new() -> Self {
             Self {
                 inner: RendererCache::new(),
             }
@@ -353,7 +390,7 @@ mod imp {
     /// Runtime renderer state for the Vello Hybrid backend.
     #[derive(Debug)]
     pub(super) struct Renderer {
-        inner: RendererCache<TargetRenderer, (usize, usize)>,
+        inner: RendererCache<TargetRenderer, (wgpu::Device, wgpu::Queue)>,
     }
 
     impl Renderer {
@@ -361,7 +398,7 @@ mod imp {
         pub(super) const BACKEND_NAME: &str = crate::vello_hybrid::BACKEND_NAME;
 
         /// Create an empty renderer state.
-        pub(super) fn new() -> Self {
+        pub(super) const fn new() -> Self {
             Self {
                 inner: RendererCache::new(),
             }

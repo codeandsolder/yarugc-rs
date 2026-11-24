@@ -33,11 +33,16 @@ pub type TargetRenderer = imaging_skia::SkiaRenderer;
 pub type TextureTarget = wgpu::Texture;
 
 /// Create a reusable headless Skia renderer.
-pub fn new_headless_renderer() -> Result<Renderer, Error> {
-    Ok(imaging_skia::SkiaCpuRenderer::new())
+#[must_use = "Use the created headless renderer."]
+pub fn new_headless_renderer() -> Renderer {
+    imaging_skia::SkiaCpuRenderer::new()
 }
 
 /// Create a reusable GPU Skia target renderer bound to an existing WGPU adapter, device, and queue.
+///
+/// # Errors
+///
+/// Returns an error if the Skia GPU backend cannot be initialized.
 pub fn new_target_renderer(
     adapter: wgpu::Adapter,
     device: wgpu::Device,

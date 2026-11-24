@@ -43,7 +43,17 @@ use peniko::Color;
     not(target_arch = "wasm32"),
     any(feature = "imaging_vello", feature = "imaging_vello_hybrid")
 ))]
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Keep device initialization internal under the workspace unreachable_pub lint."
+)]
 mod headless_wgpu;
+
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(feature = "imaging_vello", feature = "imaging_vello_hybrid")
+))]
+pub use headless_wgpu::InitError as HeadlessInitError;
 
 /// Masonry helpers for rendering retained scenes with `imaging_skia`.
 #[cfg(all(feature = "imaging_skia", not(target_arch = "wasm32")))]
@@ -76,10 +86,15 @@ pub mod image_render {
     #[cfg(all(not(target_arch = "wasm32"), feature = "imaging_vello"))]
     pub use crate::vello::{BACKEND_NAME, Renderer, new_headless_renderer};
     #[cfg(all(
-        not(feature = "imaging_vello"),
-        not(feature = "imaging_skia"),
-        not(feature = "imaging_vello_hybrid"),
-        feature = "imaging_vello_cpu"
+        feature = "imaging_vello_cpu",
+        any(
+            target_arch = "wasm32",
+            not(any(
+                feature = "imaging_vello",
+                feature = "imaging_skia",
+                feature = "imaging_vello_hybrid"
+            ))
+        )
     ))]
     pub use crate::vello_cpu::{BACKEND_NAME, Renderer, new_headless_renderer};
     #[cfg(all(
@@ -91,18 +106,28 @@ pub mod image_render {
     pub use crate::vello_hybrid::{BACKEND_NAME, Renderer, new_headless_renderer};
 
     #[cfg(not(any(
-        feature = "imaging_vello",
-        feature = "imaging_vello_hybrid",
         feature = "imaging_vello_cpu",
-        all(feature = "imaging_skia", not(target_arch = "wasm32"))
+        all(
+            not(target_arch = "wasm32"),
+            any(
+                feature = "imaging_vello",
+                feature = "imaging_vello_hybrid",
+                feature = "imaging_skia"
+            )
+        )
     )))]
     pub use self::no_backend::{BACKEND_NAME, Error, Renderer, new_headless_renderer};
 
     #[cfg(not(any(
-        feature = "imaging_vello",
-        feature = "imaging_vello_hybrid",
         feature = "imaging_vello_cpu",
-        all(feature = "imaging_skia", not(target_arch = "wasm32"))
+        all(
+            not(target_arch = "wasm32"),
+            any(
+                feature = "imaging_vello",
+                feature = "imaging_vello_hybrid",
+                feature = "imaging_skia"
+            )
+        )
     )))]
     mod no_backend {
         use imaging::render::{
@@ -128,7 +153,11 @@ pub mod image_render {
         /// Stable diagnostics name for the backend-less stub renderer.
         pub const BACKEND_NAME: &str = "no_backend";
 
-        /// Create the backend-less stub renderer.
+        /// Return the missing-backend error.
+        ///
+        /// # Errors
+        ///
+        /// Always returns an error because no supported backend was selected.
         pub fn new_headless_renderer() -> Result<Renderer, Error> {
             Err(Error)
         }
@@ -189,7 +218,8 @@ pub struct PreparedFrame<'a> {
 
 impl<'a> PreparedFrame<'a> {
     /// Create a flattened Masonry frame from base content plus overlays.
-    pub fn new(
+    #[must_use = "Use the prepared render frame."]
+    pub const fn new(
         width: u32,
         height: u32,
         scale_factor: f64,
