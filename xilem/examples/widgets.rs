@@ -15,7 +15,7 @@ use xilem::view::{
 use xilem::{Color, WidgetView, WindowOptions, Xilem};
 use xilem_core::lens;
 
-const SPACER_WIDTH: Length = Length::const_px(10.);
+const SPACER_WIDTH: Length = masonry::layout::length!(10.);
 
 /// The state of the entire application.
 ///

@@ -81,8 +81,8 @@ impl DemoPage for BadgeDemo {
     }
 
     fn build(&self) -> NewWidget<dyn Widget> {
-        const GAP: Length = Length::const_px(10.0);
-        const SECTION_GAP: Length = Length::const_px(16.0);
+        const GAP: Length = masonry::layout::length!(10.0);
+        const SECTION_GAP: Length = masonry::layout::length!(16.0);
 
         let new_badge = Badge::with_text("New");
 
@@ -150,7 +150,10 @@ impl DemoPage for BadgeDemo {
                 )
                 .prepare(),
             )
-            .size(Length::const_px(72.0), Length::const_px(72.0)),
+            .size(
+                masonry::layout::length!(72.0),
+                masonry::layout::length!(72.0),
+            ),
         )
         .with_props(
             PropertySet::new()
@@ -161,7 +164,10 @@ impl DemoPage for BadgeDemo {
 
         let online_dot = NewWidget::new(Badge::new(
             SizedBox::empty()
-                .size(Length::const_px(10.0), Length::const_px(10.0))
+                .size(
+                    masonry::layout::length!(10.0),
+                    masonry::layout::length!(10.0),
+                )
                 .prepare(),
         ))
         .with_props(
@@ -207,11 +213,11 @@ impl DemoPage for BadgeDemo {
                 Flex::row()
                     .cross_axis_alignment(CrossAxisAlignment::Center)
                     .with_fixed(inbox)
-                    .with_fixed_spacer(Length::const_px(12.0))
+                    .with_fixed_spacer(masonry::layout::length!(12.0))
                     .with_fixed(inbox_zero)
-                    .with_fixed_spacer(Length::const_px(12.0))
+                    .with_fixed_spacer(masonry::layout::length!(12.0))
                     .with_fixed(inbox_overflow)
-                    .with_fixed_spacer(Length::const_px(18.0))
+                    .with_fixed_spacer(masonry::layout::length!(18.0))
                     .with_fixed(avatar_with_status)
                     .prepare(),
             );
@@ -228,11 +234,11 @@ impl DemoPage for BadgeDemo {
                 Flex::row()
                     .cross_axis_alignment(CrossAxisAlignment::Center)
                     .with_fixed(decrement_btn)
-                    .with_fixed_spacer(Length::const_px(6.0))
+                    .with_fixed_spacer(masonry::layout::length!(6.0))
                     .with_fixed(increment_btn)
-                    .with_fixed_spacer(Length::const_px(10.0))
+                    .with_fixed_spacer(masonry::layout::length!(10.0))
                     .with_fixed(count_label)
-                    .with_fixed_spacer(Length::const_px(18.0))
+                    .with_fixed_spacer(masonry::layout::length!(18.0))
                     .with_fixed(interactive_inbox)
                     .prepare(),
             );

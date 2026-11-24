@@ -22,6 +22,14 @@ pub struct PropertyCache {
     pub(crate) invalidated: bool,
 }
 
+/// The result of looking for a cached layer resolution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CachedResolution {
+    Uncached,
+    Missing,
+    Layer(usize),
+}
+
 impl PropertyCache {
     /// Called by `PropertyStack::resolve_cached_mut` when a cache entry is written.
     pub(crate) fn extend_relevant(&mut self, selector: &Selector) {
@@ -33,15 +41,25 @@ impl PropertyCache {
         self.relevant_has_focus_target |= selector.has_focus_target.is_some();
     }
 
-    // Returns:
-    // - None if prop_type wasn't cached (or the cache was invalidated).
-    // - Some(None) if prop_type was cached as not found.
-    // - Some(Some(idx)) if prop_type was cached as found in layer idx.
-    pub(crate) fn cached_index(&self, prop_type: TypeId) -> Option<Option<usize>> {
+    pub(crate) fn cached_resolution(&self, prop_type: TypeId) -> CachedResolution {
         if self.invalidated {
-            None
-        } else {
-            self.entries.get(&prop_type).copied()
+            return CachedResolution::Uncached;
         }
+        match self.entries.get(&prop_type) {
+            None => CachedResolution::Uncached,
+            Some(None) => CachedResolution::Missing,
+            Some(Some(index)) => CachedResolution::Layer(*index),
+        }
+    }
+
+    /// Forget selectors from the old stack, retaining the cached property IDs
+    /// until the update pass can notify the widgets that read them.
+    pub(crate) fn invalidate(&mut self) {
+        self.invalidated = true;
+        self.relevant_classes.clear();
+        self.relevant_is_hovered = false;
+        self.relevant_is_active = false;
+        self.relevant_is_disabled = false;
+        self.relevant_has_focus_target = false;
     }
 }

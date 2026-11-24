@@ -355,7 +355,7 @@ impl MutateCtx<'_> {
     pub fn set_property_stack(&mut self, stack_id: PropertyStackId) {
         self.widget_state.request_update_props = true;
         self.widget_state.needs_update_props = true;
-        self.widget_state.property_cache.invalidated = true;
+        self.widget_state.property_cache.invalidate();
         self.widget_state.property_stack_id = Some(stack_id);
     }
 }

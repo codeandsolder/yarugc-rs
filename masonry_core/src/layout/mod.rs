@@ -22,3 +22,6 @@ pub use length::*;
 pub(crate) use measurement_cache::*;
 pub use size_def::*;
 pub use unit_point::*;
+
+// Constant construction is also available alongside the length types.
+pub use crate::length;

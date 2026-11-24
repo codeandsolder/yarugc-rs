@@ -13,7 +13,7 @@ use crate::kurbo::{Axis, Size};
 use crate::layout::{LenReq, Length};
 
 /// The preferred size of the square Canvas.
-const DEFAULT_LENGTH: Length = Length::const_px(100.);
+const DEFAULT_LENGTH: Length = crate::layout::length!(100.);
 
 /// A widget allowing custom drawing.
 ///

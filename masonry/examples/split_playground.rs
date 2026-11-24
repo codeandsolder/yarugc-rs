@@ -91,7 +91,7 @@ impl AppDriver for Driver {
 }
 
 fn make_widget_tree() -> NewWidget<impl masonry::core::Widget> {
-    const SPACING: Length = Length::const_px(8.0);
+    const SPACING: Length = masonry::layout::length!(8.0);
 
     let controls = Flex::row()
         .with_fixed(NewWidget::new(Button::with_text("Fraction")).with_tag(FRACTION_BTN))

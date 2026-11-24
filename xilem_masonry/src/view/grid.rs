@@ -24,7 +24,7 @@ pub use masonry::widgets::{GridParams, GridTrackSize};
 /// use xilem::style::Style;
 /// use xilem::view::{GridExt, GridParams, GridTrackSize, text_button, grid, label, repeat_tracks};
 ///
-/// const GRID_GAP: Length = Length::const_px(2.);
+/// const GRID_GAP: Length = masonry::layout::length!(2.);
 ///
 /// #[derive(Default)]
 /// struct State {

@@ -52,7 +52,7 @@
 //!
 //! const TEXT_INPUT_TAG: WidgetTag<TextInput> = WidgetTag::named("text-input");
 //! const LIST_TAG: WidgetTag<Flex> = WidgetTag::named("list");
-//! const WIDGET_SPACING: Length = Length::const_px(5.0);
+//! const WIDGET_SPACING: Length = masonry::layout::length!(5.0);
 //!
 //! struct Driver {
 //!     next_task: String,

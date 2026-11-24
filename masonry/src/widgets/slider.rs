@@ -313,7 +313,7 @@ impl Widget for Slider {
         match axis {
             Axis::Horizontal => match len_req {
                 // TODO: Move this 100. to theme?
-                LenReq::MinContent | LenReq::MaxContent => Length::const_px(100.),
+                LenReq::MinContent | LenReq::MaxContent => crate::layout::length!(100.),
                 LenReq::FitContent(space) => space,
             },
             Axis::Vertical => {

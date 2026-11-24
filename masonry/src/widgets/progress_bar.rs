@@ -142,7 +142,7 @@ impl Widget for ProgressBar {
         cross_length: Option<Length>,
     ) -> Length {
         // TODO: Move this to theme?
-        const DEFAULT_WIDTH: Length = Length::const_px(400.);
+        const DEFAULT_WIDTH: Length = crate::layout::length!(400.);
 
         let auto_length = len_req.into();
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);

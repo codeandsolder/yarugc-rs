@@ -22,7 +22,7 @@ use crate::widgets::*;
 pub const BACKGROUND_COLOR: Color = Color::from_rgb8(0x1D, 0x1D, 0x1D);
 
 /// Default width of a widget border.
-pub const BORDER_WIDTH: Length = Length::const_px(1.);
+pub const BORDER_WIDTH: Length = crate::layout::length!(1.);
 
 // Zync color variations from https://tailwindcss.com/docs/colors
 /// Darkest zinc shade.
@@ -53,7 +53,7 @@ pub const FOCUS_COLOR: Color = Color::from_rgb8(0xff, 0xff, 0xff);
 /// Default text size in logical pixels.
 pub const TEXT_SIZE_NORMAL: f32 = 15.0;
 /// Default basic control height.
-pub const BASIC_WIDGET_HEIGHT: Length = Length::const_px(18.0);
+pub const BASIC_WIDGET_HEIGHT: Length = crate::layout::length!(18.0);
 /// Default bordered control height in logical pixels.
 pub const BORDERED_WIDGET_HEIGHT: f64 = 24.0;
 /// Default scrollbar thumb color.
@@ -71,11 +71,11 @@ pub const SCROLLBAR_RADIUS: f64 = 5.;
 /// Default scrollbar edge width in logical pixels.
 pub const SCROLLBAR_EDGE_WIDTH: f64 = 1.;
 /// Default spacing between adjacent controls.
-pub const DEFAULT_GAP: Length = Length::const_px(10.0);
+pub const DEFAULT_GAP: Length = crate::layout::length!(10.0);
 /// Default length of an explicit spacer.
-pub const DEFAULT_SPACER_LEN: Length = Length::const_px(10.0);
+pub const DEFAULT_SPACER_LEN: Length = crate::layout::length!(10.0);
 /// Default padding for control components.
-pub const WIDGET_CONTROL_COMPONENT_PADDING: Length = Length::const_px(4.0);
+pub const WIDGET_CONTROL_COMPONENT_PADDING: Length = crate::layout::length!(4.0);
 /// Default minimum selector width in logical pixels.
 pub const SELECTOR_MIN_WIDTH: f64 = 100.0;
 
@@ -164,8 +164,8 @@ pub fn default_property_set() -> DefaultProperties {
     // DisclosureButton
     properties.insert::<DisclosureButton, _>(ContentColor::new(DIM_GRAY));
     properties.insert::<DisclosureButton, _>(Dimensions::fixed(
-        Length::const_px(16.),
-        Length::const_px(16.),
+        crate::layout::length!(16.),
+        crate::layout::length!(16.),
     ));
     properties.insert::<DisclosureButton, _>(Padding::all(4.px()));
 

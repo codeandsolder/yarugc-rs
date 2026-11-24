@@ -642,7 +642,7 @@ fn lose_hovered_on_pointer_leave_or_cancel() {
 
 #[test]
 fn change_hovered_when_widget_changes() {
-    const BOX_SIZE: Length = Length::const_px(50.);
+    const BOX_SIZE: Length = crate::layout::length!(50.);
 
     let child_tag = WidgetTag::named("child");
     let parent_tag = WidgetTag::named("parent");
@@ -855,4 +855,71 @@ fn set_default_properties_refires_property_changed() {
         "expected property_changed to re-fire for ContentColor after the default swap, got {:?}",
         changed.borrow(),
     );
+}
+
+#[test]
+fn property_stack_selector_changes_notify_only_affected_values() {
+    use std::any::TypeId;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use crate::core::{PropertyStack, Selector};
+    use crate::peniko::color::AlphaColor;
+    use crate::properties::{ContentColor, Padding};
+
+    let changes = Rc::new(Cell::new(0_u32));
+    let count = changes.clone();
+    let tag = WidgetTag::named("property-stack-probe");
+    let widget = ModularWidget::new(())
+        .paint_fn(|_, ctx, props, _| {
+            let _ = props.get::<ContentColor>(ctx.property_cache());
+        })
+        .property_change_fn(move |_, ctx, property_type| {
+            if property_type == TypeId::of::<ContentColor>() {
+                count.set(count.get() + 1);
+                ctx.request_paint_only();
+            }
+        });
+
+    let black = ContentColor::new(AlphaColor::BLACK);
+    let white = ContentColor::new(AlphaColor::WHITE);
+    let mut stack = PropertyStack::new();
+    stack.push_layer(Selector::new(), black);
+    stack.push_layer(Selector::classes(&["selected"]), white);
+    stack.push_layer(Selector::classes(&["unrelated"]), Padding::default());
+
+    let mut harness =
+        TestHarness::create(test_property_set(), NewWidget::new(widget).with_tag(tag));
+    let id = harness.render_root().insert_property_stack(stack);
+    harness.edit_root_widget(|mut widget| widget.ctx.set_property_stack(id));
+    let _ = harness.redraw();
+    assert_eq!(*harness.get_widget(tag).get_prop::<ContentColor>(), black);
+    changes.set(0);
+
+    harness.edit_root_widget(|mut widget| widget.ctx.add_class("unrelated"));
+    let _ = harness.redraw();
+    assert_eq!(changes.get(), 0);
+    assert_eq!(*harness.get_widget(tag).get_prop::<ContentColor>(), black);
+
+    harness.edit_root_widget(|mut widget| widget.ctx.add_class("selected"));
+    let _ = harness.redraw();
+    assert_eq!(changes.get(), 1);
+    assert_eq!(*harness.get_widget(tag).get_prop::<ContentColor>(), white);
+
+    // Replacing a stack must notify the widget even if the winning index is
+    // unchanged; the value at that index can be entirely different.
+    let mut replacement = PropertyStack::new();
+    replacement.push_layer(Selector::new(), white);
+    replacement.push_layer(Selector::classes(&["selected"]), black);
+    harness
+        .render_root()
+        .replace_property_stack(id, replacement);
+    let _ = harness.redraw();
+    assert_eq!(changes.get(), 2);
+    assert_eq!(*harness.get_widget(tag).get_prop::<ContentColor>(), black);
+
+    harness.edit_root_widget(|mut widget| widget.ctx.remove_class("selected"));
+    let _ = harness.redraw();
+    assert_eq!(changes.get(), 3);
+    assert_eq!(*harness.get_widget(tag).get_prop::<ContentColor>(), white);
 }

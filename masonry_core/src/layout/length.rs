@@ -5,6 +5,7 @@
 ///
 /// It is always finite and non-negative.
 #[derive(Default, Clone, Copy, PartialEq)]
+#[must_use = "Use the computed logical length."]
 pub struct Length {
     value: f64,
 }
@@ -38,13 +39,13 @@ impl Length {
     /// If debug assertions are off, this will return zero instead of panicking.
     #[track_caller]
     pub fn px(value: f64) -> Self {
-        if value < 0. || !value.is_finite() {
-            // TODO - Make const once const formatting is allowed.
-            // (aka see you in 2030)
-            debug_panic!("Invalid length value '{value}'");
-            return Self::ZERO;
+        match Self::try_px(value) {
+            Some(length) => length,
+            None => {
+                debug_panic!("Invalid length value '{value}'");
+                Self::ZERO
+            }
         }
-        Self { value }
     }
 
     /// Creates a length, in logical pixels.
@@ -57,29 +58,16 @@ impl Length {
         Some(Self { value })
     }
 
-    /// Creates a length, in logical pixels.
-    ///
-    /// Can be called from const contexts.
-    ///
-    /// # Panics
-    ///
-    /// This will always panic if value is negative or non-finite.
-    #[track_caller]
-    pub const fn const_px(value: f64) -> Self {
-        if value < 0. || !value.is_finite() {
-            panic!("Invalid length value");
-        }
-        Self { value }
-    }
-
     /// Returns the value, in logical pixels.
     ///
     /// The value is guaranteed to be finite and non-negative.
+    #[must_use = "Use the logical pixel count."]
     pub const fn get(self) -> f64 {
         self.value
     }
 
     /// Scales the value to device pixels.
+    #[must_use = "Use the scaled device pixel count."]
     pub const fn dp(self, scale: f64) -> f64 {
         self.value * scale
     }
@@ -102,16 +90,13 @@ impl Length {
         }
     }
 
-    /// Returns `max` if `self` is greater than `max`, and `min` if `self` is less than `min`.
-    /// Otherwise this returns `self`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `min` is greater than `max`.
-    pub const fn clamp(self, min: Self, max: Self) -> Self {
-        Self {
-            value: self.value.clamp(min.value, max.value),
+    /// Clamps this length to the inclusive interval, returning None if the
+    /// minimum is greater than the maximum.
+    pub const fn try_clamp(self, min: Self, max: Self) -> Option<Self> {
+        if min.value > max.value {
+            return None;
         }
+        Some(self.max(min).min(max))
     }
 
     /// Adds the `other` value but the result doesn't go above the maximum value.
@@ -126,5 +111,51 @@ impl Length {
         Self {
             value: (self.value - other.value).max(0.),
         }
+    }
+}
+
+/// Creates a finite, non-negative logical length from a constant expression.
+///
+/// Invalid constants are rejected during compilation. Use [`Length::try_px`] for
+/// fallible runtime conversion.
+///
+/// ```
+/// use masonry_core::layout::{Length, length};
+/// const GAP: Length = length!(8.0);
+/// assert_eq!(GAP.get(), 8.0);
+/// ```
+///
+/// ```compile_fail
+/// use masonry_core::layout::length;
+/// let _ = length!(-1.0);
+/// ```
+#[macro_export]
+macro_rules! length {
+    ($value:expr $(,)?) => {
+        const {
+            match $crate::layout::Length::try_px($value) {
+                Some(length) => length,
+                None => panic!("Invalid constant logical length"),
+            }
+        }
+    };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Length;
+
+    #[test]
+    fn length_invariants_hold_at_numeric_boundaries() {
+        for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -1.0] {
+            assert!(Length::try_px(invalid).is_none());
+        }
+        let largest = crate::layout::length!(f64::MAX);
+        let smallest = crate::layout::length!(f64::MIN_POSITIVE);
+        assert_eq!(largest.saturating_add(largest), largest);
+        assert_eq!(smallest.saturating_sub(largest), Length::ZERO);
+        assert_eq!(largest.try_clamp(Length::ZERO, smallest), Some(smallest));
+        assert_eq!(smallest.try_clamp(largest, Length::ZERO), None);
+        assert_eq!(smallest.try_clamp(smallest, smallest), Some(smallest));
     }
 }

@@ -7,8 +7,8 @@ use masonry::layout::Length;
 use masonry::properties::types::CrossAxisAlignment;
 use masonry::widgets::{Button, Checkbox, Flex, SizedBox};
 
-pub(crate) const CONTENT_GAP: Length = Length::const_px(10.0);
-pub(crate) const SIDEBAR_GAP: Length = Length::const_px(2.0);
+pub(crate) const CONTENT_GAP: Length = masonry::layout::length!(10.0);
+pub(crate) const SIDEBAR_GAP: Length = masonry::layout::length!(2.0);
 
 #[derive(Clone, Copy)]
 pub(crate) struct ShellTags {

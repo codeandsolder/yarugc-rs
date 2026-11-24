@@ -66,7 +66,7 @@ fn request_paint() {
 #[test]
 fn paint_order() {
     const SQUARE_SIZE: f64 = 30.;
-    const SQUARE_LENGTH: Length = Length::const_px(SQUARE_SIZE);
+    const SQUARE_LENGTH: Length = crate::layout::length!(SQUARE_SIZE);
     let child1 = NewWidget::new(SizedBox::empty().width(SQUARE_LENGTH).height(SQUARE_LENGTH))
         .with_props(Background::Color(RED));
     let child2 = NewWidget::new(SizedBox::empty().width(SQUARE_LENGTH).height(SQUARE_LENGTH))

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use masonry::core::{NewWidget, StyleProperty, Widget};
-use masonry::layout::Length;
 use masonry::properties::types::CrossAxisAlignment;
 use masonry::widgets::{Button, Flex, Label};
 
@@ -35,9 +34,9 @@ impl DemoPage for BasicsDemo {
                     .with_style(StyleProperty::FontSize(18.0))
                     .prepare(),
             )
-            .with_fixed_spacer(Length::const_px(12.0))
+            .with_fixed_spacer(masonry::layout::length!(12.0))
             .with_fixed(Button::with_text("A button").prepare())
-            .with_fixed_spacer(Length::const_px(6.0))
+            .with_fixed_spacer(masonry::layout::length!(6.0))
             .with_fixed(Button::with_text("Another button").prepare());
 
         wrap_in_shell(self.shell, NewWidget::new(body).erased())

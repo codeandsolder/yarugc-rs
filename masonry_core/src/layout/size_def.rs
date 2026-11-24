@@ -13,6 +13,7 @@ use crate::util::Sanitize;
 /// [`Dim::Auto`]: crate::layout::Dim::Auto
 /// [sanitized]: Sanitize
 #[derive(Copy, Clone, Debug, PartialEq)]
+#[must_use = "Use the calculated size definition."]
 pub struct SizeDef {
     width: LenDef,
     height: LenDef,
@@ -36,7 +37,7 @@ impl SizeDef {
     };
 
     /// Creates a new [`SizeDef`] with the given `width` and `height`.
-    pub fn new(width: LenDef, height: LenDef) -> Self {
+    pub const fn new(width: LenDef, height: LenDef) -> Self {
         Self { width, height }
     }
 
@@ -81,7 +82,7 @@ impl SizeDef {
     /// Creates a new [`SizeDef`] with `axis` set to [`LenDef`].
     ///
     /// The other axis will be [`LenDef::MaxContent`].
-    pub fn one(axis: Axis, len_def: LenDef) -> Self {
+    pub const fn one(axis: Axis, len_def: LenDef) -> Self {
         match axis {
             Axis::Horizontal => Self {
                 width: len_def,
@@ -95,7 +96,7 @@ impl SizeDef {
     }
 
     /// Returns the [`SizeDef`] with `axis` set to [`LenDef`].
-    pub fn with(self, axis: Axis, len_def: LenDef) -> Self {
+    pub const fn with(self, axis: Axis, len_def: LenDef) -> Self {
         match axis {
             Axis::Horizontal => self.with_width(len_def),
             Axis::Vertical => self.with_height(len_def),
@@ -103,18 +104,19 @@ impl SizeDef {
     }
 
     /// Returns the [`SizeDef`] with the width set to [`LenDef`].
-    pub fn with_width(mut self, len_def: LenDef) -> Self {
+    pub const fn with_width(mut self, len_def: LenDef) -> Self {
         self.width = len_def;
         self
     }
 
     /// Returns the [`SizeDef`] with the height set to [`LenDef`].
-    pub fn with_height(mut self, len_def: LenDef) -> Self {
+    pub const fn with_height(mut self, len_def: LenDef) -> Self {
         self.height = len_def;
         self
     }
 
     /// Returns the [`LenDef`] of the given `axis`.
+    #[must_use = "Use the requested axis definition."]
     pub const fn dim(&self, axis: Axis) -> LenDef {
         match axis {
             Axis::Horizontal => self.width,

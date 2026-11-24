@@ -1,7 +1,7 @@
 // Copyright 2026 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::core::{ClassSet, Property, PropertyCache, PropertySet, PropertyStack};
+use crate::core::{ClassSet, PropertiesRef, Property, PropertyCache, PropertySet, PropertyStack};
 use crate::util::AnyMap;
 
 /// Mutable reference to a collection of [properties](Property) that a widget has access to.
@@ -18,32 +18,26 @@ pub struct PropertiesMut<'a> {
 // TODO - Better document local vs default properties.
 
 impl PropertiesMut<'_> {
-    /// Returns `true` if the widget has a local property of type `P`.
-    ///
-    /// Does not check default properties.
+    /// Returns true if the widget has a local property of type P.
+    #[must_use = "Reports whether the property is explicitly set on the widget."]
     pub fn contains<P: Property>(&self) -> bool {
-        self.local.map.contains::<P>()
+        self.as_ref().contains::<P>()
     }
 
-    /// Returns value of property `P`.
-    ///
-    /// Checks local properties first, then the property stack,
-    /// then default properties, then [`Property::static_default()`].
+    /// Returns value of property P with the standard property precedence.
     pub fn get<P: Property>(&self, cache: &mut PropertyCache) -> &P {
-        // 1. Local properties
-        if let Some(p) = self.local.map.get::<P>() {
-            return p;
+        self.as_ref().get::<P>(cache)
+    }
+
+    /// Borrows this collection without granting write access.
+    #[must_use = "Use the borrowed property collection."]
+    pub const fn as_ref(&self) -> PropertiesRef<'_> {
+        PropertiesRef {
+            local: self.local,
+            default_map: self.default_map,
+            stack: self.stack,
+            class_set: self.class_set,
         }
-        // 2. Property stack (writes to cache on miss)
-        if let Some(p) = self.stack.resolve::<P>(cache, self.class_set) {
-            return p;
-        }
-        // 3. Default properties
-        if let Some(p) = self.default_map.get::<P>() {
-            return p;
-        }
-        // 4. Static default
-        P::static_default()
     }
 
     /// Sets local property `P` to given value. Returns the previous value if `P` was already set.
@@ -54,7 +48,7 @@ impl PropertiesMut<'_> {
     ///
     /// [`WidgetMut::insert_prop`]: crate::core::WidgetMut::insert_prop
     pub fn insert<P: Property>(&mut self, value: P) -> Option<P> {
-        self.local.map.insert(value)
+        self.local.insert(value)
     }
 
     /// Removes local property `P`. Returns the previous value if `P` was set.
@@ -65,11 +59,11 @@ impl PropertiesMut<'_> {
     ///
     /// [`WidgetMut::remove_prop`]: crate::core::WidgetMut::remove_prop
     pub fn remove<P: Property>(&mut self) -> Option<P> {
-        self.local.map.remove::<P>()
+        self.local.remove::<P>()
     }
 
     /// Returns a mutable reference to the local properties for direct access.
-    pub fn local_properties(&mut self) -> &mut PropertySet {
+    pub const fn local_properties(&mut self) -> &mut PropertySet {
         self.local
     }
 }

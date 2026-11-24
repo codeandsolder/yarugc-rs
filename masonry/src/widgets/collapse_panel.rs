@@ -15,12 +15,12 @@ use crate::widgets::{DisclosureButton, Label};
 use crate::{accesskit, theme};
 
 /// Square disclosure button length.
-const BUTTON_LENGTH: Length = Length::const_px(16.);
+const BUTTON_LENGTH: Length = crate::layout::length!(16.);
 /// Padding around the separator line.
 const SEPARATOR_PAD: Padding = Padding {
-    top: Length::const_px(4.),
-    left: Length::const_px(1.),
-    right: Length::const_px(1.),
+    top: crate::layout::length!(4.),
+    left: crate::layout::length!(1.),
+    right: crate::layout::length!(1.),
     bottom: Length::ZERO,
 };
 

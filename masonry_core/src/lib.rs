@@ -64,13 +64,6 @@
 #![cfg_attr(target_pointer_width = "64", deny(clippy::trivially_copy_pass_by_ref))]
 // END LINEBENDER LINT SET
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![cfg_attr(
-    test,
-    expect(
-        unused_crate_dependencies,
-        reason = "False-positive with dev-dependencies only used in examples"
-    )
-)]
 // TODO: Remove any items listed as "Deferred"
 #![expect(clippy::cast_possible_truncation, reason = "Deferred: Noisy")]
 #![cfg_attr(

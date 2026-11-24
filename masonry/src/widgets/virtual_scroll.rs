@@ -698,7 +698,7 @@ impl Widget for VirtualScroll {
         // Still, we would run into complexities with ensuring they are loaded in time for measure.
         //
         // So, for now, we just use a simple O(1) default.
-        const DEFAULT_LENGTH: Length = Length::const_px(100.);
+        const DEFAULT_LENGTH: Length = crate::layout::length!(100.);
 
         match len_req {
             LenReq::MinContent | LenReq::MaxContent => DEFAULT_LENGTH,

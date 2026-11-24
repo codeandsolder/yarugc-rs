@@ -203,15 +203,17 @@ impl DemoPage for SliderDemo {
         };
 
         if let Some(value) = action.downcast_ref::<Step<f64>>() {
-            let value = value.value;
+            let Some(value) = Length::try_px(value.value) else {
+                return Handled::Yes;
+            };
 
             if get_id(render_root, self.thumb_radius) == widget_id {
                 render_root.edit_widget_with_tag(self.slider, |mut slider| {
-                    slider.insert_prop(ThumbRadius(Length::const_px(value)));
+                    slider.insert_prop(ThumbRadius(value));
                 });
             } else if get_id(render_root, self.track_thickness) == widget_id {
                 render_root.edit_widget_with_tag(self.slider, |mut slider| {
-                    slider.insert_prop(TrackThickness(Length::const_px(value)));
+                    slider.insert_prop(TrackThickness(value));
                 });
             }
             return Handled::Yes;

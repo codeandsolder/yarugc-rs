@@ -19,7 +19,7 @@ use crate::peniko::BrushRef;
 use crate::properties::ContentColor;
 
 // Default size is a square
-const DEFAULT_LENGTH: Length = Length::const_px(8.);
+const DEFAULT_LENGTH: Length = crate::layout::length!(8.);
 
 /// A triangle button that points towards the right when undisclosed
 /// and points towards the bottom when disclosed.

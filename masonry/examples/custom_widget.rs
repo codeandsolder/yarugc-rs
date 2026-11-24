@@ -98,7 +98,7 @@ impl Widget for CustomWidget {
         match len_req {
             LenReq::MinContent => min_length,
             LenReq::MaxContent => max_length,
-            LenReq::FitContent(space) => space.clamp(min_length, max_length),
+            LenReq::FitContent(space) => space.max(min_length).min(max_length),
         }
     }
 

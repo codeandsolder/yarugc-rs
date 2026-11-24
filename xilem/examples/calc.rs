@@ -197,7 +197,7 @@ fn num_row(nums: [&'static str; 3]) -> impl GridSequence<Calculator> {
 }
 
 const DISPLAY_FONT_SIZE: f32 = 30.;
-const GRID_GAP: Length = Length::const_px(2.);
+const GRID_GAP: Length = masonry::layout::length!(2.);
 fn app_logic(data: &mut Calculator) -> impl WidgetView<Calculator> + use<> {
     grid((
         // Display

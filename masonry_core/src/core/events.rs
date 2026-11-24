@@ -199,15 +199,12 @@ impl TextEvent {
     ///
     /// **selected** is the part of the preedit text that should be selected.
     ///
-    /// # Panics
-    ///
-    /// If **selected** isn't a substring of **text**.
-    pub fn preedit_with_cursor(text: String, selected: String) -> Self {
-        let Some(offset) = text.find(&selected) else {
-            panic!("Error building Preedit event: '{selected}' not found in '{text}'");
-        };
-        let span = (offset, selected.len());
-        Self::Ime(Ime::Preedit(text, Some(span)))
+    /// Returns None if the selected text is not a substring of the preedit.
+    /// The cursor positions are UTF-8 byte offsets, with an exclusive end.
+    pub fn preedit_with_cursor(text: String, selected: &str) -> Option<Self> {
+        let offset = text.find(selected)?;
+        let span = (offset, offset + selected.len());
+        Some(Self::Ime(Ime::Preedit(text, Some(span))))
     }
 
     /// Short name of the event, for debug logging.
@@ -393,4 +390,23 @@ pub enum ResizeDirection {
     SouthEast,
     SouthWest,
     West,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Ime, TextEvent};
+
+    #[test]
+    fn preedit_cursor_uses_utf8_byte_end_offset() {
+        let text = "aé猫z".to_owned();
+        assert!(matches!(
+            TextEvent::preedit_with_cursor(text.clone(), "猫"),
+            Some(TextEvent::Ime(Ime::Preedit(ref value, Some((3, 6))))) if value == &text
+        ));
+        assert!(matches!(
+            TextEvent::preedit_with_cursor(text.clone(), "é猫"),
+            Some(TextEvent::Ime(Ime::Preedit(_, Some((1, 6)))))
+        ));
+        assert!(TextEvent::preedit_with_cursor(text, "missing").is_none());
+    }
 }

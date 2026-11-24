@@ -16,7 +16,7 @@ use masonry::widgets::{Button, ButtonPress, Flex, Label};
 use masonry_winit::app::{AppDriver, DriverCtx, NewWindow, WindowId};
 use masonry_winit::winit::window::Window;
 
-const VERTICAL_WIDGET_SPACING: Length = Length::const_px(20.0);
+const VERTICAL_WIDGET_SPACING: Length = masonry::layout::length!(20.0);
 
 struct Driver {
     window_id: WindowId,

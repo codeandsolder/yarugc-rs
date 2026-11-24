@@ -436,7 +436,7 @@ impl RenderRoot {
 
             state.request_update_props = true;
             state.needs_update_props = true;
-            state.property_cache.invalidated = true;
+            state.property_cache.invalidate();
 
             let id = state.id;
             recurse_on_children(id, widget, children, |node| {
@@ -1098,7 +1098,7 @@ impl RenderRoot {
 
             if is_linked_to_p_stack {
                 state.request_update_props = true;
-                state.property_cache.invalidated = true;
+                state.property_cache.invalidate();
             }
 
             let id = state.id;

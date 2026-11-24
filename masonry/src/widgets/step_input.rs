@@ -26,7 +26,7 @@ use crate::widgets::Label;
 ///
 /// 3 logical pixels is great for mouse and trackpad,
 /// but a larger value should be used for touch.
-const SLIDE_INACTIVE_LENGTH: Length = Length::const_px(3.);
+const SLIDE_INACTIVE_LENGTH: Length = crate::layout::length!(3.);
 
 // We have three gears with increasing ratios.
 const GEAR_1_RATIO: f64 = 1.;

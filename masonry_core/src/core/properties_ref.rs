@@ -17,60 +17,40 @@ pub struct PropertiesRef<'a> {
 
 // TODO - Better document local vs default properties.
 
-impl PropertiesRef<'_> {
-    /// Returns `true` if the widget has a local property of type `P`.
-    ///
-    /// Does not check default properties.
+impl<'a> PropertiesRef<'a> {
+    /// Returns true if the widget has a local property of type P.
+    #[must_use = "Reports whether the property is explicitly set on the widget."]
     pub fn contains<P: Property>(&self) -> bool {
-        self.local.map.contains::<P>()
+        self.local.get::<P>().is_some()
     }
 
-    /// Returns value of property `P`.
+    /// Returns the value of property P, caching the applicable stack layer.
     ///
-    /// Checks local properties first, then the property stack,
-    /// then default properties, then [`Property::static_default()`].
-    pub fn get<P: Property>(&self, cache: &mut PropertyCache) -> &P {
-        // 1. Local properties
-        if let Some(p) = self.local.map.get::<P>() {
-            return p;
-        }
-        // 2. Property stack (writes to cache on miss)
-        if let Some(p) = self.stack.resolve::<P>(cache, self.class_set) {
-            return p;
-        }
-        // 3. Default properties
-        if let Some(p) = self.default_map.get::<P>() {
-            return p;
-        }
-        // 4. Static default
-        P::static_default()
+    /// Precedence is local property, matching stack layer, widget default,
+    /// then the property's static default.
+    pub fn get<P: Property>(&self, cache: &mut PropertyCache) -> &'a P {
+        self.resolve(|| self.stack.resolve::<P>(cache, self.class_set))
     }
 
-    /// Returns value of property `P`, without updating the cache.
-    ///
-    /// Useful for cases where you don't have mutable access to the [`PropertyCache`].
-    pub(crate) fn get_without_saving<P: Property>(&self, cache: &PropertyCache) -> &P {
-        // 1. Local properties
-        if let Some(p) = self.local.map.get::<P>() {
-            return p;
-        }
-        // 2. Property stack (reads from cache without writing on miss)
-        if let Some(p) = self
-            .stack
-            .resolve_without_saving::<P>(cache, self.class_set)
-        {
-            return p;
-        }
-        // 3. Default properties
-        if let Some(p) = self.default_map.get::<P>() {
-            return p;
-        }
-        // 4. Static default
-        P::static_default()
+    /// Resolves a property without changing the cache.
+    pub(crate) fn get_without_saving<P: Property>(&self, cache: &PropertyCache) -> &'a P {
+        self.resolve(|| {
+            self.stack
+                .resolve_without_saving::<P>(cache, self.class_set)
+        })
+    }
+
+    fn resolve<P: Property>(&self, stack_lookup: impl FnOnce() -> Option<&'a P>) -> &'a P {
+        self.local
+            .get::<P>()
+            .or_else(stack_lookup)
+            .or_else(|| self.default_map.get::<P>())
+            .unwrap_or_else(|| P::static_default())
     }
 
     /// Returns a reference to the local properties for direct access.
-    pub fn local_properties(&self) -> &PropertySet {
+    #[must_use = "Inspect the explicit properties of the widget."]
+    pub const fn local_properties(&self) -> &'a PropertySet {
         self.local
     }
 }

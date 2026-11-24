@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use masonry::core::{NewWidget, StyleProperty, Widget};
-use masonry::layout::Length;
 use masonry::properties::types::CrossAxisAlignment;
 use masonry::widgets::{Flex, Label, SizedBox, TextInput};
 
@@ -35,14 +34,14 @@ impl DemoPage for TextInputDemo {
                     .with_style(StyleProperty::FontSize(14.0))
                     .prepare(),
             )
-            .with_fixed_spacer(Length::const_px(8.0))
+            .with_fixed_spacer(masonry::layout::length!(8.0))
             .with_fixed(
                 SizedBox::new(
                     TextInput::new("")
                         .with_placeholder("Hello from Masonry…")
                         .prepare(),
                 )
-                .height(Length::const_px(40.0))
+                .height(masonry::layout::length!(40.0))
                 .prepare(),
             );
 

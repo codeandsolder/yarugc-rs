@@ -48,11 +48,11 @@ use crate::demo::{DemoPage, new_demo_shell_tags};
 use crate::horizontal_color_picker::{ColorSelected, HorizontalColorPicker};
 use crate::switch::SwitchDemo;
 
-const SIDEBAR_WIDTH: Length = Length::const_px(240.0);
-const SIDEBAR_SCROLLBAR_INSET: Length = Length::const_px(12.0);
-const LEFT_PANE_TOP_PADDING: Length = Length::const_px(12.0);
-const LEFT_PANE_LEFT_PADDING: Length = Length::const_px(12.0);
-const RIGHT_PANE_PADDING: Length = Length::const_px(12.0);
+const SIDEBAR_WIDTH: Length = masonry::layout::length!(240.0);
+const SIDEBAR_SCROLLBAR_INSET: Length = masonry::layout::length!(12.0);
+const LEFT_PANE_TOP_PADDING: Length = masonry::layout::length!(12.0);
+const LEFT_PANE_LEFT_PADDING: Length = masonry::layout::length!(12.0);
+const RIGHT_PANE_PADDING: Length = masonry::layout::length!(12.0);
 
 const DEMO_TITLE_FONT_SIZE: f32 = 20.0;
 

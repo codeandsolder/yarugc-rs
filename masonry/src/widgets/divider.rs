@@ -156,7 +156,7 @@ impl Divider {
             end_cap: Cap::Butt,
             placement: Placement::default(),
             content: None,
-            pad: Length::const_px(5.),
+            pad: crate::layout::length!(5.),
             lines: SmallVec::default(),
         }
     }
@@ -608,8 +608,8 @@ impl Widget for Divider {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        const DEFAULT_LENGTH: Length = Length::const_px(100.);
-        let thickness = self.thickness.unwrap_or(Length::const_px(1.));
+        const DEFAULT_LENGTH: Length = crate::layout::length!(100.);
+        let thickness = self.thickness.unwrap_or(crate::layout::length!(1.));
 
         let content_length = if let Some(content) = &mut self.content {
             let auto_length = len_req.into();

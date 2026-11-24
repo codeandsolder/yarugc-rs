@@ -84,7 +84,7 @@ impl HorizontalColorPicker {
         });
 
         let preview = SizedBox::empty()
-            .width(Length::const_px(20.0))
+            .width(masonry::layout::length!(20.0))
             .prepare()
             .with_props(Background::Color(color));
         let preview_id = preview.id();

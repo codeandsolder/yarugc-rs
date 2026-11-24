@@ -28,7 +28,7 @@ pub fn divider<State: 'static, Action, V: WidgetView<State, Action>>(
         start_cap: Cap::Butt,
         end_cap: Cap::Butt,
         placement: Placement::default(),
-        pad: Length::const_px(5.),
+        pad: masonry::layout::length!(5.),
         content: content.into(),
 
         phantom: PhantomData,
