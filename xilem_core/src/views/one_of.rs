@@ -50,6 +50,23 @@ macro_rules! build_variant {
 }
 
 // Tear down the same variant on removal and replacement.
+macro_rules! rebuild_variant {
+    ($view:expr, $prev:expr, $state:expr, $context:ident, $id:expr, $ctx:expr, $element:expr, $app_state:expr; $(($variant:ident, $downcast:ident)),* $(,)?) => {
+        match ($view, $prev, $state) {
+            $(
+                (OneOf::$variant(this), OneOf::$variant(prev), OneOf::$variant(state)) => {
+                    $ctx.with_id($id, |ctx| {
+                        $context::$downcast($element, |element| {
+                            this.rebuild(prev, state, ctx, element, $app_state);
+                        })
+                    }).is_some()
+                }
+            )*
+            _ => false,
+        }
+    };
+}
+
 macro_rules! teardown_variant {
     ($view:expr, $state:ident, $ctx:ident, $element:ident, $context:ident) => {
         $ctx.with_id(ViewId::new($state.generation), |ctx| {
@@ -379,117 +396,14 @@ where
         app_state: &mut State,
     ) {
         let id = ViewId::new(view_state.generation);
-        // If both elements are of the same type, do a simple rebuild
-        match (self, prev, &mut view_state.inner_state) {
-            (Self::A(this), Self::A(prev), OneOf::A(state)) => {
-                if ctx
-                    .with_id(id, |ctx| {
-                        Context::with_downcast_a(&mut element, |element| {
-                            this.rebuild(prev, state, ctx, element, app_state);
-                        })
-                    })
-                    .is_some()
-                {
-                    return;
-                }
-            }
-            (Self::B(this), Self::B(prev), OneOf::B(state)) => {
-                if ctx
-                    .with_id(id, |ctx| {
-                        Context::with_downcast_b(&mut element, |element| {
-                            this.rebuild(prev, state, ctx, element, app_state);
-                        })
-                    })
-                    .is_some()
-                {
-                    return;
-                }
-            }
-            (Self::C(this), Self::C(prev), OneOf::C(state)) => {
-                if ctx
-                    .with_id(id, |ctx| {
-                        Context::with_downcast_c(&mut element, |element| {
-                            this.rebuild(prev, state, ctx, element, app_state);
-                        })
-                    })
-                    .is_some()
-                {
-                    return;
-                }
-            }
-            (Self::D(this), Self::D(prev), OneOf::D(state)) => {
-                if ctx
-                    .with_id(id, |ctx| {
-                        Context::with_downcast_d(&mut element, |element| {
-                            this.rebuild(prev, state, ctx, element, app_state);
-                        })
-                    })
-                    .is_some()
-                {
-                    return;
-                }
-            }
-            (Self::E(this), Self::E(prev), OneOf::E(state)) => {
-                if ctx
-                    .with_id(id, |ctx| {
-                        Context::with_downcast_e(&mut element, |element| {
-                            this.rebuild(prev, state, ctx, element, app_state);
-                        })
-                    })
-                    .is_some()
-                {
-                    return;
-                }
-            }
-            (Self::F(this), Self::F(prev), OneOf::F(state)) => {
-                if ctx
-                    .with_id(id, |ctx| {
-                        Context::with_downcast_f(&mut element, |element| {
-                            this.rebuild(prev, state, ctx, element, app_state);
-                        })
-                    })
-                    .is_some()
-                {
-                    return;
-                }
-            }
-            (Self::G(this), Self::G(prev), OneOf::G(state)) => {
-                if ctx
-                    .with_id(id, |ctx| {
-                        Context::with_downcast_g(&mut element, |element| {
-                            this.rebuild(prev, state, ctx, element, app_state);
-                        })
-                    })
-                    .is_some()
-                {
-                    return;
-                }
-            }
-            (Self::H(this), Self::H(prev), OneOf::H(state)) => {
-                if ctx
-                    .with_id(id, |ctx| {
-                        Context::with_downcast_h(&mut element, |element| {
-                            this.rebuild(prev, state, ctx, element, app_state);
-                        })
-                    })
-                    .is_some()
-                {
-                    return;
-                }
-            }
-            (Self::I(this), Self::I(prev), OneOf::I(state)) => {
-                if ctx
-                    .with_id(id, |ctx| {
-                        Context::with_downcast_i(&mut element, |element| {
-                            this.rebuild(prev, state, ctx, element, app_state);
-                        })
-                    })
-                    .is_some()
-                {
-                    return;
-                }
-            }
-            _ => (),
+        // Rebuild in place only when the view, state and element all agree.
+        if rebuild_variant!(
+            self, prev, &mut view_state.inner_state, Context, id, ctx, &mut element, app_state;
+            (A, with_downcast_a), (B, with_downcast_b), (C, with_downcast_c),
+            (D, with_downcast_d), (E, with_downcast_e), (F, with_downcast_f),
+            (G, with_downcast_g), (H, with_downcast_h), (I, with_downcast_i),
+        ) {
+            return;
         }
 
         // The old generation is still active during teardown.
