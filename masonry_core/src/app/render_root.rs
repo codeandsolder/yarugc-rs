@@ -443,8 +443,9 @@ impl RenderRoot {
                 invalidate_props_all_in(node);
             });
         }
-        let root_node = self.widget_arena.get_node_mut(self.root_id());
-        invalidate_props_all_in(root_node);
+        if let Some(root_node) = self.widget_arena.nodes.find_mut(self.root_id()) {
+            invalidate_props_all_in(root_node);
+        }
 
         self.run_rewrite_passes();
     }
@@ -467,26 +468,16 @@ impl RenderRoot {
             .map_or_else(Vec::new, |stack| stack.layer_root_ids().collect())
     }
 
-    pub(crate) fn root_state(&self) -> &WidgetState {
-        &self
-            .widget_arena
-            .nodes
-            .roots()
-            .item(self.root_id())
-            .expect("root widget not in widget tree")
-            .item
-            .state
+    pub(crate) fn root_state(&self) -> Option<&WidgetState> {
+        self.widget_arena.get_state(self.root_id())
     }
 
-    pub(crate) fn root_state_mut(&mut self) -> &mut WidgetState {
-        &mut self
-            .widget_arena
+    pub(crate) fn root_state_mut(&mut self) -> Option<&mut WidgetState> {
+        self.widget_arena
             .nodes
             .roots_mut()
             .into_item_mut(self.layer_stack.id())
-            .expect("root widget not in widget tree")
-            .item
-            .state
+            .map(|node| &mut node.item.state)
     }
 
     // --- MARK: WINDOW_EVENT
@@ -500,8 +491,10 @@ impl RenderRoot {
             }
             WindowEvent::Resize(size) => {
                 self.global_state.size = size;
-                self.root_state_mut().request_layout = true;
-                self.root_state_mut().set_needs_layout(true);
+                if let Some(state) = self.root_state_mut() {
+                    state.request_layout = true;
+                    state.set_needs_layout(true);
+                }
                 self.run_rewrite_passes();
                 Handled::Yes
             }
@@ -809,7 +802,7 @@ impl RenderRoot {
                 .emit_signal(RenderRootSignal::RequestRedraw);
         }
 
-        if self.root_state().needs_anim {
+        if self.root_state().is_some_and(|state| state.needs_anim) {
             self.global_state
                 .emit_signal(RenderRootSignal::RequestAnimFrame);
         }
@@ -817,7 +810,7 @@ impl RenderRoot {
         // We request a redraw if either the render tree or the accessibility
         // tree needs to be rebuilt. Usually both are rebuilt at the same time.
         // A redraw will trigger a rebuild of the accessibility tree.
-        if self.root_state().needs_paint || self.needs_accessibility() {
+        if self.root_state().is_some_and(|state| state.needs_paint) || self.needs_accessibility() {
             self.global_state
                 .emit_signal(RenderRootSignal::RequestRedraw);
         }
@@ -863,8 +856,9 @@ impl RenderRoot {
             });
         }
 
-        let root_node = self.widget_arena.get_node_mut(self.root_id());
-        request_access_all_in(root_node);
+        if let Some(root_node) = self.widget_arena.nodes.find_mut(self.root_id()) {
+            request_access_all_in(root_node);
+        }
         self.global_state
             .emit_signal(RenderRootSignal::RequestRedraw);
     }
@@ -888,8 +882,9 @@ impl RenderRoot {
             });
         }
 
-        let root_node = self.widget_arena.get_node_mut(self.root_id());
-        request_render_all_in(root_node);
+        if let Some(root_node) = self.widget_arena.nodes.find_mut(self.root_id()) {
+            request_render_all_in(root_node);
+        }
         self.global_state
             .emit_signal(RenderRootSignal::RequestRedraw);
     }
@@ -947,19 +942,24 @@ impl RenderRoot {
 
     /// Returns true if the widget tree is waiting for an animation frame.
     pub fn needs_anim(&self) -> bool {
-        self.root_state().needs_anim
+        self.root_state().is_some_and(|state| state.needs_anim)
     }
 
     /// Returns true if the accessibility tree needs to be rebuilt.
     ///
     /// This will be inhibited if `access_tree_active` is false.
     pub fn needs_accessibility(&self) -> bool {
-        self.global_state.access_tree_active && self.root_state().needs_accessibility
+        self.global_state.access_tree_active
+            && self
+                .root_state()
+                .is_some_and(|state| state.needs_accessibility)
     }
 
     /// Returns `true` if something requires a rewrite pass or a re-render.
     pub fn needs_rewrite_passes(&self) -> bool {
-        self.root_state().needs_rewrite_passes() || self.global_state.needs_rewrite_passes()
+        self.root_state()
+            .is_some_and(WidgetState::needs_rewrite_passes)
+            || self.global_state.needs_rewrite_passes()
     }
 
     // TODO - Remove?
@@ -1043,9 +1043,9 @@ impl RenderRoot {
             });
         }
 
-        let root_node = self.widget_arena.get_node_mut(self.root_id());
-
-        invalidate_properties_resolution(root_node, stack_id);
+        if let Some(root_node) = self.widget_arena.nodes.find_mut(self.root_id()) {
+            invalidate_properties_resolution(root_node, stack_id);
+        }
     }
 }
 

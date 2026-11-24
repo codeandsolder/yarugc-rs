@@ -956,24 +956,27 @@ impl Widget for Grid {
             let origin = Point::new(col_offsets[col], row_offsets[row]);
             ctx.place_child(&mut child.widget, origin);
 
-            let (first_baseline, last_baseline) = ctx.child_aligned_baselines(&child.widget);
+            let Some(placement) = ctx.child_placement(&child.widget) else {
+                continue;
+            };
+            let (first_baseline, last_baseline) = placement.parent_baselines();
             let last_row = child.y + child.params.height;
 
             baselines = Some(match baselines {
                 None => (
                     child.x,
                     child.y,
-                    origin.y + first_baseline,
+                    first_baseline,
                     child.x,
                     last_row,
-                    origin.y + last_baseline,
+                    last_baseline,
                 ),
                 Some((mut col0, mut row0, mut base0, mut col1, mut row1, mut base1)) => {
                     if (child.y, child.x) < (row0, col0) {
-                        (col0, row0, base0) = (child.x, child.y, origin.y + first_baseline);
+                        (col0, row0, base0) = (child.x, child.y, first_baseline);
                     }
                     if (last_row, child.x) > (row1, col1) {
-                        (col1, row1, base1) = (child.x, last_row, origin.y + last_baseline);
+                        (col1, row1, base1) = (child.x, last_row, last_baseline);
                     }
                     (col0, row0, base0, col1, row1, base1)
                 }

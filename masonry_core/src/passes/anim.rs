@@ -74,7 +74,9 @@ fn update_anim_for_widget(
 pub(crate) fn run_update_anim_pass(root: &mut RenderRoot, elapsed_ns: u64) {
     let _span = info_span!("update_anim").entered();
 
-    let root_node = root.widget_arena.get_node_mut(root.root_id());
+    let Some(root_node) = root.widget_arena.nodes.find_mut(root.root_id()) else {
+        return;
+    };
     update_anim_for_widget(
         &mut root.global_state,
         &root.property_arena.default_properties,

@@ -1104,7 +1104,10 @@ impl Widget for Flex {
                         let alignment = alignment.unwrap_or(self.cross_alignment);
                         match alignment {
                             CrossAxisAlignment::FirstBaseline => {
-                                let (first_baseline, _) = ctx.child_layout_baselines(widget);
+                                let Some(geometry) = ctx.child_layout(widget) else {
+                                    continue;
+                                };
+                                let first_baseline = geometry.baselines.0;
                                 alignment_ascent = Some(
                                     alignment_ascent
                                         .unwrap_or(first_baseline)
@@ -1112,8 +1115,11 @@ impl Widget for Flex {
                                 );
                             }
                             CrossAxisAlignment::LastBaseline => {
-                                let (_, last_baseline) = ctx.child_layout_baselines(widget);
-                                let child_size = ctx.child_size(widget);
+                                let Some(geometry) = ctx.child_layout(widget) else {
+                                    continue;
+                                };
+                                let last_baseline = geometry.baselines.1;
+                                let child_size = geometry.size;
                                 let descent = child_size.get_coord(cross) - last_baseline;
                                 alignment_descent =
                                     Some(alignment_descent.unwrap_or(descent).max(descent));
@@ -1138,17 +1144,20 @@ impl Widget for Flex {
                         main_offset += space_between;
                     }
 
-                    let child_size = ctx.child_size(widget);
+                    let Some(geometry) = ctx.child_layout(widget) else {
+                        continue;
+                    };
+                    let child_size = geometry.size;
                     let alignment = alignment.unwrap_or(self.cross_alignment);
                     let child_origin_cross = match alignment {
                         CrossAxisAlignment::FirstBaseline if main == Axis::Horizontal => {
-                            let (first_baseline, _) = ctx.child_layout_baselines(widget);
-                            alignment_ascent.unwrap() - first_baseline
+                            let first_baseline = geometry.baselines.0;
+                            alignment_ascent.unwrap_or(first_baseline) - first_baseline
                         }
                         CrossAxisAlignment::LastBaseline if main == Axis::Horizontal => {
-                            let (_, last_baseline) = ctx.child_layout_baselines(widget);
+                            let last_baseline = geometry.baselines.1;
                             let descent = child_size.get_coord(cross) - last_baseline;
-                            let end_gap = alignment_descent.unwrap() - descent;
+                            let end_gap = alignment_descent.unwrap_or(descent) - descent;
                             let cross_unused = cross_space.get() - child_size.get_coord(cross);
                             cross_unused - end_gap
                         }
@@ -1196,37 +1205,16 @@ impl Widget for Flex {
             }
             // If there are no baseline alignment groups then derive it from specific children.
             (None, None) => {
-                let any_child_widgets = self.children.iter().any(|child| child.is_widget());
-                if any_child_widgets {
-                    // We use the startmost/endmost children. This is easier to implement
-                    // and provides more stable baselines, however it does mean that
-                    // the baselines won't necessarily match visual first/last baselines.
-
-                    let first_child = self
-                        .children
-                        .iter()
-                        .find(|c| c.is_widget())
-                        .unwrap()
-                        .widget()
-                        .unwrap();
-                    let (first_baseline, _) = ctx.child_aligned_baselines(first_child);
-                    let first_child_origin = ctx.child_origin(first_child);
-                    let first_baseline = first_child_origin.y + first_baseline;
-
-                    let last_child = self
-                        .children
-                        .iter()
-                        .rfind(|c| c.is_widget())
-                        .unwrap()
-                        .widget()
-                        .unwrap();
-                    let (_, last_baseline) = ctx.child_aligned_baselines(last_child);
-                    let last_child_origin = ctx.child_origin(last_child);
-                    let last_baseline = last_child_origin.y + last_baseline;
-
-                    ctx.set_baselines(first_baseline, last_baseline);
+                // Use the startmost and endmost placed widget, matching CSS flexbox.
+                let mut placements = self
+                    .children
+                    .iter()
+                    .filter_map(Child::widget)
+                    .filter_map(|child| ctx.child_placement(child));
+                if let Some(first) = placements.next() {
+                    let last = placements.next_back().unwrap_or(first);
+                    ctx.set_baselines(first.parent_baselines().0, last.parent_baselines().1);
                 } else {
-                    // No child widgets, so fall back to default baselines.
                     ctx.clear_baselines();
                 }
             }

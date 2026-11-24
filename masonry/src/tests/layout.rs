@@ -101,7 +101,7 @@ fn call_place_child_before_layout() {
 }
 
 #[test]
-fn call_child_size_before_layout() {
+fn call_child_layout_before_layout() {
     let parent_tag = WidgetTag::unique();
     let layout_count = Rc::new(Cell::new(0));
     let layout_count_for_fn = layout_count.clone();
@@ -109,7 +109,7 @@ fn call_child_size_before_layout() {
     let child = NewWidget::new(SizedBox::empty().width(20.px()).height(20.px()));
     let parent = ModularWidget::new_parent(child).layout_fn(move |child, ctx, _, size| {
         if layout_count_for_fn.get() > 0 {
-            let _ = ctx.child_size(child);
+            let _ = ctx.child_layout(child);
         }
 
         layout_count_for_fn.set(layout_count_for_fn.get() + 1);
@@ -126,7 +126,7 @@ fn call_child_size_before_layout() {
         harness.edit_widget(parent_tag, |mut parent| {
             parent.ctx.request_layout();
         }),
-        "trying to call 'child_size'"
+        "trying to call 'child_layout'"
     );
 }
 

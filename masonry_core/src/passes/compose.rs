@@ -81,11 +81,13 @@ pub(crate) fn run_compose_pass(root: &mut RenderRoot) {
 
     // If widgets have moved, pointer-related info may be stale.
     // For instance, the "hovered" widget may have moved and no longer be under the pointer.
-    if root.root_state().needs_compose {
+    if root.root_state().is_some_and(|state| state.needs_compose) {
         root.global_state.needs_pointer_pass = true;
     }
 
-    let root_node = root.widget_arena.get_node_mut(root.root_id());
+    let Some(root_node) = root.widget_arena.nodes.find_mut(root.root_id()) else {
+        return;
+    };
     compose_widget(
         &mut root.global_state,
         &root.property_arena,

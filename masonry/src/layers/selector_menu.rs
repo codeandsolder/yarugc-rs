@@ -295,18 +295,13 @@ impl Widget for SelectorMenu {
             y_offset += child_size.height + gap_length;
         }
 
-        if !self.children.is_empty() {
-            let first_child = self.children.first().unwrap();
-            let (first_baseline, _) = ctx.child_aligned_baselines(first_child);
-            let first_child_origin = ctx.child_origin(first_child);
-            let first_baseline = first_child_origin.y + first_baseline;
-
-            let last_child = self.children.last().unwrap();
-            let (_, last_baseline) = ctx.child_aligned_baselines(last_child);
-            let last_child_origin = ctx.child_origin(last_child);
-            let last_baseline = last_child_origin.y + last_baseline;
-
-            ctx.set_baselines(first_baseline, last_baseline);
+        let mut placements = self
+            .children
+            .iter()
+            .filter_map(|child| ctx.child_placement(child));
+        if let Some(first) = placements.next() {
+            let last = placements.next_back().unwrap_or(first);
+            ctx.set_baselines(first.parent_baselines().0, last.parent_baselines().1);
         } else {
             ctx.clear_baselines();
         }

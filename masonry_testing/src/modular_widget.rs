@@ -172,10 +172,13 @@ impl<W: Widget + ?Sized> ModularWidget<Vec<WidgetPod<W>>> {
                     ctx.place_child(child, Point::ZERO);
                 }
 
-                if let Some(child) = children.first() {
-                    let (first_baseline, _) = ctx.child_aligned_baselines(child);
-                    let (_, last_baseline) = ctx.child_aligned_baselines(children.last().unwrap());
-                    ctx.set_baselines(first_baseline, last_baseline);
+                let mut placements = children
+                    .iter()
+                    .filter(|child| !ctx.child_is_stashed(child))
+                    .filter_map(|child| ctx.child_placement(child));
+                if let Some(first) = placements.next() {
+                    let last = placements.next_back().unwrap_or(first);
+                    ctx.set_baselines(first.parent_baselines().0, last.parent_baselines().1);
                 } else {
                     ctx.clear_baselines();
                 }

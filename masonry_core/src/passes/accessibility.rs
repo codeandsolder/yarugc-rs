@@ -8,7 +8,7 @@ use tree_arena::ArenaMut;
 
 use crate::app::{RenderRoot, RenderRootState};
 use crate::core::{
-    AccessCtx, DefaultProperties, PropertiesRef, PropertyArena, Widget, WidgetArenaNode, WidgetId,
+    AccessCtx, DefaultProperties, PropertiesRef, PropertyArena, Widget, WidgetArenaNode,
 };
 use crate::passes::{enter_span_if, recurse_on_children};
 
@@ -49,7 +49,7 @@ fn build_accessibility_tree(
             children: children.reborrow_mut(),
             tree_update,
         };
-        let mut node = build_access_node(widget, &mut ctx, scale_factor);
+        let mut node = build_access_node(widget, &ctx, scale_factor);
         let props = PropertiesRef {
             local: properties,
             default_map: default_properties.for_widget(widget.type_id()),
@@ -83,11 +83,7 @@ fn build_accessibility_tree(
 }
 
 // --- MARK: BUILD NODE
-fn build_access_node(
-    widget: &mut dyn Widget,
-    ctx: &mut AccessCtx<'_>,
-    scale_factor: Option<f64>,
-) -> Node {
+fn build_access_node(widget: &dyn Widget, ctx: &AccessCtx<'_>, scale_factor: Option<f64>) -> Node {
     let mut node = Node::new(widget.accessibility_role());
     node.set_bounds(to_accesskit_rect(ctx.widget_state.border_box()));
 
@@ -100,22 +96,14 @@ fn build_access_node(
     }
     node.set_transform(accesskit::Affine::new(local_transform.as_coeffs()));
 
-    fn is_child_stashed(ctx: &mut AccessCtx<'_>, id: WidgetId) -> bool {
-        ctx.children
-            .find(id)
-            .expect("is_child_stashed: child not found")
-            .item
-            .state
-            .is_stashed
-    }
-
     node.set_children(
         widget
             .children_ids()
-            .iter()
-            .copied()
-            .filter(|id| !is_child_stashed(ctx, *id))
-            .map(|id| id.into())
+            .into_iter()
+            .filter_map(|id| {
+                let child = ctx.children.item(id)?;
+                (!child.item.state.is_stashed).then_some(id.into())
+            })
             .collect::<Vec<NodeId>>(),
     );
 
@@ -141,7 +129,7 @@ fn build_access_node(
     node
 }
 
-fn to_accesskit_rect(r: Rect) -> accesskit::Rect {
+const fn to_accesskit_rect(r: Rect) -> accesskit::Rect {
     accesskit::Rect::new(r.x0, r.y0, r.x1, r.y1)
 }
 
@@ -161,25 +149,25 @@ pub(crate) fn run_accessibility_pass(root: &mut RenderRoot, scale_factor: f64) -
         focus: root
             .global_state
             .focused_widget
-            .map(Into::into)
-            .unwrap_or(root.global_state.window_node_id),
+            .map_or(root.global_state.window_node_id, Into::into),
     };
 
-    let root_node = root.widget_arena.get_node_mut(root.root_id());
-
-    build_accessibility_tree(
-        &mut root.global_state,
-        &root.property_arena.default_properties,
-        &root.property_arena,
-        &mut tree_update,
-        root_node,
-        Some(scale_factor),
-    );
-
     // TODO: make root node type customizable to support Dialog/AlertDialog roles
-    // (should go hand in hand with introducing support for modal windows?)
     let mut window_node = Node::new(Role::Window);
-    window_node.set_children(vec![root.root_id().into()]);
+    let root_id = root.root_id();
+    if let Some(root_node) = root.widget_arena.nodes.find_mut(root_id) {
+        build_accessibility_tree(
+            &mut root.global_state,
+            &root.property_arena.default_properties,
+            &root.property_arena,
+            &mut tree_update,
+            root_node,
+            Some(scale_factor),
+        );
+        window_node.set_children(vec![root_id.into()]);
+    } else {
+        tree_update.focus = root.global_state.window_node_id;
+    }
     tree_update
         .nodes
         .push((root.global_state.window_node_id, window_node));

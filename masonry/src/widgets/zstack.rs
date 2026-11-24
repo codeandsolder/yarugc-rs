@@ -260,13 +260,13 @@ impl Widget for ZStack {
                 child_alignment.resolve(Rect::new(0., 0., extra_width, extra_height));
             ctx.place_child(&mut child.widget, child_origin);
 
-            let child_origin = ctx.child_origin(&child.widget);
-
-            let (first_baseline, last_baseline) = ctx.child_aligned_baselines(&child.widget);
-            min_baseline = min_baseline.min(child_origin.y + first_baseline);
-            max_baseline = max_baseline.max(child_origin.y + last_baseline);
+            if let Some(placement) = ctx.child_placement(&child.widget) {
+                let (first, last) = placement.parent_baselines();
+                min_baseline = min_baseline.min(first);
+                max_baseline = max_baseline.max(last);
+            }
         }
-        if !self.children.is_empty() {
+        if min_baseline.is_finite() && max_baseline.is_finite() {
             ctx.set_baselines(min_baseline, max_baseline);
         } else {
             ctx.clear_baselines();

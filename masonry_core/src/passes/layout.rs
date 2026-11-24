@@ -551,7 +551,7 @@ pub(crate) fn place_widget(child_state: &mut WidgetState, origin: Point) {
 // --- MARK: ROOT
 /// See the [passes documentation](crate::doc::pass_system#layout-pass).
 pub(crate) fn run_layout_pass(root: &mut RenderRoot) {
-    if !root.root_state().needs_layout() {
+    if !root.root_state().is_some_and(WidgetState::needs_layout) {
         return;
     }
 
@@ -559,7 +559,9 @@ pub(crate) fn run_layout_pass(root: &mut RenderRoot) {
     root.global_state.needs_pointer_pass = true;
 
     let window_size = root.get_kurbo_size();
-    let mut root_node = root.widget_arena.get_node_mut(root.root_id());
+    let Some(mut root_node) = root.widget_arena.nodes.find_mut(root.root_id()) else {
+        return;
+    };
     let root_node_size = match root.global_state.size_policy {
         WindowSizePolicy::User => resolve_size(
             &mut root.global_state,

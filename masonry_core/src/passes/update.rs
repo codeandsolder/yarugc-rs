@@ -382,7 +382,9 @@ pub(crate) fn run_update_widget_tree_pass(root: &mut RenderRoot) {
         ctx.register_child(&mut root.layer_stack);
     }
 
-    let root_node = root.widget_arena.get_node_mut(root.root_id());
+    let Some(root_node) = root.widget_arena.nodes.find_mut(root.root_id()) else {
+        return;
+    };
     update_widget_tree(
         &mut root.global_state,
         &root.property_arena.default_properties,
@@ -462,11 +464,16 @@ pub(crate) fn run_update_disabled_pass(root: &mut RenderRoot) {
     let _span = info_span!("update_disabled").entered();
 
     // If a widget was enabled or disabled, the pointer icon may need to change.
-    if root.root_state().needs_update_disabled {
+    if root
+        .root_state()
+        .is_some_and(|state| state.needs_update_disabled)
+    {
         root.global_state.needs_pointer_pass = true;
     }
 
-    let root_node = root.widget_arena.get_node_mut(root.root_id());
+    let Some(root_node) = root.widget_arena.nodes.find_mut(root.root_id()) else {
+        return;
+    };
     update_disabled_for_widget(
         &mut root.global_state,
         &root.property_arena.default_properties,
@@ -554,7 +561,9 @@ fn update_stashed_for_widget(
 pub(crate) fn run_update_stashed_pass(root: &mut RenderRoot) {
     let _span = info_span!("update_stashed").entered();
 
-    let root_node = root.widget_arena.get_node_mut(root.root_id());
+    let Some(root_node) = root.widget_arena.nodes.find_mut(root.root_id()) else {
+        return;
+    };
     update_stashed_for_widget(
         &mut root.global_state,
         &root.property_arena.default_properties,
@@ -601,7 +610,9 @@ fn update_focusable_for_widget(node: ArenaMut<'_, WidgetArenaNode>) {
 pub(crate) fn run_update_focusable_pass(root: &mut RenderRoot) {
     let _span = info_span!("update_focusable").entered();
 
-    let root_node = root.widget_arena.get_node_mut(root.root_id());
+    let Some(root_node) = root.widget_arena.nodes.find_mut(root.root_id()) else {
+        return;
+    };
     update_focusable_for_widget(root_node);
 }
 
@@ -856,11 +867,12 @@ pub(crate) fn run_update_pointer_pass(root: &mut RenderRoot) {
         if let Some(pos) = pointer_pos {
             root.global_state.inspector_state.hovered_widget = root
                 .get_widget(root.root_id())
-                .expect("root widget not in widget tree")
-                .find_widget_under_pointer(pos)
+                .and_then(|widget| widget.find_widget_under_pointer(pos))
                 .map(|widget| widget.id());
         }
-        root.root_state_mut().needs_paint = true;
+        if let Some(state) = root.root_state_mut() {
+            state.needs_paint = true;
+        }
         return;
     }
 
@@ -890,8 +902,7 @@ pub(crate) fn run_update_pointer_pass(root: &mut RenderRoot) {
     // -- UPDATE HOVERED --
     let mut next_hovered_widget = if let Some(pos) = pointer_pos {
         root.get_widget(root.root_id())
-            .expect("root widget not in widget tree")
-            .find_widget_under_pointer(pos)
+            .and_then(|widget| widget.find_widget_under_pointer(pos))
             .map(|widget| widget.id())
     } else {
         None
@@ -1045,11 +1056,16 @@ fn cached_props_changed(diff: &ClassSetDiff, cache: &PropertyCache) -> bool {
 pub(crate) fn run_update_props_pass(root: &mut RenderRoot) {
     let _span = info_span!("update_props").entered();
 
-    if !root.root_state().needs_update_props {
+    if !root
+        .root_state()
+        .is_some_and(|state| state.needs_update_props)
+    {
         return;
     }
 
-    let root_node = root.widget_arena.get_node_mut(root.root_id());
+    let Some(root_node) = root.widget_arena.nodes.find_mut(root.root_id()) else {
+        return;
+    };
     update_props_for_widget(&mut root.global_state, &root.property_arena, root_node);
 }
 
@@ -1103,7 +1119,9 @@ fn update_fonts_for_widget(
 pub(crate) fn run_update_fonts_pass(root: &mut RenderRoot) {
     let _span = info_span!("update_fonts").entered();
 
-    let root_node = root.widget_arena.get_node_mut(root.root_id());
+    let Some(root_node) = root.widget_arena.nodes.find_mut(root.root_id()) else {
+        return;
+    };
     update_fonts_for_widget(
         &mut root.global_state,
         &root.property_arena.default_properties,

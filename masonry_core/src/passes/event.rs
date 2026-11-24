@@ -177,12 +177,13 @@ pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEv
         }
         root.global_state.inspector_state.is_picking_widget = false;
         root.global_state.inspector_state.hovered_widget = None;
-        root.root_state_mut().needs_paint = true;
+        if let Some(state) = root.root_state_mut() {
+            state.needs_paint = true;
+        }
         return Handled::Yes;
     }
 
-    let root_node = root.widget_arena.get_node_mut(root.root_id());
-    let layer_ids = root_node.item.widget.children_ids();
+    let layer_ids = root.layer_root_ids();
     for layer_id in layer_ids {
         let Some(mut layer_root) = root.widget_arena.nodes.find_mut(layer_id) else {
             continue;
@@ -332,7 +333,9 @@ pub(crate) fn run_on_text_event_pass(root: &mut RenderRoot, event: &TextEvent) -
             root.global_state.inspector_state.is_picking_widget =
                 !root.global_state.inspector_state.is_picking_widget;
             root.global_state.inspector_state.hovered_widget = None;
-            root.root_state_mut().needs_paint = true;
+            if let Some(state) = root.root_state_mut() {
+                state.needs_paint = true;
+            }
             handled = Handled::Yes;
         }
 
@@ -341,7 +344,9 @@ pub(crate) fn run_on_text_event_pass(root: &mut RenderRoot, event: &TextEvent) -
             && handled == Handled::No
         {
             root.global_state.debug_paint = !root.global_state.debug_paint;
-            root.root_state_mut().needs_paint = true;
+            if let Some(state) = root.root_state_mut() {
+                state.needs_paint = true;
+            }
             handled = Handled::Yes;
         }
     }
