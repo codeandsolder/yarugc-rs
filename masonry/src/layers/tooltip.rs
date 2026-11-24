@@ -1,15 +1,13 @@
 // Copyright 2025 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use std::any::TypeId;
-
 use accesskit::{Node, Role};
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, AccessEvent, ChildrenIds, EventCtx, Layer, LayoutCtx, MeasureCtx, NewWidget,
-    NoAction, PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update,
-    UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ChildrenIds, EventCtx, Layer, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
+    PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, Widget, WidgetId, WidgetMut,
+    WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Size};
@@ -50,43 +48,9 @@ impl Tooltip {
 impl Widget for Tooltip {
     type Action = NoAction;
 
-    fn on_pointer_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &PointerEvent,
-    ) {
-    }
-
-    fn on_text_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &TextEvent,
-    ) {
-    }
-
-    fn on_access_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &AccessEvent,
-    ) {
-    }
-
-    fn update(
-        &mut self,
-        _ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &Update,
-    ) {
-    }
-
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
         ctx.register_child(&mut self.child);
     }
-
-    fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: TypeId) {}
 
     fn measure(
         &mut self,

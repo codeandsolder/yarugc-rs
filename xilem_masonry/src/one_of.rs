@@ -5,9 +5,8 @@
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, AccessEvent, ChildrenIds, EventCtx, FromDynWidget, LayoutCtx, MeasureCtx, NoAction,
-    PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Widget,
-    WidgetPod,
+    AccessCtx, ChildrenIds, FromDynWidget, LayoutCtx, MeasureCtx, NoAction, PaintCtx,
+    PropertiesRef, RegisterCtx, Widget, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size};
@@ -213,28 +212,6 @@ impl<
 > Widget for OneOfWidget<A, B, C, D, E, F, G, H, I>
 {
     type Action = NoAction;
-
-    fn on_pointer_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &PointerEvent,
-    ) {
-    }
-    fn on_text_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &TextEvent,
-    ) {
-    }
-    fn on_access_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &AccessEvent,
-    ) {
-    }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
         match self {

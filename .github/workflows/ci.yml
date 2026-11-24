@@ -48,6 +48,13 @@ jobs:
       apt-packages: libasound2-dev libudev-dev libfontconfig1-dev
       allow-test-panics: true
 
+  strict-tree-unsafe:
+    uses: codeandsolder/rust-skills2/.github/workflows/strict-rust.yml@7d0552029497cf094787c3593f804d5bce137c4b # main
+    with:
+      cargo-args: --locked -p tree_arena --all-targets --no-default-features
+      allow-test-panics: true
+      dependency-quality: false
+
   strict-wasm:
     uses: codeandsolder/rust-skills2/.github/workflows/strict-rust.yml@7d0552029497cf094787c3593f804d5bce137c4b # main
     with:

@@ -6,13 +6,10 @@
     reason = "Widgets are not expected to implement Debug"
 )]
 
-use std::any::TypeId;
-
 use masonry_core::accesskit::{Node, Role};
 use masonry_core::core::{
-    AccessCtx, AccessEvent, ChildrenIds, ComposeCtx, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
-    NoAction, PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update,
-    UpdateCtx, Widget, WidgetMut, WidgetPod,
+    AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesRef,
+    RegisterCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry_core::imaging::Painter;
 use masonry_core::kurbo::{Axis, Point, Size};
@@ -56,43 +53,9 @@ impl WrapperWidget {
 impl Widget for WrapperWidget {
     type Action = NoAction;
 
-    fn on_pointer_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &PointerEvent,
-    ) {
-    }
-
-    fn on_text_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &TextEvent,
-    ) {
-    }
-
-    fn on_access_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &AccessEvent,
-    ) {
-    }
-
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
         ctx.register_child(&mut self.child);
     }
-
-    fn update(
-        &mut self,
-        _ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &Update,
-    ) {
-    }
-
-    fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: TypeId) {}
 
     fn measure(
         &mut self,
@@ -123,8 +86,6 @@ impl Widget for WrapperWidget {
 
         ctx.derive_baselines(&self.child);
     }
-
-    fn compose(&mut self, _ctx: &mut ComposeCtx<'_>) {}
 
     fn paint(
         &mut self,

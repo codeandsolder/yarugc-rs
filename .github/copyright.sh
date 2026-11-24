@@ -13,7 +13,7 @@ if [ -n "$output" ]; then
 	echo -e "The following files lack the correct copyright header:\n"
 	printf '%s\n' "$output"
 	echo -e "\n\nPlease add the following header:\n"
-	echo "// Copyright $(date +%Y) the Xilem Authors"
+	echo "// Copyright $(date +%Y) the YARUGC Authors"
 	echo "// SPDX-License-Identifier: Apache-2.0"
 	echo -e "\n... rest of the file ...\n"
 	exit 1
