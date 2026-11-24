@@ -398,6 +398,36 @@ pub(crate) fn run_update_widget_tree_pass(root: &mut RenderRoot) {
 
 // ----------------
 
+fn notify_inherited_state_change(
+    global_state: &mut RenderRootState,
+    default_properties: &DefaultProperties,
+    property_arena: &PropertyArena,
+    state: &mut WidgetState,
+    children: ArenaMutList<'_, WidgetArenaNode>,
+    (widget, properties, class_set): (
+        &mut dyn Widget,
+        &mut crate::core::PropertySet,
+        &crate::core::ClassSet,
+    ),
+    event: &Update,
+) {
+    let stack = property_arena.get(state.property_stack_id, widget.type_id());
+    let mut ctx = UpdateCtx {
+        global_state,
+        widget_state: state,
+        children,
+        ancestors: None,
+        property_arena,
+    };
+    let mut props = PropertiesMut {
+        local: properties,
+        default_map: default_properties.for_widget(widget.type_id()),
+        stack,
+        class_set,
+    };
+    widget.update(&mut ctx, &mut props, event);
+}
+
 // --- MARK: DISABLED
 /// See the [passes documentation](crate::doc::pass_system#update-passes).
 /// See the [disabled status documentation](../doc/06_masonry_concepts.md#disabled).
@@ -423,21 +453,15 @@ fn update_disabled_for_widget(
     }
 
     if disabled != state.is_disabled() {
-        let stack = property_arena.get(state.property_stack_id, widget.type_id());
-        let mut ctx = UpdateCtx {
+        notify_inherited_state_change(
             global_state,
-            widget_state: state,
-            children: children.reborrow_mut(),
-            ancestors: None,
+            default_properties,
             property_arena,
-        };
-        let mut props = PropertiesMut {
-            local: properties,
-            default_map: default_properties.for_widget(widget.type_id()),
-            stack,
-            class_set,
-        };
-        widget.update(&mut ctx, &mut props, &Update::DisabledChanged(disabled));
+            state,
+            children.reborrow_mut(),
+            (widget, properties, class_set),
+            &Update::DisabledChanged(disabled),
+        );
         state.set_is_disabled(disabled);
         state.class_diff.pseudo.set(PseudoClass::Disabled, disabled);
         state.set_request_update_props(true);
@@ -515,21 +539,15 @@ fn update_stashed_for_widget(
     }
 
     if stashed != state.is_stashed() {
-        let stack = property_arena.get(state.property_stack_id, widget.type_id());
-        let mut ctx = UpdateCtx {
+        notify_inherited_state_change(
             global_state,
-            widget_state: state,
-            children: children.reborrow_mut(),
-            ancestors: None,
+            default_properties,
             property_arena,
-        };
-        let mut props = PropertiesMut {
-            local: properties,
-            default_map: default_properties.for_widget(widget.type_id()),
-            stack,
-            class_set,
-        };
-        widget.update(&mut ctx, &mut props, &Update::StashedChanged(stashed));
+            state,
+            children.reborrow_mut(),
+            (widget, properties, class_set),
+            &Update::StashedChanged(stashed),
+        );
         state.set_is_stashed(stashed);
         state.set_needs_update_focusable(true);
 
