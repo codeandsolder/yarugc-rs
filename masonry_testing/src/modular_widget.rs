@@ -20,20 +20,17 @@ use masonry_core::kurbo::{Axis, Point, Size};
 use masonry_core::layout::{LayoutSize, LenReq, Length, SizeDef, UnitPoint};
 use tracing::trace_span;
 
-pub(crate) type PointerEventFn<S> =
+type PointerEventFn<S> =
     dyn FnMut(&mut S, &mut EventCtx<'_>, &mut PropertiesMut<'_>, &PointerEvent);
-pub(crate) type TextEventFn<S> =
-    dyn FnMut(&mut S, &mut EventCtx<'_>, &mut PropertiesMut<'_>, &TextEvent);
-pub(crate) type AccessEventFn<S> =
-    dyn FnMut(&mut S, &mut EventCtx<'_>, &mut PropertiesMut<'_>, &AccessEvent);
-pub(crate) type AnimFrameFn<S> = dyn FnMut(&mut S, &mut UpdateCtx<'_>, &mut PropertiesMut<'_>, u64);
-pub(crate) type ActionFn<S> =
+type TextEventFn<S> = dyn FnMut(&mut S, &mut EventCtx<'_>, &mut PropertiesMut<'_>, &TextEvent);
+type AccessEventFn<S> = dyn FnMut(&mut S, &mut EventCtx<'_>, &mut PropertiesMut<'_>, &AccessEvent);
+type AnimFrameFn<S> = dyn FnMut(&mut S, &mut UpdateCtx<'_>, &mut PropertiesMut<'_>, u64);
+type ActionFn<S> =
     dyn FnMut(&mut S, &mut ActionCtx<'_>, &mut PropertiesMut<'_>, &ErasedAction, WidgetId);
-pub(crate) type RegisterChildrenFn<S> = dyn FnMut(&mut S, &mut RegisterCtx<'_>);
-pub(crate) type UpdateFn<S> =
-    dyn FnMut(&mut S, &mut UpdateCtx<'_>, &mut PropertiesMut<'_>, &Update);
-pub(crate) type PropertyChangeFn<S> = dyn FnMut(&mut S, &mut UpdateCtx<'_>, TypeId);
-pub(crate) type MeasureFn<S> = dyn FnMut(
+type RegisterChildrenFn<S> = dyn FnMut(&mut S, &mut RegisterCtx<'_>);
+type UpdateFn<S> = dyn FnMut(&mut S, &mut UpdateCtx<'_>, &mut PropertiesMut<'_>, &Update);
+type PropertyChangeFn<S> = dyn FnMut(&mut S, &mut UpdateCtx<'_>, TypeId);
+type MeasureFn<S> = dyn FnMut(
     &mut S,
     &mut MeasureCtx<'_>,
     &PropertiesRef<'_>,
@@ -41,25 +38,22 @@ pub(crate) type MeasureFn<S> = dyn FnMut(
     LenReq,
     Option<Length>,
 ) -> Length;
-pub(crate) type LayoutFn<S> = dyn FnMut(&mut S, &mut LayoutCtx<'_>, &PropertiesRef<'_>, Size);
-pub(crate) type ComposeFn<S> = dyn FnMut(&mut S, &mut ComposeCtx<'_>);
-pub(crate) type PaintFn<S> =
-    dyn FnMut(&mut S, &mut PaintCtx<'_>, &PropertiesRef<'_>, &mut Painter<'_>);
-pub(crate) type RoleFn<S> = dyn Fn(&S) -> Role;
-pub(crate) type AccessFn<S> = dyn FnMut(&mut S, &mut AccessCtx<'_>, &PropertiesRef<'_>, &mut Node);
-pub(crate) type ChildrenFn<S> = dyn Fn(&S) -> ChildrenIds;
+type LayoutFn<S> = dyn FnMut(&mut S, &mut LayoutCtx<'_>, &PropertiesRef<'_>, Size);
+type ComposeFn<S> = dyn FnMut(&mut S, &mut ComposeCtx<'_>);
+type PaintFn<S> = dyn FnMut(&mut S, &mut PaintCtx<'_>, &PropertiesRef<'_>, &mut Painter<'_>);
+type RoleFn<S> = dyn Fn(&S) -> Role;
+type AccessFn<S> = dyn FnMut(&mut S, &mut AccessCtx<'_>, &PropertiesRef<'_>, &mut Node);
+type ChildrenFn<S> = dyn Fn(&S) -> ChildrenIds;
 
 /// A widget that can be constructed from individual functions, builder-style.
 ///
 /// This widget is generic over its state, which is passed in at construction time.
+#[must_use = "Use the configured test widget."]
 pub struct ModularWidget<S> {
     /// The state passed to all the callbacks of this widget
     pub state: S,
     icon: CursorIcon,
-    accepts_pointer_interaction: bool,
-    propagates_pointer_interaction: bool,
-    accepts_focus: bool,
-    accepts_text_input: bool,
+    interaction: u8,
     on_pointer_event: Option<Box<PointerEventFn<S>>>,
     on_text_event: Option<Box<TextEventFn<S>>>,
     on_access_event: Option<Box<AccessEventFn<S>>>,
@@ -80,6 +74,10 @@ pub struct ModularWidget<S> {
 }
 
 impl<S> ModularWidget<S> {
+    const ACCEPTS_TEXT_INPUT: u8 = 1 << 3;
+    const ACCEPTS_FOCUS: u8 = 1 << 2;
+    const PROPAGATES_POINTER_INTERACTION: u8 = 1 << 1;
+    const ACCEPTS_POINTER_INTERACTION: u8 = 1 << 0;
     /// Creates a new `ModularWidget`.
     ///
     /// By default none of its methods do anything, and its layout method returns
@@ -88,10 +86,7 @@ impl<S> ModularWidget<S> {
         Self {
             state,
             icon: CursorIcon::Default,
-            accepts_pointer_interaction: true,
-            propagates_pointer_interaction: true,
-            accepts_focus: false,
-            accepts_text_input: false,
+            interaction: 0b0011,
             on_pointer_event: None,
             on_text_event: None,
             on_access_event: None,
@@ -136,7 +131,7 @@ impl<W: Widget + ?Sized> ModularWidget<Vec<WidgetPod<W>>> {
     ///
     /// Layout will just stack all children on the same position and return the size of the largest.
     pub fn new_multi_parent(children: Vec<NewWidget<W>>) -> Self {
-        let children = children.into_iter().map(|child| child.into_pod()).collect();
+        let children = children.into_iter().map(NewWidget::into_pod).collect();
         Self::new(children)
             .register_children_fn(move |children, ctx| {
                 for child in children {
@@ -183,7 +178,7 @@ impl<W: Widget + ?Sized> ModularWidget<Vec<WidgetPod<W>>> {
                     ctx.clear_baselines();
                 }
             })
-            .children_fn(|children| children.iter().map(|child| child.id()).collect())
+            .children_fn(|children| children.iter().map(WidgetPod::id).collect())
     }
 }
 
@@ -192,32 +187,48 @@ impl<W: Widget + ?Sized> ModularWidget<Vec<WidgetPod<W>>> {
 /// Each method takes a flag which is then returned by the matching [`Widget`] method.
 impl<S> ModularWidget<S> {
     /// See [`Widget::get_cursor`]
-    pub fn cursor_icon(mut self, icon: CursorIcon) -> Self {
+    pub const fn cursor_icon(mut self, icon: CursorIcon) -> Self {
         self.icon = icon;
         self
     }
 
     /// See [`Widget::accepts_pointer_interaction`]
-    pub fn accepts_pointer_interaction(mut self, flag: bool) -> Self {
-        self.accepts_pointer_interaction = flag;
+    pub const fn accepts_pointer_interaction(mut self, flag: bool) -> Self {
+        self.interaction = if flag {
+            self.interaction | Self::ACCEPTS_POINTER_INTERACTION
+        } else {
+            self.interaction & !Self::ACCEPTS_POINTER_INTERACTION
+        };
         self
     }
 
     /// See [`Widget::propagates_pointer_interaction`]
-    pub fn propagates_pointer_interaction(mut self, flag: bool) -> Self {
-        self.propagates_pointer_interaction = flag;
+    pub const fn propagates_pointer_interaction(mut self, flag: bool) -> Self {
+        self.interaction = if flag {
+            self.interaction | Self::PROPAGATES_POINTER_INTERACTION
+        } else {
+            self.interaction & !Self::PROPAGATES_POINTER_INTERACTION
+        };
         self
     }
 
     /// See [`Widget::accepts_focus`]
-    pub fn accepts_focus(mut self, flag: bool) -> Self {
-        self.accepts_focus = flag;
+    pub const fn accepts_focus(mut self, flag: bool) -> Self {
+        self.interaction = if flag {
+            self.interaction | Self::ACCEPTS_FOCUS
+        } else {
+            self.interaction & !Self::ACCEPTS_FOCUS
+        };
         self
     }
 
     /// See [`Widget::accepts_text_input`]
-    pub fn accepts_text_input(mut self, flag: bool) -> Self {
-        self.accepts_text_input = flag;
+    pub const fn accepts_text_input(mut self, flag: bool) -> Self {
+        self.interaction = if flag {
+            self.interaction | Self::ACCEPTS_TEXT_INPUT
+        } else {
+            self.interaction & !Self::ACCEPTS_TEXT_INPUT
+        };
         self
     }
 }
@@ -486,11 +497,7 @@ impl<S: 'static> Widget for ModularWidget<S> {
     }
 
     fn accessibility_role(&self) -> Role {
-        if let Some(f) = self.role.as_ref() {
-            f(&self.state)
-        } else {
-            Role::Unknown
-        }
+        self.role.as_ref().map_or(Role::Unknown, |f| f(&self.state))
     }
 
     fn accessibility(
@@ -540,11 +547,9 @@ impl<S: 'static> Widget for ModularWidget<S> {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        if let Some(f) = self.children.as_ref() {
-            f(&self.state)
-        } else {
-            ChildrenIds::new()
-        }
+        self.children
+            .as_ref()
+            .map_or_else(ChildrenIds::new, |f| f(&self.state))
     }
 
     fn as_layer(&mut self) -> Option<&mut dyn Layer> {
@@ -552,19 +557,19 @@ impl<S: 'static> Widget for ModularWidget<S> {
     }
 
     fn accepts_pointer_interaction(&self) -> bool {
-        self.accepts_pointer_interaction
+        self.interaction & Self::ACCEPTS_POINTER_INTERACTION != 0
     }
 
     fn propagates_pointer_interaction(&self) -> bool {
-        self.propagates_pointer_interaction
+        self.interaction & Self::PROPAGATES_POINTER_INTERACTION != 0
     }
 
     fn accepts_focus(&self) -> bool {
-        self.accepts_focus
+        self.interaction & Self::ACCEPTS_FOCUS != 0
     }
 
     fn accepts_text_input(&self) -> bool {
-        self.accepts_text_input
+        self.interaction & Self::ACCEPTS_TEXT_INPUT != 0
     }
 
     fn make_trace_span(&self, id: WidgetId) -> tracing::Span {

@@ -365,9 +365,11 @@ mod tests {
         ];
 
         for (align, name) in all_cases {
-            harness.edit_root_widget(|mut zstack| {
-                ZStack::set_alignment(&mut zstack, align);
-            });
+            harness
+                .edit_root_widget(|mut zstack| {
+                    ZStack::set_alignment(&mut zstack, align);
+                })
+                .unwrap();
             assert_render_snapshot!(harness, &format!("zstack_alignment_{name}"));
         }
     }

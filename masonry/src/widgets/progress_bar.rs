@@ -355,7 +355,7 @@ mod tests {
 
             let mut harness = TestHarness::create_with_size(test_property_set(), bar, (60, 20));
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         let image_2 = {
@@ -363,12 +363,14 @@ mod tests {
 
             let mut harness = TestHarness::create_with_size(test_property_set(), bar, (60, 20));
 
-            harness.edit_root_widget(|mut bar| {
-                ProgressBar::set_progress(&mut bar, Some(0.5));
-                bar.insert_prop(BarColor(palette::css::PURPLE));
-            });
+            harness
+                .edit_root_widget(|mut bar| {
+                    ProgressBar::set_progress(&mut bar, Some(0.5));
+                    bar.insert_prop(BarColor(palette::css::PURPLE));
+                })
+                .unwrap();
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         // We don't use assert_eq because we don't want rich assert

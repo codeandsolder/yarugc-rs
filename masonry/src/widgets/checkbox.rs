@@ -14,7 +14,7 @@ use crate::core::{
     UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
-use crate::kurbo::{Axis, BezPath, Cap, Dashes, Join, Point, Size, Stroke};
+use crate::kurbo::{Axis, BezPath, Cap, Dashes, Join, Size, Stroke};
 use crate::layout::{LenReq, Length};
 use crate::properties::{
     BorderColor, BorderWidth, CheckmarkColor, CheckmarkStrokeWidth, CornerRadius,
@@ -275,15 +275,17 @@ mod tests {
 
         assert!(harness.pop_action_erased().is_none());
 
-        harness.mouse_click_on(checkbox_id, None);
+        harness.mouse_click_on(checkbox_id, None).unwrap();
         assert_eq!(
-            harness.pop_action::<CheckboxToggled>(),
+            harness.pop_action::<CheckboxToggled>().unwrap(),
             Some((CheckboxToggled(true), checkbox_id))
         );
 
         assert_render_snapshot!(harness, "checkbox_hello_hovered");
 
-        harness.edit_root_widget(|mut checkbox| Checkbox::set_checked(&mut checkbox, true));
+        harness
+            .edit_root_widget(|mut checkbox| Checkbox::set_checked(&mut checkbox, true))
+            .unwrap();
 
         assert_render_snapshot!(harness, "checkbox_hello_checked");
 
@@ -291,10 +293,10 @@ mod tests {
         harness.press_tab_key(false);
         assert_eq!(harness.focused_widget().map(|w| w.id()), Some(checkbox_id));
 
-        harness.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
-        harness.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        harness.process_text_event(&TextEvent::key_down(Key::Character(" ".into())));
+        harness.process_text_event(&TextEvent::key_up(Key::Character(" ".into())));
         assert_eq!(
-            harness.pop_action::<CheckboxToggled>(),
+            harness.pop_action::<CheckboxToggled>().unwrap(),
             Some((CheckboxToggled(false), checkbox_id))
         );
     }
@@ -342,7 +344,7 @@ mod tests {
             let mut harness =
                 TestHarness::create_with_size(test_property_set(), checkbox, (50, 50));
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         let image_2 = {
@@ -351,19 +353,21 @@ mod tests {
             let mut harness =
                 TestHarness::create_with_size(test_property_set(), checkbox, (50, 50));
 
-            harness.edit_root_widget(|mut checkbox| {
-                Checkbox::set_checked(&mut checkbox, true);
-                Checkbox::set_text(
-                    &mut checkbox,
-                    ArcStr::from("The quick brown fox jumps over the lazy dog"),
-                );
+            harness
+                .edit_root_widget(|mut checkbox| {
+                    Checkbox::set_checked(&mut checkbox, true);
+                    Checkbox::set_text(
+                        &mut checkbox,
+                        ArcStr::from("The quick brown fox jumps over the lazy dog"),
+                    );
 
-                let mut label = Checkbox::label_mut(&mut checkbox).unwrap();
-                label.insert_prop(ContentColor::new(ACCENT_COLOR));
-                Label::insert_style(&mut label, StyleProperty::FontSize(20.0));
-            });
+                    let mut label = Checkbox::label_mut(&mut checkbox).unwrap();
+                    label.insert_prop(ContentColor::new(ACCENT_COLOR));
+                    Label::insert_style(&mut label, StyleProperty::FontSize(20.0));
+                })
+                .unwrap();
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         // We don't use assert_eq because we don't want rich assert

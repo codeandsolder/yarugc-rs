@@ -957,15 +957,17 @@ mod tests {
 
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (400, 400));
 
-        harness.edit_root_widget(|mut portal| {
-            Portal::set_viewport_pos(&mut portal, Point::new(0.0, 130.0))
-        });
+        harness
+            .edit_root_widget(|mut portal| {
+                Portal::set_viewport_pos(&mut portal, Point::new(0.0, 130.0))
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "portal_button_list_scrolled");
 
-        harness.scroll_into_view(harness.get_widget(button_3).id());
+        harness.scroll_into_view(harness.get_widget(button_3).unwrap().id());
         assert_render_snapshot!(harness, "portal_button_list_scroll_to_item_3");
 
-        harness.scroll_into_view(harness.get_widget(button_13).id());
+        harness.scroll_into_view(harness.get_widget(button_13).unwrap().id());
         assert_render_snapshot!(harness, "portal_button_list_scroll_to_item_13");
     }
 
@@ -983,7 +985,7 @@ mod tests {
         .prepare();
 
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (200, 200));
-        let button_id = harness.get_widget(button_tag).id();
+        let button_id = harness.get_widget(button_tag).unwrap().id();
 
         harness.scroll_into_view(button_id);
         assert_render_snapshot!(harness, "portal_scrolled_button_into_view");
@@ -1014,9 +1016,9 @@ mod tests {
         let portal = NewWidget::new(Portal::new(content)).with_tag(portal_tag);
 
         let mut harness = TestHarness::create_with_size(test_property_set(), portal, (100, 100));
-        let _ = harness.render();
+        let _ = harness.render().unwrap();
 
-        let portal_id = harness.get_widget(portal_tag).id();
+        let portal_id = harness.get_widget(portal_tag).unwrap().id();
         let node = harness.access_node(portal_id).unwrap();
 
         assert_eq!(node.data().role(), Role::ScrollView);
@@ -1030,10 +1032,12 @@ mod tests {
         assert!(node.data().scroll_y_max().is_some());
         assert_eq!(node.data().scroll_y(), Some(0.0));
 
-        harness.edit_widget(portal_tag, |mut portal| {
-            Portal::pan_viewport_by(&mut portal, Vec2::new(0., 99999.));
-        });
-        harness.render();
+        harness
+            .edit_widget(portal_tag, |mut portal| {
+                Portal::pan_viewport_by(&mut portal, Vec2::new(0., 99999.));
+            })
+            .unwrap();
+        harness.render().unwrap();
 
         let node = harness.access_node(portal_id).unwrap();
         assert!(!node.data().supports_action(accesskit::Action::ScrollDown));
@@ -1047,13 +1051,13 @@ mod tests {
         let portal = NewWidget::new(Portal::new(content)).with_tag(portal_tag);
 
         let mut harness = TestHarness::create_with_size(test_property_set(), portal, (100, 100));
-        let _ = harness.render();
+        let _ = harness.render().unwrap();
 
-        let portal_id = harness.get_widget(portal_tag).id();
+        let portal_id = harness.get_widget(portal_tag).unwrap().id();
         harness.focus_on(Some(portal_id));
 
-        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::PageDown)));
-        let _ = harness.render();
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::PageDown)));
+        let _ = harness.render().unwrap();
 
         let node = harness.access_node(portal_id).unwrap();
         assert!(node.data().scroll_y().unwrap_or(0.0) > 0.0);
@@ -1073,57 +1077,63 @@ mod tests {
             .content_must_fill(true)
             .prepare();
         let mut harness = TestHarness::create_with_size(test_property_set(), portal, (100, 100));
-        harness.edit_root_widget(|mut portal| {
-            assert!(Portal::set_viewport_pos(&mut portal, Point::new(0.0, 80.0)));
-            assert_eq!(
-                Portal::horizontal_scrollbar_mut(&mut portal)
+        harness
+            .edit_root_widget(|mut portal| {
+                assert!(Portal::set_viewport_pos(&mut portal, Point::new(0.0, 80.0)));
+                assert_eq!(
+                    Portal::horizontal_scrollbar_mut(&mut portal)
+                        .unwrap()
+                        .widget
+                        .cursor_progress(),
+                    0.0
+                );
+                let progress = Portal::vertical_scrollbar_mut(&mut portal)
                     .unwrap()
                     .widget
-                    .cursor_progress(),
-                0.0
-            );
-            let progress = Portal::vertical_scrollbar_mut(&mut portal)
-                .unwrap()
-                .widget
-                .cursor_progress();
-            assert!(progress > 0.0 && progress < 1.0);
-        });
-        let bottom_id = harness.get_widget(bottom).id();
+                    .cursor_progress();
+                assert!(progress > 0.0 && progress < 1.0);
+            })
+            .unwrap();
+        let bottom_id = harness.get_widget(bottom).unwrap().id();
         harness.scroll_into_view(bottom_id);
-        harness.edit_root_widget(|mut portal| {
-            assert_eq!(
-                Portal::horizontal_scrollbar_mut(&mut portal)
-                    .unwrap()
-                    .widget
-                    .cursor_progress(),
-                0.0
-            );
-            assert_eq!(
-                Portal::vertical_scrollbar_mut(&mut portal)
-                    .unwrap()
-                    .widget
-                    .cursor_progress(),
-                1.0
-            );
-        });
-        let top_id = harness.get_widget(top).id();
+        harness
+            .edit_root_widget(|mut portal| {
+                assert_eq!(
+                    Portal::horizontal_scrollbar_mut(&mut portal)
+                        .unwrap()
+                        .widget
+                        .cursor_progress(),
+                    0.0
+                );
+                assert_eq!(
+                    Portal::vertical_scrollbar_mut(&mut portal)
+                        .unwrap()
+                        .widget
+                        .cursor_progress(),
+                    1.0
+                );
+            })
+            .unwrap();
+        let top_id = harness.get_widget(top).unwrap().id();
         harness.scroll_into_view(top_id);
-        harness.edit_root_widget(|mut portal| {
-            assert_eq!(
-                Portal::horizontal_scrollbar_mut(&mut portal)
-                    .unwrap()
-                    .widget
-                    .cursor_progress(),
-                0.0
-            );
-            assert_eq!(
-                Portal::vertical_scrollbar_mut(&mut portal)
-                    .unwrap()
-                    .widget
-                    .cursor_progress(),
-                0.0
-            );
-        });
+        harness
+            .edit_root_widget(|mut portal| {
+                assert_eq!(
+                    Portal::horizontal_scrollbar_mut(&mut portal)
+                        .unwrap()
+                        .widget
+                        .cursor_progress(),
+                    0.0
+                );
+                assert_eq!(
+                    Portal::vertical_scrollbar_mut(&mut portal)
+                        .unwrap()
+                        .widget
+                        .cursor_progress(),
+                    0.0
+                );
+            })
+            .unwrap();
     }
 
     // Helper function for panning tests

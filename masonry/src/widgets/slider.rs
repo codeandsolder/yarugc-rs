@@ -502,13 +502,13 @@ mod tests {
         // 2. Press the mouse button.
         // This should not emit an action because the value does not change.
         harness.mouse_button_press(None);
-        assert!(harness.pop_action::<SliderMoved>().is_none());
+        assert!(harness.pop_action::<SliderMoved>().unwrap().is_none());
 
         // 3. Move to the new position (75%).
         harness.mouse_move(Point::new(150.0, 16.0));
 
         assert_eq!(
-            harness.pop_action::<SliderMoved>(),
+            harness.pop_action::<SliderMoved>().unwrap(),
             Some((SliderMoved { value: 75.0 }, slider_id))
         );
         assert_render_snapshot!(harness, "slider_drag_to_75");
@@ -527,11 +527,11 @@ mod tests {
         harness.focus_on(Some(slider_id));
         assert_render_snapshot!(harness, "slider_keyboard_focused");
 
-        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowRight)));
-        harness.process_text_event(TextEvent::key_up(Key::Named(NamedKey::ArrowRight)));
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::ArrowRight)));
+        harness.process_text_event(&TextEvent::key_up(Key::Named(NamedKey::ArrowRight)));
 
         assert_eq!(
-            harness.pop_action::<SliderMoved>(),
+            harness.pop_action::<SliderMoved>().unwrap(),
             Some((SliderMoved { value: 60.0 }, slider_id))
         );
         assert_render_snapshot!(harness, "slider_keyboard_moved");
@@ -544,6 +544,6 @@ mod tests {
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (200, 32));
 
         assert_render_snapshot!(harness, "slider_disabled");
-        assert!(harness.pop_action::<SliderMoved>().is_none());
+        assert!(harness.pop_action::<SliderMoved>().unwrap().is_none());
     }
 }

@@ -42,8 +42,8 @@ fn layout_simple() {
 
     let harness = TestHarness::create(test_property_set(), widget);
 
-    let first_box_size = harness.get_widget(tag_1).ctx().border_box().size();
-    let first_box_paint_rect = harness.get_widget(tag_1).ctx().paint_box();
+    let first_box_size = harness.get_widget(tag_1).unwrap().ctx().border_box().size();
+    let first_box_paint_rect = harness.get_widget(tag_1).unwrap().ctx().paint_box();
 
     assert_eq!(first_box_size.width, BOX_WIDTH);
     assert_eq!(first_box_size.height, BOX_WIDTH);
@@ -123,9 +123,11 @@ fn call_child_layout_before_layout() {
     let mut harness = TestHarness::create(test_property_set(), widget);
 
     assert_debug_panics!(
-        harness.edit_widget(parent_tag, |mut parent| {
-            parent.ctx.request_layout();
-        }),
+        harness
+            .edit_widget(parent_tag, |mut parent| {
+                parent.ctx.request_layout();
+            })
+            .unwrap(),
         "trying to call 'child_layout'"
     );
 }
@@ -143,10 +145,12 @@ fn run_layout_on_stashed() {
     let mut harness = TestHarness::create(test_property_set(), widget);
 
     assert_debug_panics!(
-        harness.edit_widget(parent_tag, |mut parent| {
-            parent.ctx.set_stashed(&parent.widget.state, true);
-            parent.ctx.request_layout();
-        }),
+        harness
+            .edit_widget(parent_tag, |mut parent| {
+                parent.ctx.set_stashed(&parent.widget.state, true);
+                parent.ctx.request_layout();
+            })
+            .unwrap(),
         "trying to compute layout of stashed widget"
     );
 }
@@ -185,10 +189,12 @@ fn unstash_then_run_layout() {
 
     let mut harness = TestHarness::create(test_property_set(), widget);
 
-    harness.edit_widget(parent_tag, |mut parent| {
-        parent.ctx.set_stashed(&parent.widget.state, true);
-        parent.ctx.request_layout();
-    });
+    harness
+        .edit_widget(parent_tag, |mut parent| {
+            parent.ctx.set_stashed(&parent.widget.state, true);
+            parent.ctx.request_layout();
+        })
+        .unwrap();
 }
 
 #[test]
@@ -209,15 +215,17 @@ fn skip_layout_when_cached() {
 
     let mut harness = TestHarness::create(test_property_set(), parent);
 
-    harness.flush_records_of(button_tag);
-    harness.edit_widget(sibling_tag, |mut sized_box| {
-        SizedBox::set_width(&mut sized_box, 30.px());
-        SizedBox::set_height(&mut sized_box, 30.px());
-    });
+    harness.flush_records_of(button_tag).unwrap();
+    harness
+        .edit_widget(sibling_tag, |mut sized_box| {
+            SizedBox::set_width(&mut sized_box, 30.px());
+            SizedBox::set_height(&mut sized_box, 30.px());
+        })
+        .unwrap();
 
     // The button did not request layout and its input constraints are the same:
     // Nothing should happen to it.
-    let button_records_iter = harness.take_records_of(button_tag).into_iter();
+    let button_records_iter = harness.take_records_of(button_tag).unwrap().into_iter();
 
     // Measurements will still happen with debug assertions enabled because we verify the cache.
     #[cfg(debug_assertions)]
@@ -244,13 +252,21 @@ fn pixel_snapping() {
 
     let harness = TestHarness::create(test_property_set(), parent);
 
-    let child = harness.get_widget(child_tag);
+    let child = harness.get_widget(child_tag).unwrap();
     let ctx = child.ctx();
     let border_box = ctx.border_box();
     let content_box = ctx.content_box();
     let child_pos = ctx.local_to_window(border_box.origin());
-    let first_baseline = harness.get_widget(parent_tag).ctx().first_baseline();
-    let last_baseline = harness.get_widget(parent_tag).ctx().last_baseline();
+    let first_baseline = harness
+        .get_widget(parent_tag)
+        .unwrap()
+        .ctx()
+        .first_baseline();
+    let last_baseline = harness
+        .get_widget(parent_tag)
+        .unwrap()
+        .ctx()
+        .last_baseline();
 
     assert_eq!(child_pos, Point::new(5.0, 5.0));
     assert_eq!(content_box.origin(), Point::ORIGIN);
@@ -283,9 +299,9 @@ fn layout_insets() {
 
     let harness = TestHarness::create(test_property_set(), root_widget);
 
-    let child_paint_rect = harness.get_widget(child_tag).ctx().paint_box();
-    let parent_paint_rect = harness.get_widget(parent_tag).ctx().paint_box();
-    let parent_bounding_rect = harness.get_widget(parent_tag).ctx().bounding_box();
+    let child_paint_rect = harness.get_widget(child_tag).unwrap().ctx().paint_box();
+    let parent_paint_rect = harness.get_widget(parent_tag).unwrap().ctx().paint_box();
+    let parent_bounding_rect = harness.get_widget(parent_tag).unwrap().ctx().bounding_box();
 
     // The child's paint box is affected by its paint insets
     assert_eq!(child_paint_rect.x0, 0.0);
@@ -327,11 +343,15 @@ fn content_box() {
 
     let harness = TestHarness::create(test_property_set(), hero);
 
-    let border_box = harness.get_widget(tag).ctx().border_box();
+    let border_box = harness.get_widget(tag).unwrap().ctx().border_box();
     let border_box_size = border_box.size();
-    let content_box = harness.get_widget(tag).ctx().content_box();
+    let content_box = harness.get_widget(tag).unwrap().ctx().content_box();
     let content_box_size = content_box.size();
-    let border_box_translation = harness.get_widget(tag).ctx().border_box_translation();
+    let border_box_translation = harness
+        .get_widget(tag)
+        .unwrap()
+        .ctx()
+        .border_box_translation();
 
     let expected_border_box_size = Size::new(100., 100.);
     let expected_content_box_size = Size::new(95., 91.);
@@ -372,7 +392,7 @@ fn boxes_match_without_insets_or_snapping() {
         .prepare();
 
     let harness = TestHarness::create(test_property_set(), root);
-    let child = harness.get_widget(tag);
+    let child = harness.get_widget(tag).unwrap();
     let ctx = child.ctx();
 
     // Everything besides the bounding box will be exactly the same
@@ -418,7 +438,7 @@ fn boxes_use_content_box_coordinates() {
         .with_props(Dimensions::fixed(80.px(), 80.px()));
 
     let harness = TestHarness::create(test_property_set(), root);
-    let child = harness.get_widget(tag);
+    let child = harness.get_widget(tag).unwrap();
     let ctx = child.ctx();
 
     // Border 0.7 + padding (1.2,3.4) gives top-left content inset (1.9,4.1).
@@ -497,7 +517,7 @@ fn content_box_clamps_when_insets_exceed_size() {
         .with_props(Dimensions::fixed(20.px(), 20.px()));
 
     let harness = TestHarness::create(test_property_set(), root);
-    let child = harness.get_widget(tag);
+    let child = harness.get_widget(tag).unwrap();
     let ctx = child.ctx();
 
     // Border 0.5 + padding (0.7,0.6) gives top-left content inset (1.2,1.1).

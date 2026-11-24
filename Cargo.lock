@@ -2788,6 +2788,8 @@ dependencies = [
  "masonry_core",
  "oxipng",
  "profiling",
+ "tempfile",
+ "thiserror 2.0.18",
  "tracing",
 ]
 

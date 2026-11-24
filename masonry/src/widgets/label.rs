@@ -826,7 +826,7 @@ mod tests {
 
             let mut harness = TestHarness::create_with_size(test_property_set(), label, (50, 50));
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         let image_2 = {
@@ -836,19 +836,21 @@ mod tests {
 
             let mut harness = TestHarness::create_with_size(test_property_set(), label, (50, 50));
 
-            harness.edit_root_widget(|mut label| {
-                label.insert_prop(ContentColor::new(ACCENT_COLOR));
-                label.insert_prop(LineBreaking::WordWrap);
-                Label::set_text(&mut label, "The quick brown fox jumps over the lazy dog");
-                Label::insert_style(
-                    &mut label,
-                    FontFamily::Single(FontFamilyName::Generic(GenericFamily::Monospace)),
-                );
-                Label::insert_style(&mut label, StyleProperty::FontSize(20.0));
-                Label::set_text_alignment(&mut label, TextAlign::Center);
-            });
+            harness
+                .edit_root_widget(|mut label| {
+                    label.insert_prop(ContentColor::new(ACCENT_COLOR));
+                    label.insert_prop(LineBreaking::WordWrap);
+                    Label::set_text(&mut label, "The quick brown fox jumps over the lazy dog");
+                    Label::insert_style(
+                        &mut label,
+                        FontFamily::Single(FontFamilyName::Generic(GenericFamily::Monospace)),
+                    );
+                    Label::insert_style(&mut label, StyleProperty::FontSize(20.0));
+                    Label::set_text_alignment(&mut label, TextAlign::Center);
+                })
+                .unwrap();
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         // We don't use assert_eq because we don't want rich assert

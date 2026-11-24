@@ -942,12 +942,14 @@ mod tests {
 
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
         assert_render_snapshot!(harness, "virtual_scroll_basic");
-        harness.edit_root_widget(|mut scroll| {
-            VirtualScroll::scroll_to(&mut scroll, 100);
-        });
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::scroll_to(&mut scroll, 100);
+            })
+            .unwrap();
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
         assert_render_snapshot!(harness, "virtual_scroll_moved");
-        harness.mouse_move_to(virtual_scroll_id);
+        harness.mouse_move_to(virtual_scroll_id).unwrap();
         harness.mouse_wheel(Vec2 { x: 0., y: 25. });
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
         assert_render_snapshot!(harness, "virtual_scroll_scrolled");
@@ -983,11 +985,13 @@ mod tests {
         }
 
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
-        harness.edit_root_widget(|mut scroll| {
-            VirtualScroll::scroll_to(&mut scroll, 100);
-        });
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::scroll_to(&mut scroll, 100);
+            })
+            .unwrap();
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
-        harness.mouse_move_to(virtual_scroll_id);
+        harness.mouse_move_to(virtual_scroll_id).unwrap();
         harness.mouse_wheel(Vec2 { x: 0., y: 200. });
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
     }
@@ -1022,11 +1026,13 @@ mod tests {
         }
 
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
-        harness.edit_root_widget(|mut scroll| {
-            VirtualScroll::scroll_to(&mut scroll, 200);
-        });
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::scroll_to(&mut scroll, 200);
+            })
+            .unwrap();
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
-        harness.mouse_move_to(virtual_scroll_id);
+        harness.mouse_move_to(virtual_scroll_id).unwrap();
         harness.mouse_wheel(Vec2 { x: 0., y: 200. });
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
     }
@@ -1061,11 +1067,13 @@ mod tests {
         }
 
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
-        harness.edit_root_widget(|mut scroll| {
-            VirtualScroll::scroll_to(&mut scroll, 200);
-        });
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::scroll_to(&mut scroll, 200);
+            })
+            .unwrap();
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
-        harness.mouse_move_to(virtual_scroll_id);
+        harness.mouse_move_to(virtual_scroll_id).unwrap();
         harness.mouse_wheel(Vec2 { x: 0., y: 200. });
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
     }
@@ -1108,7 +1116,7 @@ mod tests {
         // so validate it with code.
         assert_render_snapshot!(harness, "virtual_scroll_limited_up_bottom");
         let (original_range, original_scroll) = {
-            let widget = harness.root_widget();
+            let widget = harness.root_widget().unwrap();
             tracing::debug!(widget = ?(&*widget));
             assert_eq!(
                 widget.range_in_viewport.end, MAX,
@@ -1120,11 +1128,11 @@ mod tests {
             )
         };
 
-        harness.mouse_move_to(virtual_scroll_id);
+        harness.mouse_move_to(virtual_scroll_id).unwrap();
         harness.mouse_wheel(Vec2 { x: 0., y: 40. });
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
         {
-            let widget = harness.root_widget();
+            let widget = harness.root_widget().unwrap();
             tracing::debug!(widget = ?(&*widget));
             assert_ne!(widget.range_in_viewport.end, MAX);
             assert_eq!(widget.active_range, original_range);
@@ -1134,7 +1142,7 @@ mod tests {
 
         assert_render_snapshot!(harness, "virtual_scroll_limited_up_bottom");
         {
-            let widget = harness.root_widget();
+            let widget = harness.root_widget().unwrap();
             assert_eq!(widget.range_in_viewport.end, MAX);
             assert_eq!(
                 widget.virtual_list.scroll_offset(),
@@ -1156,7 +1164,7 @@ mod tests {
             if iteration > 1000 {
                 panic!("Took too long to reach fixpoint");
             }
-            let Some((action, id)) = harness.pop_action::<VirtualScrollAction>() else {
+            let Some((action, id)) = harness.pop_action::<VirtualScrollAction>().unwrap() else {
                 break;
             };
             let VirtualScrollAction::Fetch(action) = action else {
@@ -1175,9 +1183,11 @@ mod tests {
                 "Shouldn't have sent an update if the target hasn't changed"
             );
 
-            harness.edit_root_widget(|scroll| {
-                f(action, scroll);
-            });
+            harness
+                .edit_root_widget(|scroll| {
+                    f(action, scroll);
+                })
+                .unwrap();
         }
     }
 }

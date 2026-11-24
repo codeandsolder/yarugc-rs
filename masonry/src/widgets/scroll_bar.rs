@@ -523,7 +523,7 @@ mod tests {
 
         assert!(harness.pop_action_erased().is_none());
 
-        harness.mouse_click_on(scrollbar_id, None);
+        harness.mouse_click_on(scrollbar_id, None).unwrap();
         // TODO - Scroll action?
         assert!(harness.pop_action_erased().is_none());
 
@@ -561,7 +561,7 @@ mod tests {
 
         assert!(harness.pop_action_erased().is_none());
 
-        harness.mouse_click_on(scrollbar_id, None);
+        harness.mouse_click_on(scrollbar_id, None).unwrap();
         // TODO - Scroll action?
         assert!(harness.pop_action_erased().is_none());
 
@@ -573,13 +573,13 @@ mod tests {
         let widget = NewWidget::new(ScrollBar::new(Axis::Vertical, 200.0, 600.0))
             .with_props(Dimensions::FIT);
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (50, 200));
-        let _ = harness.render();
+        let _ = harness.render().unwrap();
 
         let scrollbar_id = harness.root_id();
         harness.focus_on(Some(scrollbar_id));
 
-        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
-        let _ = harness.render();
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
+        let _ = harness.render().unwrap();
 
         let node = harness.access_node(scrollbar_id).unwrap();
         assert!(node.data().scroll_y().unwrap_or(0.0) > 0.0);

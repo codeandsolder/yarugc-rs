@@ -363,9 +363,11 @@ mod tests {
         assert_render_snapshot!(harness, "example_calc_masonry_initial");
 
         let mut click_and_assert = |harness: &mut TestHarness<_>, tag: WidgetTag<Button>| {
-            let button = harness.get_widget(tag);
+            let button = harness.get_widget(tag).unwrap();
             let id = button.id();
-            harness.mouse_click_on(id, Some(PointerButton::Primary));
+            harness
+                .mouse_click_on(id, Some(PointerButton::Primary))
+                .unwrap();
             state.ui_update(
                 harness.render_root(),
                 id,
@@ -374,7 +376,7 @@ mod tests {
                 }),
             );
             assert_eq!(
-                harness.pop_action::<ButtonPress>(),
+                harness.pop_action::<ButtonPress>().unwrap(),
                 Some((
                     ButtonPress {
                         button: Some(PointerButton::Primary),

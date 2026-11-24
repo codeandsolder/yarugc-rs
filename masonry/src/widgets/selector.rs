@@ -278,9 +278,11 @@ mod tests {
             (200_u32, 60_u32),
         );
 
-        harness.edit_root_widget(|mut selector| {
-            let label = Selector::child_mut(&mut selector).unwrap();
-            assert_eq!(&**label.widget.text(), "White and gold");
-        });
+        harness
+            .edit_root_widget(|mut selector| {
+                let label = Selector::child_mut(&mut selector).unwrap();
+                assert_eq!(&**label.widget.text(), "White and gold");
+            })
+            .unwrap();
     }
 }

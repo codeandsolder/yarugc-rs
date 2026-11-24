@@ -103,7 +103,7 @@ impl AppDriver for Driver {
             let render_root = ctx.render_root(window_id);
 
             let _ = render_root.edit_widget_with_tag(TEXT_INPUT_TAG, |mut text_input| {
-                let mut text_area = TextInput::text_mut(&mut text_input);
+                let Some(mut text_area) = TextInput::text_mut(&mut text_input) else { return; };
                 TextArea::reset_text(&mut text_area, "");
             });
             let _ = render_root.edit_widget_with_tag(LIST_TAG, |mut list| {

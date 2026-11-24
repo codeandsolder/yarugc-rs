@@ -1164,7 +1164,7 @@ mod tests {
 
             let mut harness = TestHarness::create_with_size(test_property_set(), area, (60, 40));
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         {
@@ -1174,7 +1174,7 @@ mod tests {
 
             let mut harness = TestHarness::create_with_size(test_property_set(), area, (60, 40));
 
-            let without_wrapping = harness.render();
+            let without_wrapping = harness.render().unwrap();
 
             // Hack: If we are using `SKIP_RENDER_TESTS`, the output image is a 1x1 white pixel
             // This means that the not equal comparison won't work, so we skip it.
@@ -1187,11 +1187,13 @@ mod tests {
                 );
             }
 
-            harness.edit_root_widget(|mut area| {
-                TextArea::set_word_wrap(&mut area, true);
-            });
+            harness
+                .edit_root_widget(|mut area| {
+                    TextArea::set_word_wrap(&mut area, true);
+                })
+                .unwrap();
 
-            let with_enabled_wrap = harness.render();
+            let with_enabled_wrap = harness.render().unwrap();
 
             // We don't use assert_eq because we don't want rich assert
             assert!(
@@ -1211,7 +1213,7 @@ mod tests {
 
             let mut harness = TestHarness::create_with(test_property_set(), area, test_params);
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         {
@@ -1220,11 +1222,13 @@ mod tests {
 
             let mut harness = TestHarness::create_with(test_property_set(), area, test_params);
 
-            harness.edit_root_widget(|mut area| {
-                TextArea::reset_text(&mut area, "Test string");
-            });
+            harness
+                .edit_root_widget(|mut area| {
+                    TextArea::reset_text(&mut area, "Test string");
+                })
+                .unwrap();
 
-            let with_updated_text = harness.render();
+            let with_updated_text = harness.render().unwrap();
 
             // We don't use assert_eq because we don't want rich assert
             assert!(
@@ -1232,11 +1236,13 @@ mod tests {
                 "Updating the text should match with base text"
             );
 
-            harness.edit_root_widget(|mut area| {
-                area.insert_prop(ContentColor::new(palette::css::BROWN));
-            });
+            harness
+                .edit_root_widget(|mut area| {
+                    area.insert_prop(ContentColor::new(palette::css::BROWN));
+                })
+                .unwrap();
 
-            let with_updated_brush = harness.render();
+            let with_updated_brush = harness.render().unwrap();
 
             // Hack: If we are using `SKIP_RENDER_TESTS`, the output image is a 1x1 white pixel
             // This means that the not equal comparison won't work, so we skip it.
@@ -1300,15 +1306,15 @@ mod tests {
             let text_id = harness.root_id();
 
             harness.focus_on(Some(text_id));
-            harness.process_text_event(TextEvent::Keyboard(KeyboardEvent {
+            harness.process_text_event(&TextEvent::Keyboard(KeyboardEvent {
                 key: scenario.key,
                 modifiers: scenario.modifiers,
                 ..Default::default()
             }));
 
-            let area = harness.root_widget();
+            let area = harness.root_widget().unwrap();
             let text = area.text().to_string();
-            let (action, widget_id) = harness.pop_action::<TextAction>().unwrap();
+            let (action, widget_id) = harness.pop_action::<TextAction>().unwrap().unwrap();
             assert_eq!(widget_id, text_id);
 
             // Check that only the one action was emitted so we don't miss an error case
@@ -1333,15 +1339,15 @@ mod tests {
         let text_id = harness.root_id();
 
         harness.focus_on(Some(text_id));
-        harness.process_text_event(TextEvent::Keyboard(KeyboardEvent {
+        harness.process_text_event(&TextEvent::Keyboard(KeyboardEvent {
             key: Key::Named(NamedKey::Escape),
             modifiers: Modifiers::default(),
             ..Default::default()
         }));
 
-        let area = harness.root_widget();
+        let area = harness.root_widget().unwrap();
         let text = area.text().to_string();
-        let (action, widget_id) = harness.pop_action::<TextAction>().unwrap();
+        let (action, widget_id) = harness.pop_action::<TextAction>().unwrap().unwrap();
         assert_eq!(widget_id, text_id);
         assert_eq!(action, TextAction::Cancelled);
         assert!(harness.pop_action_erased().is_none());
@@ -1396,26 +1402,34 @@ mod tests {
         };
 
         harness.focus_on(Some(area_id));
-        harness.edit_root_widget(|mut area| {
-            TextArea::select_text(&mut area, "Initial");
-        });
+        harness
+            .edit_root_widget(|mut area| {
+                TextArea::select_text(&mut area, "Initial");
+            })
+            .unwrap();
 
-        harness.process_text_event(TextEvent::Keyboard(KeyboardEvent {
+        harness.process_text_event(&TextEvent::Keyboard(KeyboardEvent {
             state: KeyState::Down,
             key: Key::Character("c".into()),
             modifiers,
             ..Default::default()
         }));
         assert_eq!(harness.clipboard_contents(), "Initial");
-        assert_eq!(harness.root_widget().text().to_string(), "[Initial]");
+        assert_eq!(
+            harness.root_widget().unwrap().text().to_string(),
+            "[Initial]"
+        );
         assert!(harness.pop_action_erased().is_none());
 
-        harness.process_text_event(TextEvent::ClipboardPaste("<PASTED>".into()));
+        harness.process_text_event(&TextEvent::ClipboardPaste("<PASTED>".into()));
 
         // shows [<PASTED>] replacing "Initial"
-        assert_eq!(harness.root_widget().text().to_string(), "[<PASTED>]");
         assert_eq!(
-            harness.pop_action::<TextAction>(),
+            harness.root_widget().unwrap().text().to_string(),
+            "[<PASTED>]"
+        );
+        assert_eq!(
+            harness.pop_action::<TextAction>().unwrap(),
             Some((TextAction::Changed("[<PASTED>]".into()), area_id)),
         );
     }

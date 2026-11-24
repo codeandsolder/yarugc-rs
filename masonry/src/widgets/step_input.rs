@@ -2416,17 +2416,21 @@ mod tests {
 
         let mut harness = TestHarness::create_with_size(test_property_set(), root, (270, 200));
 
-        harness.edit_widget(tag_backward, |mut widget| {
-            widget.widget.drag_start = Some(Point::new(10000., 0.));
-            widget.widget.slide_last = Some(Point::ORIGIN);
-            widget.ctx.request_paint_only();
-        });
+        harness
+            .edit_widget(tag_backward, |mut widget| {
+                widget.widget.drag_start = Some(Point::new(10000., 0.));
+                widget.widget.slide_last = Some(Point::ORIGIN);
+                widget.ctx.request_paint_only();
+            })
+            .unwrap();
 
-        harness.edit_widget(tag_forward, |mut widget| {
-            widget.widget.drag_start = Some(Point::new(10000., 0.));
-            widget.widget.slide_last = Some(Point::new(20000., 0.));
-            widget.ctx.request_paint_only();
-        });
+        harness
+            .edit_widget(tag_forward, |mut widget| {
+                widget.widget.drag_start = Some(Point::new(10000., 0.));
+                widget.widget.slide_last = Some(Point::new(20000., 0.));
+                widget.ctx.request_paint_only();
+            })
+            .unwrap();
 
         assert_render_snapshot!(harness, "step_input_speed_lines");
     }

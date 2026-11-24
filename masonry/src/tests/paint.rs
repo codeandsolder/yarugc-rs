@@ -30,37 +30,47 @@ fn request_paint() {
     let grandparent = NewWidget::new(ModularWidget::new_parent(parent));
 
     let mut harness = TestHarness::create(test_property_set(), grandparent);
-    let _ = harness.render();
-    harness.flush_records_of(target_tag);
-    harness.flush_records_of(parent_tag);
+    let _ = harness.render().unwrap();
+    harness.flush_records_of(target_tag).unwrap();
+    harness.flush_records_of(parent_tag).unwrap();
 
     // Paint
-    harness.edit_widget(target_tag, |mut widget| {
-        widget.ctx.request_paint_only();
-    });
-    let _ = harness.render();
+    harness
+        .edit_widget(target_tag, |mut widget| {
+            widget.ctx.request_paint_only();
+        })
+        .unwrap();
+    let _ = harness.render().unwrap();
 
     // Check that `Widget::paint()` is called for the child (which did request it)
     // but not the parent (which did not).
-    assert_matches!(harness.take_records_of(target_tag)[..], [Record::Paint]);
-    assert_matches!(harness.take_records_of(parent_tag)[..], []);
+    assert_matches!(
+        harness.take_records_of(target_tag).unwrap()[..],
+        [Record::Paint]
+    );
+    assert_matches!(harness.take_records_of(parent_tag).unwrap()[..], []);
 
     // Post-paint
-    harness.edit_widget(target_tag, |mut widget| {
-        widget.ctx.request_post_paint();
-    });
-    let _ = harness.render();
+    harness
+        .edit_widget(target_tag, |mut widget| {
+            widget.ctx.request_post_paint();
+        })
+        .unwrap();
+    let _ = harness.render().unwrap();
 
     // Check that `Widget::post_paint()` is called for the child (which did request it)
     // but not the parent (which did not).
-    assert_matches!(harness.take_records_of(target_tag)[..], [Record::PostPaint]);
-    assert_matches!(harness.take_records_of(parent_tag)[..], []);
+    assert_matches!(
+        harness.take_records_of(target_tag).unwrap()[..],
+        [Record::PostPaint]
+    );
+    assert_matches!(harness.take_records_of(parent_tag).unwrap()[..], []);
 
     // Check that `Widget::paint()` and `Widget::post_paint()` are not called:
     // neither widget has requested an update.
-    let _ = harness.render();
-    assert_matches!(harness.take_records_of(parent_tag)[..], []);
-    assert_matches!(harness.take_records_of(target_tag)[..], []);
+    let _ = harness.render().unwrap();
+    assert_matches!(harness.take_records_of(parent_tag).unwrap()[..], []);
+    assert_matches!(harness.take_records_of(target_tag).unwrap()[..], []);
 }
 
 #[test]
@@ -245,7 +255,10 @@ fn isolated_scene_layers_update_the_plan_without_changing_rendering() {
     let mut isolated_harness =
         TestHarness::create_with_size(test_property_set(), make_layer_split_tree(true), (40, 20));
 
-    assert_eq!(inline_harness.render(), isolated_harness.render());
+    assert_eq!(
+        inline_harness.render().unwrap(),
+        isolated_harness.render().unwrap()
+    );
 }
 
 #[test]
@@ -288,7 +301,7 @@ fn isolated_scenes_preserve_inherited_clips() {
 
     let mut inline = TestHarness::create_with_size(test_property_set(), clipped(false), (40, 20));
     let mut isolated = TestHarness::create_with_size(test_property_set(), clipped(true), (40, 20));
-    assert_eq!(inline.render(), isolated.render());
+    assert_eq!(inline.render().unwrap(), isolated.render().unwrap());
 }
 
 #[test]

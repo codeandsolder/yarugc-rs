@@ -266,7 +266,7 @@ mod tests {
         let tree = Tree::from_str(xml, &usvg::Options::default()).unwrap();
         let svg = Svg::new(Arc::new(tree)).prepare();
         let mut harness = TestHarness::create(test_property_set(), svg);
-        let _ = harness.render();
+        let _ = harness.render().unwrap();
     }
 
     #[test]

@@ -397,21 +397,23 @@ mod tests {
         assert_render_snapshot!(harness, "text_input_outline");
 
         let mut text_area_id = None;
-        harness.edit_root_widget(|mut text_input| {
-            let mut text_input = TextInput::text_mut(&mut text_input).unwrap();
-            text_area_id = Some(text_input.ctx.widget_id());
+        harness
+            .edit_root_widget(|mut text_input| {
+                let mut text_input = TextInput::text_mut(&mut text_input).unwrap();
+                text_area_id = Some(text_input.ctx.widget_id());
 
-            TextArea::select_text(&mut text_input, "contents");
-        });
+                TextArea::select_text(&mut text_input, "contents");
+            })
+            .unwrap();
         harness.focus_on(text_area_id);
 
         assert_render_snapshot!(harness, "text_input_selection");
 
-        harness.process_text_event(TextEvent::WindowFocusChange(false));
+        harness.process_text_event(&TextEvent::WindowFocusChange(false));
 
         assert_render_snapshot!(harness, "text_input_selection_unfocused");
 
-        harness.process_text_event(TextEvent::WindowFocusChange(true));
+        harness.process_text_event(&TextEvent::WindowFocusChange(true));
         harness.animate_ms(500 + 1);
 
         assert_render_snapshot!(harness, "text_input_cursor_blink");
@@ -450,9 +452,11 @@ mod tests {
         let text_area_node = harness.access_node(text_area_id).unwrap();
         assert_eq!(text_area_node.data().placeholder(), Some("Search"));
 
-        harness.edit_root_widget(|mut text_input| {
-            TextInput::set_placeholder(&mut text_input, "Filter");
-        });
+        harness
+            .edit_root_widget(|mut text_input| {
+                TextInput::set_placeholder(&mut text_input, "Filter");
+            })
+            .unwrap();
         let _ = harness.redraw();
 
         let text_area_node = harness.access_node(text_area_id).unwrap();

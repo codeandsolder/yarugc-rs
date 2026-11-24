@@ -141,8 +141,8 @@ mod tests {
     fn screenshot_test() {
         let mut state = Driver::new();
         let mut harness = TestHarness::create(default_property_set(), make_widget_tree());
-        let text_area_id = harness.get_widget(TEXT_INPUT_TAG).area_pod().id();
-        let add_btn_id = harness.get_widget(ADD_BUTTON_TAG).id();
+        let text_area_id = harness.get_widget(TEXT_INPUT_TAG).unwrap().area_pod().id();
+        let add_btn_id = harness.get_widget(ADD_BUTTON_TAG).unwrap().id();
 
         assert_render_snapshot!(harness, "example_to_do_list_initial");
 
@@ -164,14 +164,18 @@ mod tests {
         assert_render_snapshot!(harness, "example_to_do_list_typed_task1");
 
         act_and_update(&mut harness, &|harness| {
-            harness.mouse_click_on(add_btn_id, Some(PointerButton::Primary));
+            harness
+                .mouse_click_on(add_btn_id, Some(PointerButton::Primary))
+                .unwrap();
         });
         assert_render_snapshot!(harness, "example_to_do_list_task1_added");
 
         act_and_update(&mut harness, &|harness| {
             harness.focus_on(Some(text_area_id));
             harness.keyboard_type_chars("Do laundry");
-            harness.mouse_click_on(add_btn_id, Some(PointerButton::Primary));
+            harness
+                .mouse_click_on(add_btn_id, Some(PointerButton::Primary))
+                .unwrap();
         });
         assert_render_snapshot!(harness, "example_to_do_list_task2_added");
     }

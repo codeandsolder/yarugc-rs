@@ -324,21 +324,23 @@ mod tests {
         assert_render_snapshot!(harness, "prose_outline");
 
         let mut text_area_id = None;
-        harness.edit_root_widget(|mut prose| {
-            let mut prose = Prose::text_mut(&mut prose).unwrap();
-            text_area_id = Some(prose.ctx.widget_id());
+        harness
+            .edit_root_widget(|mut prose| {
+                let mut prose = Prose::text_mut(&mut prose).unwrap();
+                text_area_id = Some(prose.ctx.widget_id());
 
-            TextArea::select_text(&mut prose, "contents");
-        });
+                TextArea::select_text(&mut prose, "contents");
+            })
+            .unwrap();
         harness.focus_on(text_area_id);
 
         assert_render_snapshot!(harness, "prose_selection");
 
-        harness.process_text_event(TextEvent::WindowFocusChange(false));
+        harness.process_text_event(&TextEvent::WindowFocusChange(false));
 
         assert_render_snapshot!(harness, "prose_selection_unfocused");
 
-        harness.process_text_event(TextEvent::WindowFocusChange(true));
+        harness.process_text_event(&TextEvent::WindowFocusChange(true));
         harness.animate_ms(500 + 1);
 
         assert_render_snapshot!(harness, "prose_cursor_blink");
@@ -353,7 +355,7 @@ mod tests {
 
             let mut harness = TestHarness::create_with_size(test_property_set(), prose, (50, 50));
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         let image_2 = {
@@ -361,15 +363,17 @@ mod tests {
 
             let mut harness = TestHarness::create_with_size(test_property_set(), prose, (50, 50));
 
-            harness.edit_root_widget(|mut prose| {
-                prose.insert_prop(ContentColor::new(ACCENT_COLOR));
-                TextArea::reset_text(
-                    &mut Prose::text_mut(&mut prose).unwrap(),
-                    "The quick brown fox jumps over the lazy dog",
-                );
-            });
+            harness
+                .edit_root_widget(|mut prose| {
+                    prose.insert_prop(ContentColor::new(ACCENT_COLOR));
+                    TextArea::reset_text(
+                        &mut Prose::text_mut(&mut prose).unwrap(),
+                        "The quick brown fox jumps over the lazy dog",
+                    );
+                })
+                .unwrap();
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         // We don't use assert_eq because we don't want rich assert

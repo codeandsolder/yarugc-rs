@@ -805,7 +805,7 @@ mod tests {
             let mut harness =
                 TestHarness::create_with_size(test_property_set(), widget, (100, 100));
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         let image_2 = {
@@ -815,15 +815,17 @@ mod tests {
             let mut harness =
                 TestHarness::create_with_size(test_property_set(), widget, (100, 100));
 
-            harness.edit_root_widget(|mut splitter| {
-                Split::set_split_point(&mut splitter, SplitPoint::Fraction(0.3));
-                Split::set_min_lengths(&mut splitter, 40.px(), 10.px());
-                Split::set_bar_thickness(&mut splitter, 12.px());
-                Split::set_draggable(&mut splitter, true);
-                Split::set_bar_solid(&mut splitter, true);
-            });
+            harness
+                .edit_root_widget(|mut splitter| {
+                    Split::set_split_point(&mut splitter, SplitPoint::Fraction(0.3));
+                    Split::set_min_lengths(&mut splitter, 40.px(), 10.px());
+                    Split::set_bar_thickness(&mut splitter, 12.px());
+                    Split::set_draggable(&mut splitter, true);
+                    Split::set_bar_solid(&mut splitter, true);
+                })
+                .unwrap();
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         // We don't use assert_eq because we don't want rich assert
@@ -838,7 +840,7 @@ mod tests {
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (150, 100));
 
         let child1_initial_width = {
-            let root = harness.root_widget();
+            let root = harness.root_widget().unwrap();
             root.children()[0].ctx().border_box().size().width
         };
 
@@ -850,7 +852,7 @@ mod tests {
         harness.mouse_button_release(None);
 
         let (child1_width, child2_width) = {
-            let root = harness.root_widget();
+            let root = harness.root_widget().unwrap();
             let children = root.children();
             (
                 children[0].ctx().border_box().size().width,
@@ -874,14 +876,14 @@ mod tests {
         harness.focus_on(Some(root_id));
 
         let child1_initial_width = {
-            let root = harness.root_widget();
+            let root = harness.root_widget().unwrap();
             root.children()[0].ctx().border_box().size().width
         };
 
-        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowRight)));
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::ArrowRight)));
 
         let child1_width = {
-            let root = harness.root_widget();
+            let root = harness.root_widget().unwrap();
             root.children()[0].ctx().border_box().size().width
         };
 
@@ -897,14 +899,14 @@ mod tests {
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (200, 100));
 
         let child1_width = {
-            let root = harness.root_widget();
+            let root = harness.root_widget().unwrap();
             root.children()[0].ctx().border_box().size().width
         };
         assert!((child1_width - 50.0).abs() < 0.01);
 
         harness.process_window_event(WindowEvent::Resize(PhysicalSize::new(300, 100)));
         let child1_width = {
-            let root = harness.root_widget();
+            let root = harness.root_widget().unwrap();
             root.children()[0].ctx().border_box().size().width
         };
         assert!((child1_width - 50.0).abs() < 0.01);
@@ -919,14 +921,14 @@ mod tests {
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (200, 100));
 
         let child2_width = {
-            let root = harness.root_widget();
+            let root = harness.root_widget().unwrap();
             root.children()[1].ctx().border_box().size().width
         };
         assert!((child2_width - 50.0).abs() < 0.01);
 
         harness.process_window_event(WindowEvent::Resize(PhysicalSize::new(300, 100)));
         let child2_width = {
-            let root = harness.root_widget();
+            let root = harness.root_widget().unwrap();
             root.children()[1].ctx().border_box().size().width
         };
         assert!((child2_width - 50.0).abs() < 0.01);
@@ -942,20 +944,24 @@ mod tests {
 
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (150, 100));
 
-        harness.edit_root_widget(|mut split| {
-            Split::set_split_point(&mut split, SplitPoint::Fraction(2.0));
-        });
+        harness
+            .edit_root_widget(|mut split| {
+                Split::set_split_point(&mut split, SplitPoint::Fraction(2.0));
+            })
+            .unwrap();
         let child1_width = {
-            let root = harness.root_widget();
+            let root = harness.root_widget().unwrap();
             root.children()[0].ctx().border_box().size().width
         };
         assert!((child1_width - 144.0).abs() < 0.01);
 
-        harness.edit_root_widget(|mut split| {
-            Split::set_split_point(&mut split, SplitPoint::Fraction(-1.0));
-        });
+        harness
+            .edit_root_widget(|mut split| {
+                Split::set_split_point(&mut split, SplitPoint::Fraction(-1.0));
+            })
+            .unwrap();
         let child1_width = {
-            let root = harness.root_widget();
+            let root = harness.root_widget().unwrap();
             root.children()[0].ctx().border_box().size().width
         };
         assert!((child1_width - 0.0).abs() < 0.01);

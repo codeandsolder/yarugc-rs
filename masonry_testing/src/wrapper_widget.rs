@@ -21,6 +21,7 @@ impl WrapperWidget {
     /// Creates a new `WrapperWidget`.
     ///
     /// The `child` is the initial child widget.
+    #[must_use = "Use the wrapped test widget."]
     pub fn new(child: NewWidget<impl Widget>) -> Self {
         Self {
             child: child.erased().into_pod(),

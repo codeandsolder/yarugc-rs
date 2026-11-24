@@ -46,33 +46,42 @@ fn request_compose() {
     let parent = NewWidget::new(parent.record()).with_tag(parent_tag);
 
     let mut harness = TestHarness::create(test_property_set(), parent);
-    harness.flush_records_of(parent_tag);
+    harness.flush_records_of(parent_tag).unwrap();
 
     // Changing pos should lead to a layout and a compose pass.
-    harness.edit_widget(parent_tag, |mut parent| {
-        parent.widget.inner_mut().state.pos = Point::new(30., 30.);
-        parent.ctx.request_layout();
-    });
+    harness
+        .edit_widget(parent_tag, |mut parent| {
+            parent.widget.inner_mut().state.pos = Point::new(30., 30.);
+            parent.ctx.request_layout();
+        })
+        .unwrap();
     assert_matches!(
-        harness.take_records_of(parent_tag)[..],
+        harness.take_records_of(parent_tag).unwrap()[..],
         [Record::Layout(_), Record::Compose,]
     );
 
     // Changing scroll offset only should lead to a compose pass.
-    harness.edit_widget(parent_tag, |mut parent| {
-        parent.widget.inner_mut().state.offset = Vec2::new(8., 8.);
-        parent.ctx.request_compose();
-    });
-    assert_matches!(harness.take_records_of(parent_tag)[..], [Record::Compose]);
+    harness
+        .edit_widget(parent_tag, |mut parent| {
+            parent.widget.inner_mut().state.offset = Vec2::new(8., 8.);
+            parent.ctx.request_compose();
+        })
+        .unwrap();
+    assert_matches!(
+        harness.take_records_of(parent_tag).unwrap()[..],
+        [Record::Compose]
+    );
 
-    harness.edit_widget(parent_tag, |mut parent| {
-        parent
-            .ctx
-            .set_transform(Affine::translate(Vec2::new(7., 7.)));
-    });
+    harness
+        .edit_widget(parent_tag, |mut parent| {
+            parent
+                .ctx
+                .set_transform(Affine::translate(Vec2::new(7., 7.)));
+        })
+        .unwrap();
 
     // Origin should be "parent_origin + pos + scroll_offset"
-    let child = harness.get_widget(child_tag);
+    let child = harness.get_widget(child_tag).unwrap();
     let ctx = child.ctx();
     let origin = ctx.local_to_window(ctx.border_box().origin());
     assert_eq!(
@@ -117,11 +126,11 @@ fn scroll_translation_updates_composed_geometry_without_layout() {
     .with_tag(parent_tag);
 
     let mut harness = TestHarness::create(test_property_set(), parent);
-    harness.flush_records_of(child_tag);
+    harness.flush_records_of(child_tag).unwrap();
 
     let hit_after_scroll = Point::new(16., 16.);
     harness.mouse_move(hit_after_scroll);
-    let records = harness.take_records_of(child_tag);
+    let records = harness.take_records_of(child_tag).unwrap();
     assert!(
         !records.iter().any(|record| matches!(
             record,
@@ -129,14 +138,16 @@ fn scroll_translation_updates_composed_geometry_without_layout() {
         )),
         "pointer should not reach the child before scroll translation"
     );
-    assert!(!harness.get_widget(child_tag).ctx().is_hovered());
+    assert!(!harness.get_widget(child_tag).unwrap().ctx().is_hovered());
 
-    harness.edit_widget(parent_tag, |mut parent| {
-        parent.widget.state.offset = Vec2::new(2.2, 0.8);
-        parent.ctx.request_compose();
-    });
+    harness
+        .edit_widget(parent_tag, |mut parent| {
+            parent.widget.state.offset = Vec2::new(2.2, 0.8);
+            parent.ctx.request_compose();
+        })
+        .unwrap();
 
-    let records = harness.take_records_of(child_tag);
+    let records = harness.take_records_of(child_tag).unwrap();
     assert!(
         !records
             .iter()
@@ -150,9 +161,9 @@ fn scroll_translation_updates_composed_geometry_without_layout() {
         )),
         "stationary pointer should reach the child after scroll translation"
     );
-    assert!(harness.get_widget(child_tag).ctx().is_hovered());
+    assert!(harness.get_widget(child_tag).unwrap().ctx().is_hovered());
 
-    let child = harness.get_widget(child_tag);
+    let child = harness.get_widget(child_tag).unwrap();
     let child_id = child.id();
     let ctx = child.ctx();
     assert_eq!(ctx.border_box().size(), Size::new(10., 11.));
@@ -196,7 +207,7 @@ fn scroll_pixel_snap() {
     let harness = TestHarness::create(test_property_set(), parent);
 
     // Origin should be rounded to (0., 1.) by pixel-snapping.
-    let child = harness.get_widget(child_tag);
+    let child = harness.get_widget(child_tag).unwrap();
     let ctx = child.ctx();
     let origin = ctx.local_to_window(ctx.border_box().origin());
     assert_eq!(origin, Point::new(0., 1.));

@@ -306,28 +306,30 @@ mod tests {
         let widget = NewWidget::new(RadioGroup::new(widget));
 
         let mut harness = TestHarness::create_with_size(default_property_set(), widget, (100, 40));
-        let radio_id = harness.get_widget(radio_tag).id();
+        let radio_id = harness.get_widget(radio_tag).unwrap().id();
 
         assert_render_snapshot!(harness, "radio_button_hello_unchecked");
 
         assert!(harness.pop_action_erased().is_none());
 
-        harness.mouse_move_to(radio_id);
+        harness.mouse_move_to(radio_id).unwrap();
 
         assert_render_snapshot!(harness, "radio_button_hello_hovered");
 
-        harness.mouse_click_on(radio_id, None);
+        harness.mouse_click_on(radio_id, None).unwrap();
         assert_eq!(
-            harness.pop_action::<RadioButtonSelected>(),
+            harness.pop_action::<RadioButtonSelected>().unwrap(),
             Some((RadioButtonSelected, radio_id))
         );
 
         assert_render_snapshot!(harness, "radio_button_hello_checked");
 
-        harness.edit_root_widget(|mut group| {
-            let mut radio = RadioGroup::child_mut::<RadioButton>(&mut group).unwrap();
-            RadioButton::set_checked(&mut radio, false);
-        });
+        harness
+            .edit_root_widget(|mut group| {
+                let mut radio = RadioGroup::child_mut::<RadioButton>(&mut group).unwrap();
+                RadioButton::set_checked(&mut radio, false);
+            })
+            .unwrap();
 
         // The radio button should be unchecked again, but still hovered
         assert_render_snapshot!(harness, "radio_button_hello_hovered");
@@ -368,7 +370,7 @@ mod tests {
             let mut harness =
                 TestHarness::create_with_size(default_property_set(), group, (50, 50));
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         let image_2 = {
@@ -378,20 +380,22 @@ mod tests {
             let mut harness =
                 TestHarness::create_with_size(default_property_set(), group, (50, 50));
 
-            harness.edit_root_widget(|mut group| {
-                let mut radio = RadioGroup::child_mut::<RadioButton>(&mut group).unwrap();
-                RadioButton::set_checked(&mut radio, true);
-                RadioButton::set_text(
-                    &mut radio,
-                    ArcStr::from("The quick brown fox jumps over the lazy dog"),
-                );
+            harness
+                .edit_root_widget(|mut group| {
+                    let mut radio = RadioGroup::child_mut::<RadioButton>(&mut group).unwrap();
+                    RadioButton::set_checked(&mut radio, true);
+                    RadioButton::set_text(
+                        &mut radio,
+                        ArcStr::from("The quick brown fox jumps over the lazy dog"),
+                    );
 
-                let mut label = RadioButton::label_mut(&mut radio).unwrap();
-                label.insert_prop(ContentColor::new(ACCENT_COLOR));
-                Label::insert_style(&mut label, StyleProperty::FontSize(20.0));
-            });
+                    let mut label = RadioButton::label_mut(&mut radio).unwrap();
+                    label.insert_prop(ContentColor::new(ACCENT_COLOR));
+                    Label::insert_style(&mut label, StyleProperty::FontSize(20.0));
+                })
+                .unwrap();
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         // We don't use assert_eq because we don't want rich assert

@@ -18,22 +18,24 @@ fn needs_anim_flag() {
     let grandparent = NewWidget::new(ModularWidget::new_parent(parent));
 
     let mut harness = TestHarness::create(test_property_set(), grandparent);
-    harness.flush_records_of(target_tag);
-    harness.flush_records_of(parent_tag);
+    harness.flush_records_of(target_tag).unwrap();
+    harness.flush_records_of(parent_tag).unwrap();
 
-    harness.edit_widget(target_tag, |mut widget| {
-        widget.ctx.request_anim_frame();
-    });
+    harness
+        .edit_widget(target_tag, |mut widget| {
+            widget.ctx.request_anim_frame();
+        })
+        .unwrap();
     harness.animate_ms(42);
 
-    let records = harness.take_records_of(target_tag);
+    let records = harness.take_records_of(target_tag).unwrap();
     assert_any(records, |r| matches!(r, Record::AnimFrame(42_000_000)));
 
-    let records = harness.take_records_of(parent_tag);
+    let records = harness.take_records_of(parent_tag).unwrap();
     assert_none(records, |r| matches!(r, Record::AnimFrame(_)));
 
     harness.animate_ms(42);
 
     // We didn't re-request an animation, so nothing should happen.
-    assert_matches!(harness.take_records_of(parent_tag)[..], []);
+    assert_matches!(harness.take_records_of(parent_tag).unwrap()[..], []);
 }

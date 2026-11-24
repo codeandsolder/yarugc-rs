@@ -51,7 +51,7 @@ mod tests {
             others::calc_masonry::build_calc(),
             PARAMS_ZERO_SIZE,
         );
-        let _ = harness.render();
+        let _ = harness.render().unwrap();
     }
 
     #[test]
@@ -61,7 +61,7 @@ mod tests {
             others::custom_widget::CustomWidget("Foobar".to_string()).prepare(),
             PARAMS_ZERO_SIZE,
         );
-        let _ = harness.render();
+        let _ = harness.render().unwrap();
     }
 
     #[test]
@@ -71,7 +71,7 @@ mod tests {
             others::grid_masonry::make_grid(1.0),
             PARAMS_ZERO_SIZE,
         );
-        let _ = harness.render();
+        let _ = harness.render().unwrap();
     }
 
     #[test]
@@ -81,7 +81,7 @@ mod tests {
             others::simple_image::make_image(),
             PARAMS_ZERO_SIZE,
         );
-        let _ = harness.render();
+        let _ = harness.render().unwrap();
     }
 
     #[test]
@@ -91,6 +91,6 @@ mod tests {
             others::to_do_list::make_widget_tree(),
             PARAMS_ZERO_SIZE,
         );
-        let _ = harness.render();
+        let _ = harness.render().unwrap();
     }
 }

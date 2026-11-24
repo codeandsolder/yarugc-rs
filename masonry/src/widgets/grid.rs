@@ -1046,50 +1046,62 @@ mod tests {
         assert_render_snapshot!(harness, "grid_initial_1x1");
 
         // Expand it to a 4x4 grid
-        harness.edit_root_widget(|mut grid| {
-            Grid::set_columns(&mut grid, vec![GridTrackSize::FRACTION; 4]);
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::set_columns(&mut grid, vec![GridTrackSize::FRACTION; 4]);
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_expanded_4x1");
 
-        harness.edit_root_widget(|mut grid| {
-            Grid::set_rows(&mut grid, vec![GridTrackSize::FRACTION; 4]);
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::set_rows(&mut grid, vec![GridTrackSize::FRACTION; 4]);
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_expanded_4x4");
 
         // Add a widget that takes up more than one horizontal cell
-        harness.edit_root_widget(|mut grid| {
-            Grid::add(
-                &mut grid,
-                Button::with_text("B").prepare(),
-                GridParams::pos(1, 0).with_span(3, 1),
-            );
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::add(
+                    &mut grid,
+                    Button::with_text("B").prepare(),
+                    GridParams::pos(1, 0).with_span(3, 1),
+                );
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_with_horizontal_widget");
 
         // Add a widget that takes up more than one vertical cell
-        harness.edit_root_widget(|mut grid| {
-            Grid::add(
-                &mut grid,
-                Button::with_text("C").prepare(),
-                GridParams::pos(0, 1).with_span(1, 3),
-            );
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::add(
+                    &mut grid,
+                    Button::with_text("C").prepare(),
+                    GridParams::pos(0, 1).with_span(1, 3),
+                );
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_with_vertical_widget");
 
         // Add a widget that takes up more than one horizontal and vertical cell
-        harness.edit_root_widget(|mut grid| {
-            Grid::add(
-                &mut grid,
-                Button::with_text("D").prepare(),
-                GridParams::pos(1, 1).with_span(2, 2),
-            );
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::add(
+                    &mut grid,
+                    Button::with_text("D").prepare(),
+                    GridParams::pos(1, 1).with_span(2, 2),
+                );
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_with_2x2_widget");
 
         // Change the gap
-        harness.edit_root_widget(|mut grid| {
-            grid.insert_prop(Gap::new(7.px()));
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                grid.insert_prop(Gap::new(7.px()));
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_with_changed_spacing");
     }
 
@@ -1103,51 +1115,63 @@ mod tests {
         assert_render_snapshot!(harness, "grid_initial_2x2");
 
         // Now remove the widget
-        harness.edit_root_widget(|mut grid| {
-            Grid::remove(&mut grid, 0).unwrap();
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::remove(&mut grid, 0).unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_2x2_with_removed_widget");
 
         // Add it back
-        harness.edit_root_widget(|mut grid| {
-            Grid::add(
-                &mut grid,
-                Button::with_text("A").prepare(),
-                GridParams::pos(0, 0),
-            );
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::add(
+                    &mut grid,
+                    Button::with_text("A").prepare(),
+                    GridParams::pos(0, 0),
+                );
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_initial_2x2"); // Should be back to the original state
 
         // Test replacement
-        harness.edit_root_widget(|mut grid| {
-            Grid::remove(&mut grid, 0).unwrap();
-            Grid::add(
-                &mut grid,
-                Button::with_text("X").prepare(),
-                GridParams::pos(0, 0),
-            );
-        });
-        harness.edit_root_widget(|mut grid| {
-            Grid::set(
-                &mut grid,
-                0,
-                Button::with_text("A").prepare(),
-                GridParams::pos(0, 0),
-            )
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::remove(&mut grid, 0).unwrap();
+                Grid::add(
+                    &mut grid,
+                    Button::with_text("X").prepare(),
+                    GridParams::pos(0, 0),
+                );
+            })
             .unwrap();
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::set(
+                    &mut grid,
+                    0,
+                    Button::with_text("A").prepare(),
+                    GridParams::pos(0, 0),
+                )
+                .unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_initial_2x2"); // Should be back to the original state
 
         // Change the grid params to position it on the other corner
-        harness.edit_root_widget(|mut grid| {
-            Grid::set_params(&mut grid, 0, GridParams::pos(1, 1)).unwrap();
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::set_params(&mut grid, 0, GridParams::pos(1, 1)).unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_moved_2x2_1");
 
         // Now make it take up the entire grid
-        harness.edit_root_widget(|mut grid| {
-            Grid::set_params(&mut grid, 0, GridParams::pos(0, 0).with_span(2, 2)).unwrap();
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::set_params(&mut grid, 0, GridParams::pos(0, 0).with_span(2, 2)).unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_moved_2x2_2");
     }
 
@@ -1161,26 +1185,30 @@ mod tests {
         assert_render_snapshot!(harness, "grid_initial_2x2");
 
         // Order sets the draw order, so draw a widget over A by adding it after
-        harness.edit_root_widget(|mut grid| {
-            Grid::add(
-                &mut grid,
-                Button::with_text("B").prepare(),
-                GridParams::pos(0, 0),
-            );
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::add(
+                    &mut grid,
+                    Button::with_text("B").prepare(),
+                    GridParams::pos(0, 0),
+                );
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_2x2_with_overlapping_b");
 
         // Draw a widget under the others by putting it at index 0
         // Make it wide enough to see it stick out, with half of it under A and B.
-        harness.edit_root_widget(|mut grid| {
-            Grid::insert(
-                &mut grid,
-                0,
-                Button::with_text("C").prepare(),
-                GridParams::pos(0, 0).with_span(2, 1),
-            )
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::insert(
+                    &mut grid,
+                    0,
+                    Button::with_text("C").prepare(),
+                    GridParams::pos(0, 0).with_span(2, 1),
+                )
+                .unwrap();
+            })
             .unwrap();
-        });
         assert_render_snapshot!(harness, "grid_2x2_with_overlapping_c");
     }
 
@@ -1229,9 +1257,11 @@ mod tests {
 
         assert_render_snapshot!(harness, "grid_baselines_first");
 
-        harness.edit_root_widget(|mut root| {
-            Flex::set_cross_axis_alignment(&mut root, CrossAxisAlignment::LastBaseline);
-        });
+        harness
+            .edit_root_widget(|mut root| {
+                Flex::set_cross_axis_alignment(&mut root, CrossAxisAlignment::LastBaseline);
+            })
+            .unwrap();
 
         assert_render_snapshot!(harness, "grid_baselines_last");
     }

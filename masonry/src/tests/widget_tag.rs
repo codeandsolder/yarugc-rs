@@ -17,10 +17,12 @@ fn duplicate_widget_tag() {
     let mut harness = TestHarness::create(test_property_set(), parent);
 
     assert_debug_panics!(
-        harness.edit_root_widget(|mut flex| {
-            let new_child = NewWidget::new(SizedBox::empty()).with_tag(tag);
-            Flex::add_fixed(&mut flex, new_child);
-        }),
+        harness
+            .edit_root_widget(|mut flex| {
+                let new_child = NewWidget::new(SizedBox::empty()).with_tag(tag);
+                Flex::add_fixed(&mut flex, new_child);
+            })
+            .unwrap(),
         "already exists in the widget tree"
     );
 }
@@ -39,12 +41,14 @@ fn removed_subtree_releases_all_tags() {
         test_property_set(),
         NewWidget::new(SizedBox::new(subtree())),
     );
-    let old_parent = harness.get_widget(parent_tag).id();
-    let old_child = harness.get_widget(child_tag).id();
+    let old_parent = harness.get_widget(parent_tag).unwrap().id();
+    let old_child = harness.get_widget(child_tag).unwrap().id();
 
-    harness.edit_root_widget(|mut root| SizedBox::remove_child(&mut root));
-    assert!(harness.try_get_widget(old_parent).is_none());
-    assert!(harness.try_get_widget(old_child).is_none());
+    harness
+        .edit_root_widget(|mut root| SizedBox::remove_child(&mut root))
+        .unwrap();
+    assert!(harness.get_widget_with_id(old_parent).is_none());
+    assert!(harness.get_widget_with_id(old_child).is_none());
     assert!(
         harness
             .render_root()
@@ -58,18 +62,22 @@ fn removed_subtree_releases_all_tags() {
             .is_none()
     );
 
-    harness.edit_root_widget(|mut root| SizedBox::set_child(&mut root, subtree()));
-    assert_ne!(harness.get_widget(parent_tag).id(), old_parent);
-    assert_ne!(harness.get_widget(child_tag).id(), old_child);
+    harness
+        .edit_root_widget(|mut root| SizedBox::set_child(&mut root, subtree()))
+        .unwrap();
+    assert_ne!(harness.get_widget(parent_tag).unwrap().id(), old_parent);
+    assert_ne!(harness.get_widget(child_tag).unwrap().id(), old_child);
 }
 
 #[test]
 fn replacing_unregistered_child_in_same_edit_is_valid() {
     let tag = WidgetTag::named("final-child");
     let mut harness = TestHarness::create(test_property_set(), NewWidget::new(SizedBox::empty()));
-    harness.edit_root_widget(|mut root| {
-        SizedBox::set_child(&mut root, NewWidget::new(SizedBox::empty()).with_tag(tag));
-        SizedBox::set_child(&mut root, NewWidget::new(SizedBox::empty()).with_tag(tag));
-    });
-    assert_eq!(harness.get_widget(tag).children().len(), 0);
+    harness
+        .edit_root_widget(|mut root| {
+            SizedBox::set_child(&mut root, NewWidget::new(SizedBox::empty()).with_tag(tag));
+            SizedBox::set_child(&mut root, NewWidget::new(SizedBox::empty()).with_tag(tag));
+        })
+        .unwrap();
+    assert_eq!(harness.get_widget(tag).unwrap().children().len(), 0);
 }

@@ -217,9 +217,11 @@ mod tests {
 
         assert!(harness.pop_action_erased().is_none());
 
-        harness.mouse_click_on(button_id, Some(PointerButton::Primary));
+        harness
+            .mouse_click_on(button_id, Some(PointerButton::Primary))
+            .unwrap();
         assert_eq!(
-            harness.pop_action::<ButtonPress>(),
+            harness.pop_action::<ButtonPress>().unwrap(),
             Some((
                 ButtonPress {
                     button: Some(PointerButton::Primary)
@@ -233,10 +235,10 @@ mod tests {
         harness.press_tab_key(false);
         assert_eq!(harness.focused_widget().map(|w| w.id()), Some(button_id));
 
-        harness.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
-        harness.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        harness.process_text_event(&TextEvent::key_down(Key::Character(" ".into())));
+        harness.process_text_event(&TextEvent::key_up(Key::Character(" ".into())));
         assert_eq!(
-            harness.pop_action(),
+            harness.pop_action().unwrap(),
             Some((ButtonPress { button: None }, button_id))
         );
     }
@@ -248,7 +250,7 @@ mod tests {
         let button_id = harness.root_id();
 
         harness.focus_on(None);
-        harness.mouse_move_to(button_id);
+        harness.mouse_move_to(button_id).unwrap();
         harness.mouse_button_press(None);
 
         assert_eq!(harness.focused_widget_id(), Some(button_id));
@@ -266,7 +268,7 @@ mod tests {
 
             let mut harness = TestHarness::create_with_size(test_property_set(), button, (50, 50));
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         let image_2 = {
@@ -274,16 +276,18 @@ mod tests {
 
             let mut harness = TestHarness::create_with_size(test_property_set(), button, (50, 50));
 
-            harness.edit_root_widget(|mut button| {
-                let mut label = Button::child_mut::<Label>(&mut button).unwrap();
+            harness
+                .edit_root_widget(|mut button| {
+                    let mut label = Button::child_mut::<Label>(&mut button).unwrap();
 
-                Label::set_text(&mut label, "The quick brown fox jumps over the lazy dog");
+                    Label::set_text(&mut label, "The quick brown fox jumps over the lazy dog");
 
-                label.insert_prop(ContentColor::new(ACCENT_COLOR));
-                Label::insert_style(&mut label, StyleProperty::FontSize(20.0));
-            });
+                    label.insert_prop(ContentColor::new(ACCENT_COLOR));
+                    Label::insert_style(&mut label, StyleProperty::FontSize(20.0));
+                })
+                .unwrap();
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         // We don't use assert_eq because we don't want rich assert
@@ -297,15 +301,17 @@ mod tests {
 
         let mut harness = TestHarness::create_with_size(test_property_set(), button, (200, 80));
 
-        harness.edit_root_widget(|mut button| {
-            button.insert_prop(BorderColor { color: red });
-            button.insert_prop(BorderWidth { width: 5.px() });
-            button.insert_prop(CornerRadius { radius: 20.px() });
-            button.insert_prop(Padding::from_vh(3.px(), 8.px()));
+        harness
+            .edit_root_widget(|mut button| {
+                button.insert_prop(BorderColor { color: red });
+                button.insert_prop(BorderWidth { width: 5.px() });
+                button.insert_prop(CornerRadius { radius: 20.px() });
+                button.insert_prop(Padding::from_vh(3.px(), 8.px()));
 
-            let mut label = Button::child_mut::<Label>(&mut button).unwrap();
-            label.insert_prop(ContentColor::new(red));
-        });
+                let mut label = Button::child_mut::<Label>(&mut button).unwrap();
+                label.insert_prop(ContentColor::new(red));
+            })
+            .unwrap();
 
         assert_render_snapshot!(harness, "button_set_properties");
     }
@@ -328,38 +334,42 @@ mod tests {
         let test_params = TestHarnessParams::default().with_size((300, 300));
         let mut harness = TestHarness::create_with(test_property_set(), root_widget, test_params);
 
-        harness.edit_root_widget(|mut grid| {
-            {
-                let mut button = Grid::get_mut::<Button>(&mut grid, 0).unwrap();
-                button.insert_prop(BoxShadow::new(ORANGE, (10., 10.)));
-            }
+        harness
+            .edit_root_widget(|mut grid| {
+                {
+                    let mut button = Grid::get_mut::<Button>(&mut grid, 0).unwrap();
+                    button.insert_prop(BoxShadow::new(ORANGE, (10., 10.)));
+                }
 
-            {
-                let mut button = Grid::get_mut::<Button>(&mut grid, 1).unwrap();
-                button.insert_prop(BoxShadow::new(ORANGE, (-10., 10.)).blur(5.px()));
-            }
+                {
+                    let mut button = Grid::get_mut::<Button>(&mut grid, 1).unwrap();
+                    button.insert_prop(BoxShadow::new(ORANGE, (-10., 10.)).blur(5.px()));
+                }
 
-            {
-                let mut button = Grid::get_mut::<Button>(&mut grid, 2).unwrap();
-                button.insert_prop(BoxShadow::new(ORANGE, (-10., -10.)).blur(0.px()));
-            }
+                {
+                    let mut button = Grid::get_mut::<Button>(&mut grid, 2).unwrap();
+                    button.insert_prop(BoxShadow::new(ORANGE, (-10., -10.)).blur(0.px()));
+                }
 
-            {
-                let mut button = Grid::get_mut::<Button>(&mut grid, 3).unwrap();
-                button.insert_prop(BoxShadow::new(ORANGE, (0., 0.)).blur(5.px()));
-            }
-        });
+                {
+                    let mut button = Grid::get_mut::<Button>(&mut grid, 3).unwrap();
+                    button.insert_prop(BoxShadow::new(ORANGE, (0., 0.)).blur(5.px()));
+                }
+            })
+            .unwrap();
 
         assert_render_snapshot!(harness, "button_shadows");
 
         // Check that slightly changing the blur radius makes the screenshot test fail.
-        harness.edit_root_widget(|mut grid| {
-            // Copy-pasted from second case above.
-            {
-                let mut button = Grid::get_mut::<Button>(&mut grid, 1).unwrap();
-                button.insert_prop(BoxShadow::new(ORANGE, (-10., 10.)).blur(2.5.px()));
-            }
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                // Copy-pasted from second case above.
+                {
+                    let mut button = Grid::get_mut::<Button>(&mut grid, 1).unwrap();
+                    button.insert_prop(BoxShadow::new(ORANGE, (-10., 10.)).blur(2.5.px()));
+                }
+            })
+            .unwrap();
         assert_failing_render_snapshot!(harness, "button_shadows");
     }
 
@@ -373,14 +383,14 @@ mod tests {
         let button_id = button.id();
         let mut harness = TestHarness::create(test_property_set(), button);
 
-        harness.mouse_move_to_unchecked(child_id);
-        let button = harness.get_widget_with_id(button_id);
+        harness.mouse_move_to_unchecked(child_id).unwrap();
+        let button = harness.get_widget_with_id(button_id).unwrap();
         assert!(
             button.ctx().is_hovered(),
             "The child shouldn't prevent hover."
         );
         harness.mouse_button_press(None);
-        let button = harness.get_widget_with_id(button_id);
+        let button = harness.get_widget_with_id(button_id).unwrap();
         assert!(
             button.ctx().is_pointer_capture_target(),
             "A non-interactive child shouldn't prevent pointer capture."
@@ -388,6 +398,7 @@ mod tests {
         harness.mouse_button_release(None);
         let (_, event_id) = harness
             .pop_action::<<Button as Widget>::Action>()
+            .unwrap()
             .expect("There should be an action.");
         assert_eq!(
             event_id, button_id,
@@ -426,13 +437,15 @@ mod tests {
         let params =
             TestHarnessParams::size_and_padding((100, 40), TestHarnessParams::ROOT_PADDING);
         let mut harness = TestHarness::create_with(test_property_set(), parent, params);
-        let button_id = harness.get_widget(tag).id();
+        let button_id = harness.get_widget(tag).unwrap().id();
 
         assert_render_snapshot!(harness, "button_no_text");
 
-        harness.mouse_click_on(button_id, Some(PointerButton::Primary));
+        harness
+            .mouse_click_on(button_id, Some(PointerButton::Primary))
+            .unwrap();
         assert_matches!(
-            harness.pop_action::<ButtonPress>(),
+            harness.pop_action::<ButtonPress>().unwrap(),
             Some((ButtonPress { .. }, ..))
         );
     }

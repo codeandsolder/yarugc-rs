@@ -247,14 +247,18 @@ mod tests {
 
         assert_render_snapshot!(harness, "align_oversized_center");
 
-        harness.edit_widget(align_tag, |mut align| {
-            Align::set_alignment(&mut align, UnitPoint::TOP_LEFT);
-        });
+        harness
+            .edit_widget(align_tag, |mut align| {
+                Align::set_alignment(&mut align, UnitPoint::TOP_LEFT);
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "align_oversized_top_left");
 
-        harness.edit_widget(align_tag, |mut align| {
-            Align::set_alignment(&mut align, UnitPoint::BOTTOM_RIGHT);
-        });
+        harness
+            .edit_widget(align_tag, |mut align| {
+                Align::set_alignment(&mut align, UnitPoint::BOTTOM_RIGHT);
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "align_oversized_bottom_right");
     }
 }

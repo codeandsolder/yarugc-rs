@@ -322,45 +322,51 @@ mod tests {
 
         assert_render_snapshot!(harness, "indexed_stack_empty");
 
-        harness.edit_root_widget(|mut stack| {
-            IndexedStack::add(
-                &mut stack,
-                Button::with_text("A")
-                    .prepare()
-                    .with_props(Dimensions::STRETCH),
-                (),
-            );
-        });
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::add(
+                    &mut stack,
+                    Button::with_text("A")
+                        .prepare()
+                        .with_props(Dimensions::STRETCH),
+                    (),
+                );
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "indexed_stack_single");
 
-        harness.edit_root_widget(|mut stack| {
-            IndexedStack::add(
-                &mut stack,
-                Button::with_text("B")
-                    .prepare()
-                    .with_props(Dimensions::STRETCH),
-                (),
-            );
-            IndexedStack::add(
-                &mut stack,
-                Button::with_text("C")
-                    .prepare()
-                    .with_props(Dimensions::STRETCH),
-                (),
-            );
-            IndexedStack::add(
-                &mut stack,
-                Button::with_text("D")
-                    .prepare()
-                    .with_props(Dimensions::STRETCH),
-                (),
-            );
-        });
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::add(
+                    &mut stack,
+                    Button::with_text("B")
+                        .prepare()
+                        .with_props(Dimensions::STRETCH),
+                    (),
+                );
+                IndexedStack::add(
+                    &mut stack,
+                    Button::with_text("C")
+                        .prepare()
+                        .with_props(Dimensions::STRETCH),
+                    (),
+                );
+                IndexedStack::add(
+                    &mut stack,
+                    Button::with_text("D")
+                        .prepare()
+                        .with_props(Dimensions::STRETCH),
+                    (),
+                );
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "indexed_stack_single"); // the active child should not change
 
-        harness.edit_root_widget(|mut stack| {
-            IndexedStack::set_active_child(&mut stack, 2).unwrap();
-        });
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::set_active_child(&mut stack, 2).unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "indexed_stack_many_2");
     }
 
@@ -389,76 +395,90 @@ mod tests {
         assert_render_snapshot!(harness, "indexed_stack_initial_builder");
 
         // Remove the first (inactive) widget
-        harness.edit_root_widget(|mut stack| {
-            IndexedStack::remove(&mut stack, 0).unwrap();
-        });
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::remove(&mut stack, 0).unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "indexed_stack_initial_builder"); // Should not be changed
 
         // Now remove the active widget
-        harness.edit_root_widget(|mut stack| {
-            IndexedStack::remove(&mut stack, 0).unwrap();
-        });
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::remove(&mut stack, 0).unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "indexed_stack_builder_removed_widget");
 
         // Add another widget at the end
-        harness.edit_root_widget(|mut stack| {
-            IndexedStack::add(
-                &mut stack,
-                Button::with_text("D")
-                    .prepare()
-                    .with_props(Dimensions::STRETCH),
-                (),
-            );
-        });
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::add(
+                    &mut stack,
+                    Button::with_text("D")
+                        .prepare()
+                        .with_props(Dimensions::STRETCH),
+                    (),
+                );
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "indexed_stack_builder_removed_widget"); // Should not change
 
         // Make it active
-        harness.edit_root_widget(|mut stack| {
-            IndexedStack::set_active_child(&mut stack, 1).unwrap();
-        });
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::set_active_child(&mut stack, 1).unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "indexed_stack_builder_new_widget");
 
         // Insert back the first two at the start
-        harness.edit_root_widget(|mut stack| {
-            IndexedStack::insert(
-                &mut stack,
-                0,
-                Button::with_text("A")
-                    .prepare()
-                    .with_props(Dimensions::STRETCH),
-                (),
-            )
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::insert(
+                    &mut stack,
+                    0,
+                    Button::with_text("A")
+                        .prepare()
+                        .with_props(Dimensions::STRETCH),
+                    (),
+                )
+                .unwrap();
+                IndexedStack::insert(
+                    &mut stack,
+                    1,
+                    Button::with_text("B")
+                        .prepare()
+                        .with_props(Dimensions::STRETCH),
+                    (),
+                )
+                .unwrap();
+            })
             .unwrap();
-            IndexedStack::insert(
-                &mut stack,
-                1,
-                Button::with_text("B")
-                    .prepare()
-                    .with_props(Dimensions::STRETCH),
-                (),
-            )
-            .unwrap();
-        });
         assert_render_snapshot!(harness, "indexed_stack_builder_new_widget"); // Should not change
 
         // Reset original active index
-        harness.edit_root_widget(|mut stack| {
-            IndexedStack::set_active_child(&mut stack, 1).unwrap();
-        });
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::set_active_child(&mut stack, 1).unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "indexed_stack_initial_builder");
 
         // Change the active widget
-        harness.edit_root_widget(|mut stack| {
-            IndexedStack::set(
-                &mut stack,
-                1,
-                Button::with_text("D")
-                    .prepare()
-                    .with_props(Dimensions::STRETCH),
-                (),
-            )
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::set(
+                    &mut stack,
+                    1,
+                    Button::with_text("D")
+                        .prepare()
+                        .with_props(Dimensions::STRETCH),
+                    (),
+                )
+                .unwrap();
+            })
             .unwrap();
-        });
         assert_render_snapshot!(harness, "indexed_stack_builder_new_widget");
     }
 }

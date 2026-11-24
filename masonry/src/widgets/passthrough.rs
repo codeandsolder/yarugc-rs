@@ -143,17 +143,21 @@ mod tests {
 
         assert_render_snapshot!(harness, "passthrough_initial_label_A");
 
-        harness.edit_root_widget(|mut host| {
-            let mut child = Passthrough::child_mut::<dyn Widget>(&mut host).unwrap();
+        harness
+            .edit_root_widget(|mut host| {
+                let mut child = Passthrough::child_mut::<dyn Widget>(&mut host).unwrap();
 
-            // Test that child_mut returns a pointer to the child label
-            assert!(child.try_downcast::<Label>().is_some());
-        });
+                // Test that child_mut returns a pointer to the child label
+                assert!(child.try_downcast::<Label>().is_some());
+            })
+            .unwrap();
 
         // Replace with a label with different text
-        harness.edit_root_widget(|mut host| {
-            Passthrough::set_child(&mut host, Label::new("B").prepare());
-        });
+        harness
+            .edit_root_widget(|mut host| {
+                Passthrough::set_child(&mut host, Label::new("B").prepare());
+            })
+            .unwrap();
 
         assert_render_snapshot!(harness, "passthrough_replaced_label_B");
     }

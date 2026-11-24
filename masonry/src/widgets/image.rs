@@ -239,7 +239,7 @@ mod tests {
 
         let image_widget = NewWidget::new(Image::new(image_data));
         let mut harness = TestHarness::create(test_property_set(), image_widget);
-        let _ = harness.render();
+        let _ = harness.render().unwrap();
     }
 
     #[test]
@@ -286,7 +286,7 @@ mod tests {
             let mut harness =
                 TestHarness::create_with_size(test_property_set(), image_widget, (40, 60));
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         let render_2 = {
@@ -302,11 +302,13 @@ mod tests {
             let mut harness =
                 TestHarness::create_with_size(test_property_set(), image_widget, (40, 60));
 
-            harness.edit_root_widget(|mut image| {
-                Image::set_image_data(&mut image, image_data);
-            });
+            harness
+                .edit_root_widget(|mut image| {
+                    Image::set_image_data(&mut image, image_data);
+                })
+                .unwrap();
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         // TODO - Use Kompari instead
@@ -328,45 +330,59 @@ mod tests {
             TestHarness::create_with_size(test_property_set(), image_widget, (100, 50));
 
         // Contain.
-        harness.edit_root_widget(|mut image| {
-            image.insert_prop(ObjectFit::Contain);
-        });
+        harness
+            .edit_root_widget(|mut image| {
+                image.insert_prop(ObjectFit::Contain);
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "image_layout_contain");
 
         // Cover.
-        harness.edit_root_widget(|mut image| {
-            image.insert_prop(ObjectFit::Cover);
-        });
+        harness
+            .edit_root_widget(|mut image| {
+                image.insert_prop(ObjectFit::Cover);
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "image_layout_cover");
 
         // FitHeight.
-        harness.edit_root_widget(|mut image| {
-            image.insert_prop(ObjectFit::FitHeight);
-        });
+        harness
+            .edit_root_widget(|mut image| {
+                image.insert_prop(ObjectFit::FitHeight);
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "image_layout_fitheight");
 
         // FitWidth.
-        harness.edit_root_widget(|mut image| {
-            image.insert_prop(ObjectFit::FitWidth);
-        });
+        harness
+            .edit_root_widget(|mut image| {
+                image.insert_prop(ObjectFit::FitWidth);
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "image_layout_fitwidth");
 
         // None.
-        harness.edit_root_widget(|mut image| {
-            image.insert_prop(ObjectFit::None);
-        });
+        harness
+            .edit_root_widget(|mut image| {
+                image.insert_prop(ObjectFit::None);
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "image_layout_none");
 
         // ScaleDown.
-        harness.edit_root_widget(|mut image| {
-            image.insert_prop(ObjectFit::ScaleDown);
-        });
+        harness
+            .edit_root_widget(|mut image| {
+                image.insert_prop(ObjectFit::ScaleDown);
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "image_layout_scaledown");
 
         // Stretch.
-        harness.edit_root_widget(|mut image| {
-            image.insert_prop(ObjectFit::Stretch);
-        });
+        harness
+            .edit_root_widget(|mut image| {
+                image.insert_prop(ObjectFit::Stretch);
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "image_layout_stretch");
     }
 }

@@ -95,7 +95,7 @@ fn transforms_handle_content_box_space_translation() {
         .with_props(Dimensions::fixed(40.px(), 40.px()));
 
     let harness = TestHarness::create(test_property_set(), root);
-    let child = harness.get_widget(tag);
+    let child = harness.get_widget(tag).unwrap();
     let ctx = child.ctx();
 
     // Border 0.5 + padding (1.0,2.0) gives top-left content inset (1.5,2.5).

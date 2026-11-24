@@ -19,27 +19,29 @@ fn request_accessibility() {
     let grandparent = NewWidget::new(ModularWidget::new_parent(parent));
 
     let mut harness = TestHarness::create(test_property_set(), grandparent);
-    harness.flush_records_of(target_tag);
-    harness.flush_records_of(parent_tag);
+    harness.flush_records_of(target_tag).unwrap();
+    harness.flush_records_of(parent_tag).unwrap();
 
-    harness.edit_widget(target_tag, |mut widget| {
-        widget.ctx.request_accessibility_update();
-    });
-    let _ = harness.render();
+    harness
+        .edit_widget(target_tag, |mut widget| {
+            widget.ctx.request_accessibility_update();
+        })
+        .unwrap();
+    let _ = harness.render().unwrap();
 
     // Check that `Widget::accessibility()` is called for the child (which did request it)
     // but not the parent (which did not).
-    let records = harness.take_records_of(target_tag);
+    let records = harness.take_records_of(target_tag).unwrap();
     assert_any(records, |r| matches!(r, Record::Accessibility));
 
-    let records = harness.take_records_of(parent_tag);
+    let records = harness.take_records_of(parent_tag).unwrap();
     assert_none(records, |r| matches!(r, Record::Accessibility));
 
     // Check that `Widget::accessibility()` is not called: neither node has requested
     // an accessibility update.
-    let _ = harness.render();
-    assert_matches!(harness.take_records_of(target_tag)[..], []);
-    assert_matches!(harness.take_records_of(parent_tag)[..], []);
+    let _ = harness.render().unwrap();
+    assert_matches!(harness.take_records_of(target_tag).unwrap()[..], []);
+    assert_matches!(harness.take_records_of(parent_tag).unwrap()[..], []);
 }
 
 #[test]
@@ -57,9 +59,9 @@ fn access_node_children() {
     let grandparent = NewWidget::new(ModularWidget::new_parent(parent));
 
     let mut harness = TestHarness::create(test_property_set(), grandparent);
-    let _ = harness.render();
+    let _ = harness.render().unwrap();
 
-    let parent_ref = harness.get_widget(parent_tag);
+    let parent_ref = harness.get_widget(parent_tag).unwrap();
     let parent_node_id = parent_ref.id();
     let [id_1, id_2, id_3] = parent_ref.inner().children_ids()[..] else {
         unreachable!()
@@ -72,11 +74,13 @@ fn access_node_children() {
     );
 
     // We stash a child
-    harness.edit_widget(parent_tag, |mut parent| {
-        parent.ctx.set_stashed(&parent.widget.state[1], true);
-        parent.ctx.request_accessibility_update();
-    });
-    let _ = harness.render();
+    harness
+        .edit_widget(parent_tag, |mut parent| {
+            parent.ctx.set_stashed(&parent.widget.state[1], true);
+            parent.ctx.request_accessibility_update();
+        })
+        .unwrap();
+    let _ = harness.render().unwrap();
 
     // Stash child is not included
     let parent_node = harness.access_node(parent_node_id).unwrap();

@@ -345,20 +345,22 @@ mod tests {
         assert!(harness.pop_action_erased().is_none());
 
         // Click on switch (off -> wants to be on)
-        harness.mouse_click_on(switch_id, None);
+        harness.mouse_click_on(switch_id, None).unwrap();
         assert_eq!(harness.focused_widget().map(|w| w.id()), Some(switch_id));
         assert_eq!(
-            harness.pop_action::<SwitchToggled>(),
+            harness.pop_action::<SwitchToggled>().unwrap(),
             Some((SwitchToggled(true), switch_id))
         );
 
         // Update state to on
-        harness.edit_root_widget(|mut switch| Switch::set_on(&mut switch, true));
+        harness
+            .edit_root_widget(|mut switch| Switch::set_on(&mut switch, true))
+            .unwrap();
 
         // Click again (on -> wants to be off)
-        harness.mouse_click_on(switch_id, None);
+        harness.mouse_click_on(switch_id, None).unwrap();
         assert_eq!(
-            harness.pop_action::<SwitchToggled>(),
+            harness.pop_action::<SwitchToggled>().unwrap(),
             Some((SwitchToggled(false), switch_id))
         );
     }
@@ -375,21 +377,23 @@ mod tests {
         assert_eq!(harness.focused_widget().map(|w| w.id()), Some(switch_id));
 
         // Space key should switch (off -> wants on)
-        harness.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
-        harness.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        harness.process_text_event(&TextEvent::key_down(Key::Character(" ".into())));
+        harness.process_text_event(&TextEvent::key_up(Key::Character(" ".into())));
         assert_eq!(
-            harness.pop_action::<SwitchToggled>(),
+            harness.pop_action::<SwitchToggled>().unwrap(),
             Some((SwitchToggled(true), switch_id))
         );
 
         // Update state
-        harness.edit_root_widget(|mut switch| Switch::set_on(&mut switch, true));
+        harness
+            .edit_root_widget(|mut switch| Switch::set_on(&mut switch, true))
+            .unwrap();
 
         // Space again (on -> wants off)
-        harness.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
-        harness.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        harness.process_text_event(&TextEvent::key_down(Key::Character(" ".into())));
+        harness.process_text_event(&TextEvent::key_up(Key::Character(" ".into())));
         assert_eq!(
-            harness.pop_action::<SwitchToggled>(),
+            harness.pop_action::<SwitchToggled>().unwrap(),
             Some((SwitchToggled(false), switch_id))
         );
     }
@@ -415,6 +419,7 @@ mod tests {
 
         let size = harness
             .get_widget_with_id(switch_id)
+            .unwrap()
             .ctx()
             .border_box()
             .size();
@@ -444,17 +449,19 @@ mod tests {
         assert!(harness.pop_action_erased().is_none());
 
         // Hover without clicking to show hovered state (no focus)
-        harness.mouse_move_to(switch_id);
+        harness.mouse_move_to(switch_id).unwrap();
         assert_render_snapshot!(harness, "switch_off_hovered");
 
         // Now click to switch
-        harness.mouse_click_on(switch_id, None);
+        harness.mouse_click_on(switch_id, None).unwrap();
         assert_eq!(
-            harness.pop_action::<SwitchToggled>(),
+            harness.pop_action::<SwitchToggled>().unwrap(),
             Some((SwitchToggled(true), switch_id))
         );
 
-        harness.edit_root_widget(|mut switch| Switch::set_on(&mut switch, true));
+        harness
+            .edit_root_widget(|mut switch| Switch::set_on(&mut switch, true))
+            .unwrap();
 
         // After clicking, the switch is both focused and hovered
         assert_render_snapshot!(harness, "switch_on_focused_hovered");
