@@ -13,7 +13,7 @@ use crate::core::{
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Size, Vec2};
 use crate::layers::SelectorMenu;
-use crate::layout::{AsUnit, LayoutSize, LenReq, Length, SizeDef};
+use crate::layout::{AsUnit, LayoutSize, LenReq, Length, UnitPoint};
 use crate::theme;
 use crate::util::debug_panic;
 use crate::widgets::{Label, SelectorItem};
@@ -261,13 +261,7 @@ impl Widget for Selector {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let child_size = ctx.compute_size(&mut self.child, SizeDef::fit(size), size.into());
-        ctx.run_layout(&mut self.child, child_size);
-
-        let child_origin = ((size - child_size).to_vec2() * 0.5).to_point();
-        ctx.place_child(&mut self.child, child_origin);
-
-        ctx.derive_baselines(&self.child);
+        ctx.layout_child(&mut self.child, size, UnitPoint::CENTER);
     }
 
     fn paint(

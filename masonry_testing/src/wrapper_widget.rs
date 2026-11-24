@@ -8,12 +8,9 @@
 
 use masonry_core::accesskit::{Node, Role};
 use masonry_core::core::{
-    AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesRef,
-    RegisterCtx, Widget, WidgetMut, WidgetPod,
+    AccessCtx, NewWidget, NoAction, PropertiesRef, Widget, WidgetMut, WidgetPod,
 };
-use masonry_core::imaging::Painter;
-use masonry_core::kurbo::{Axis, Point, Size};
-use masonry_core::layout::{LenReq, Length, SizeDef};
+use masonry_core::layout::UnitPoint;
 
 /// A basic wrapper widget that can replace its child.
 pub struct WrapperWidget {
@@ -53,38 +50,7 @@ impl WrapperWidget {
 impl Widget for WrapperWidget {
     type Action = NoAction;
 
-    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.child);
-    }
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        axis: Axis,
-        len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        ctx.measure_child(&mut self.child, axis, len_req, cross_length)
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let child_size = ctx.compute_size(&mut self.child, SizeDef::fit(size), size.into());
-        ctx.run_layout(&mut self.child, child_size);
-
-        let child_origin = Point::ORIGIN;
-        ctx.place_child(&mut self.child, child_origin);
-
-        ctx.derive_baselines(&self.child);
-    }
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-    }
+    masonry_core::single_child_container!(child, UnitPoint::TOP_LEFT);
 
     fn accessibility_role(&self) -> Role {
         Role::GenericContainer
@@ -96,9 +62,5 @@ impl Widget for WrapperWidget {
         _props: &PropertiesRef<'_>,
         _node: &mut Node,
     ) {
-    }
-
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.child.id()])
     }
 }

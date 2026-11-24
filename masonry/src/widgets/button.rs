@@ -18,7 +18,7 @@ use crate::core::{
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Size};
-use crate::layout::{LenReq, Length, SizeDef};
+use crate::layout::{LenReq, Length, UnitPoint};
 use crate::theme;
 use crate::widgets::Label;
 
@@ -194,13 +194,7 @@ impl Widget for Button {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let child_size = ctx.compute_size(&mut self.child, SizeDef::fit(size), size.into());
-        ctx.run_layout(&mut self.child, child_size);
-
-        let child_origin = ((size - child_size).to_vec2() * 0.5).to_point();
-        ctx.place_child(&mut self.child, child_origin);
-
-        ctx.derive_baselines(&self.child);
+        ctx.layout_child(&mut self.child, size, UnitPoint::CENTER);
     }
 
     fn paint(

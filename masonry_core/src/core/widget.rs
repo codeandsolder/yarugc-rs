@@ -20,6 +20,54 @@ use crate::core::{
 use crate::imaging::Painter;
 use crate::layout::{LenReq, Length};
 
+/// Implements the standard widget methods for a container with one child.
+///
+/// The child uses the parent's content box as its measurement context and is
+/// laid out at its preferred size with the supplied alignment. The container
+/// forwards baselines and has no content painting of its own; the standard
+/// pre-paint pass still draws its background and border.
+/// The widget implements its own accessibility role, attributes, and events.
+#[macro_export]
+macro_rules! single_child_container {
+    ($child:ident, $alignment:expr) => {
+        fn register_children(&mut self, ctx: &mut $crate::core::RegisterCtx<'_>) {
+            ctx.register_child(&mut self.$child);
+        }
+
+        fn measure(
+            &mut self,
+            ctx: &mut $crate::core::MeasureCtx<'_>,
+            _props: &$crate::core::PropertiesRef<'_>,
+            axis: $crate::kurbo::Axis,
+            len_req: $crate::layout::LenReq,
+            cross_length: Option<$crate::layout::Length>,
+        ) -> $crate::layout::Length {
+            ctx.measure_child(&mut self.$child, axis, len_req, cross_length)
+        }
+
+        fn layout(
+            &mut self,
+            ctx: &mut $crate::core::LayoutCtx<'_>,
+            _props: &$crate::core::PropertiesRef<'_>,
+            size: $crate::kurbo::Size,
+        ) {
+            ctx.layout_child(&mut self.$child, size, $alignment);
+        }
+
+        fn paint(
+            &mut self,
+            _ctx: &mut $crate::core::PaintCtx<'_>,
+            _props: &$crate::core::PropertiesRef<'_>,
+            _painter: &mut $crate::imaging::Painter<'_>,
+        ) {
+        }
+
+        fn children_ids(&self) -> $crate::core::ChildrenIds {
+            $crate::core::ChildrenIds::from_slice(&[self.$child.id()])
+        }
+    };
+}
+
 /// A unique identifier for a single [`Widget`].
 ///
 /// `WidgetId`s are generated automatically for all widgets in the widget tree.

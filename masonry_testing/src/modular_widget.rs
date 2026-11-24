@@ -17,7 +17,7 @@ use masonry_core::core::{
 };
 use masonry_core::imaging::Painter;
 use masonry_core::kurbo::{Axis, Point, Size};
-use masonry_core::layout::{LayoutSize, LenReq, Length, SizeDef};
+use masonry_core::layout::{LayoutSize, LenReq, Length, SizeDef, UnitPoint};
 use tracing::trace_span;
 
 pub(crate) type PointerEventFn<S> =
@@ -125,10 +125,7 @@ impl<W: Widget + ?Sized> ModularWidget<WidgetPod<W>> {
                 ctx.measure_child(child, axis, len_req, cross_length)
             })
             .layout_fn(move |child, ctx, _props, size| {
-                let child_size = ctx.compute_size(child, SizeDef::fit(size), size.into());
-                ctx.run_layout(child, child_size);
-                ctx.place_child(child, Point::ZERO);
-                ctx.derive_baselines(child);
+                ctx.layout_child(child, size, UnitPoint::TOP_LEFT);
             })
             .children_fn(|child| ChildrenIds::from_slice(&[child.id()]))
     }

@@ -26,7 +26,7 @@ use crate::core::{
     WidgetState,
 };
 use crate::kurbo::{Affine, Axis, Insets, Point, Rect, Size, Vec2};
-use crate::layout::{LayoutSize, LenDef, Length, SizeDef};
+use crate::layout::{LayoutSize, LenDef, LenReq, Length, SizeDef, UnitPoint};
 use crate::passes::layout::{place_widget, resolve_length, resolve_size, run_layout_on};
 use crate::peniko::Color;
 use crate::util::{ParentLinkedList, get_debug_color};
@@ -659,7 +659,7 @@ impl MeasureCtx<'_> {
         &mut self,
         child: &mut WidgetPod<impl Widget + ?Sized>,
         axis: Axis,
-        len_req: crate::layout::LenReq,
+        len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
         self.compute_length(
@@ -808,6 +808,24 @@ impl LayoutCtx<'_> {
                 child.id(),
             );
         }
+    }
+
+    /// Lays out one child at its preferred size within the given content box.
+    ///
+    /// Aligns the child in the remaining space and forwards its baselines to
+    /// the parent. For oversized children, alignment also controls overflow.
+    pub fn layout_child(
+        &mut self,
+        child: &mut WidgetPod<impl Widget + ?Sized>,
+        size: Size,
+        alignment: UnitPoint,
+    ) {
+        let child_size = self.compute_size(child, SizeDef::fit(size), size.into());
+        self.run_layout(child, child_size);
+        let remaining = size - child_size;
+        let origin = alignment.resolve(Rect::new(0.0, 0.0, remaining.width, remaining.height));
+        self.place_child(child, origin);
+        self.derive_baselines(child);
     }
 
     /// Computes the `child`'s preferred border-box size.

@@ -5,13 +5,10 @@ use accesskit::{Node, Role};
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, ChildrenIds, EventCtx, Layer, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
-    PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, Widget, WidgetId, WidgetMut,
-    WidgetPod,
+    AccessCtx, EventCtx, Layer, NewWidget, NoAction, PointerEvent, PropertiesMut, PropertiesRef,
+    Widget, WidgetId, WidgetMut, WidgetPod,
 };
-use crate::imaging::Painter;
-use crate::kurbo::{Axis, Size};
-use crate::layout::{LenReq, Length, SizeDef};
+use crate::layout::UnitPoint;
 
 /// A [`Layer`] representing a simple tooltip showing some content until the mouse moves.
 pub struct Tooltip {
@@ -48,38 +45,7 @@ impl Tooltip {
 impl Widget for Tooltip {
     type Action = NoAction;
 
-    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.child);
-    }
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        axis: Axis,
-        len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        ctx.measure_child(&mut self.child, axis, len_req, cross_length)
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let child_size = ctx.compute_size(&mut self.child, SizeDef::fit(size), size.into());
-        ctx.run_layout(&mut self.child, child_size);
-
-        let child_origin = ((size - child_size).to_vec2() * 0.5).to_point();
-        ctx.place_child(&mut self.child, child_origin);
-
-        ctx.derive_baselines(&self.child);
-    }
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-    }
+    masonry_core::single_child_container!(child, UnitPoint::CENTER);
 
     fn accessibility_role(&self) -> Role {
         Role::Tooltip
@@ -91,10 +57,6 @@ impl Widget for Tooltip {
         _props: &PropertiesRef<'_>,
         _node: &mut Node,
     ) {
-    }
-
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.child.id()])
     }
 
     fn as_layer(&mut self) -> Option<&mut dyn Layer> {
