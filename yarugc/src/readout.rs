@@ -474,8 +474,11 @@ struct RasterAtlas {
 // The font rasterizer supplies integral pixel bounds and [0, 1] coverage.
 #[expect(
     clippy::cast_possible_truncation,
+    reason = "Validated integral glyph bounds and normalized coverage"
+)]
+#[expect(
     clippy::cast_sign_loss,
-    reason = "validated integral glyph bounds and normalized coverage"
+    reason = "Validated glyph bounds and coverage are nonnegative"
 )]
 fn rasterize(
     font: &[u8],

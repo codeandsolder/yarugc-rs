@@ -8,17 +8,13 @@ use accesskit::{Node, Role};
 use include_doc_path::include_doc_path;
 use tracing::{Span, trace, trace_span};
 
-use crate::core::MeasureCtx;
 use crate::core::keyboard::{Key, NamedKey};
 use crate::core::pointer::PointerButton;
 use crate::core::{
-    AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, NewWidget, PaintCtx,
-    PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update,
-    UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, AccessEvent, EventCtx, NewWidget, PointerButtonEvent, PointerEvent, PropertiesMut,
+    PropertiesRef, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
-use crate::imaging::Painter;
-use crate::kurbo::{Axis, Size};
-use crate::layout::{LenReq, Length, UnitPoint};
+use crate::layout::{Length, UnitPoint};
 use crate::theme;
 use crate::widgets::Label;
 
@@ -100,6 +96,13 @@ pub struct ButtonPress {
 impl Widget for Button {
     type Action = ButtonPress;
 
+    // The standard control minimum keeps adjacent widgets aligned.
+    masonry_core::single_child_container!(
+        child,
+        UnitPoint::CENTER,
+        min = (Length::ZERO, theme::BASIC_WIDGET_HEIGHT)
+    );
+
     fn on_pointer_event(
         &mut self,
         ctx: &mut EventCtx<'_>,
@@ -166,44 +169,7 @@ impl Widget for Button {
     ) {
     }
 
-    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.child);
-    }
-
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: TypeId) {}
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        axis: Axis,
-        len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        let child_length = ctx.measure_child(&mut self.child, axis, len_req, cross_length);
-
-        let length = child_length;
-
-        // TODO - Add MinimumSize property.
-        // HACK: to make sure we look okay at default sizes when beside a text input,
-        // we make sure we will have at least the same height as the default text input.
-        match axis {
-            Axis::Horizontal => length,
-            Axis::Vertical => length.max(theme::BASIC_WIDGET_HEIGHT),
-        }
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        ctx.layout_child(&mut self.child, size, UnitPoint::CENTER);
-    }
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-    }
 
     fn accessibility_role(&self) -> Role {
         Role::Button
@@ -218,10 +184,6 @@ impl Widget for Button {
         node.add_action(accesskit::Action::Click);
     }
 
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.child.id()])
-    }
-
     fn propagates_pointer_interaction(&self) -> bool {
         false
     }
@@ -229,11 +191,6 @@ impl Widget for Button {
     fn accepts_focus(&self) -> bool {
         // Buttons can be tab-focused...
         true
-    }
-
-    fn accepts_text_input(&self) -> bool {
-        // But they still aren't text areas.
-        false
     }
 
     fn make_trace_span(&self, id: WidgetId) -> Span {

@@ -27,9 +27,10 @@ use crate::layout::{LenReq, Length};
 /// forwards baselines and has no content painting of its own; the standard
 /// pre-paint pass still draws its background and border.
 /// The widget implements its own accessibility role, attributes, and events.
+/// Optionally, specify minimum horizontal and vertical lengths.
 #[macro_export]
 macro_rules! single_child_container {
-    ($child:ident, $alignment:expr) => {
+    ($child:ident, $alignment:expr $(, min = ($width:expr, $height:expr))?) => {
         fn register_children(&mut self, ctx: &mut $crate::core::RegisterCtx<'_>) {
             ctx.register_child(&mut self.$child);
         }
@@ -42,7 +43,12 @@ macro_rules! single_child_container {
             len_req: $crate::layout::LenReq,
             cross_length: Option<$crate::layout::Length>,
         ) -> $crate::layout::Length {
-            ctx.measure_child(&mut self.$child, axis, len_req, cross_length)
+            let length = ctx.measure_child(&mut self.$child, axis, len_req, cross_length);
+            $(let length = length.max(match axis {
+                $crate::kurbo::Axis::Horizontal => $width,
+                $crate::kurbo::Axis::Vertical => $height,
+            });)?
+            length
         }
 
         fn layout(

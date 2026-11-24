@@ -6,14 +6,13 @@ use tracing::{Span, trace_span};
 
 use crate::core::keyboard::{Key, NamedKey};
 use crate::core::{
-    AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayerType, LayoutCtx, MeasureCtx, NewWidget,
-    PaintCtx, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx,
-    TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, AccessEvent, EventCtx, LayerType, NewWidget, PointerButtonEvent, PointerEvent,
+    PropertiesMut, PropertiesRef, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
+    WidgetPod,
 };
-use crate::imaging::Painter;
-use crate::kurbo::{Axis, Size, Vec2};
+use crate::kurbo::Vec2;
 use crate::layers::SelectorMenu;
-use crate::layout::{AsUnit, LayoutSize, LenReq, Length, UnitPoint};
+use crate::layout::{AsUnit, UnitPoint};
 use crate::theme;
 use crate::util::debug_panic;
 use crate::widgets::{Label, SelectorItem};
@@ -152,6 +151,16 @@ impl Selector {
 impl Widget for Selector {
     type Action = SelectionChanged;
 
+    // The standard control minimum keeps adjacent widgets aligned.
+    masonry_core::single_child_container!(
+        child,
+        UnitPoint::CENTER,
+        min = (
+            theme::SELECTOR_MIN_WIDTH.px(),
+            theme::BORDERED_WIDGET_HEIGHT.px()
+        )
+    );
+
     fn on_pointer_event(
         &mut self,
         ctx: &mut EventCtx<'_>,
@@ -225,53 +234,6 @@ impl Widget for Selector {
         }
     }
 
-    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.child);
-    }
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        axis: Axis,
-        len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        let auto_length = len_req.into();
-        let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-
-        let child_length = ctx.compute_length(
-            &mut self.child,
-            auto_length,
-            context_size,
-            axis,
-            cross_length,
-        );
-
-        let length = child_length;
-
-        // TODO - Add MinimumSize property.
-        // HACK: to make sure we look okay at default sizes when beside a text input,
-        // we make sure we will have at least the same height as the default text input.
-        // We also set a minimum width.
-        match axis {
-            Axis::Horizontal => length.max(theme::SELECTOR_MIN_WIDTH.px()),
-            Axis::Vertical => length.max(theme::BORDERED_WIDGET_HEIGHT.px()),
-        }
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        ctx.layout_child(&mut self.child, size, UnitPoint::CENTER);
-    }
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-    }
-
     fn accessibility_role(&self) -> Role {
         Role::ComboBox
     }
@@ -286,18 +248,9 @@ impl Widget for Selector {
         // TODO - Add accesskit::Action::SetValue
     }
 
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.child.id()])
-    }
-
     fn accepts_focus(&self) -> bool {
         // Selectors can be tab-focused...
         true
-    }
-
-    fn accepts_text_input(&self) -> bool {
-        // But they still aren't text areas.
-        false
     }
 
     fn make_trace_span(&self, id: WidgetId) -> Span {
