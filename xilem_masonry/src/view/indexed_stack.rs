@@ -149,7 +149,10 @@ where
         // set the active child after updating the sequence to
         // ensure the index remains consistent with the children list
         if self.active_child != element.widget.active_child() {
-            widgets::IndexedStack::set_active_child(&mut element, self.active_child);
+            super::collection_succeeded(widgets::IndexedStack::set_active_child(
+                &mut element,
+                self.active_child,
+            ));
         }
     }
 
@@ -202,24 +205,7 @@ impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for Index
 
 // Used for building and rebuilding the ViewSequence
 impl ElementSplice<IndexedStackElement> for IndexedStackSplice<'_, '_> {
-    fn with_scratch<R>(&mut self, f: impl FnOnce(&mut AppendVec<IndexedStackElement>) -> R) -> R {
-        let ret = f(self.scratch);
-        for element in self.scratch.drain() {
-            widgets::IndexedStack::insert(
-                &mut self.element,
-                self.idx,
-                element.child.new_widget,
-                (),
-            );
-            self.idx += 1;
-        }
-        ret
-    }
-
-    fn insert(&mut self, element: IndexedStackElement) {
-        widgets::IndexedStack::insert(&mut self.element, self.idx, element.child.new_widget, ());
-        self.idx += 1;
-    }
+    collection_splice_insert!(IndexedStack, IndexedStackElement, child, element => ());
 
     fn mutate<R>(&mut self, f: impl FnOnce(Mut<'_, IndexedStackElement>) -> R) -> R {
         let child = IndexedStackElementMut {
@@ -247,7 +233,7 @@ impl ElementSplice<IndexedStackElement> for IndexedStackSplice<'_, '_> {
             };
             f(child)
         };
-        widgets::IndexedStack::remove(&mut self.element, self.idx);
+        super::collection_succeeded(widgets::IndexedStack::remove(&mut self.element, self.idx));
         ret
     }
 }

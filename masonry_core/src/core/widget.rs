@@ -752,6 +752,36 @@ impl PartialEq<WidgetId> for accesskit::NodeId {
     }
 }
 
+/// A collection mutation rejected before changing the widget tree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CollectionError {
+    /// The index does not identify a valid slot.
+    OutOfBounds {
+        /// The requested index.
+        index: usize,
+        /// The current number of slots.
+        len: usize,
+    },
+    /// The slot is a spacer rather than a widget.
+    Spacer {
+        /// The requested index.
+        index: usize,
+    },
+}
+
+impl Display for CollectionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::OutOfBounds { index, len } => {
+                write!(f, "collection index {index} out of bounds for {len} slots")
+            }
+            Self::Spacer { index } => write!(f, "collection slot {index} is a spacer"),
+        }
+    }
+}
+
+impl std::error::Error for CollectionError {}
+
 /// Trait implemented by collection widgets.
 ///
 /// It provides a standard set of functions to manage children.
@@ -778,48 +808,52 @@ pub trait CollectionWidget<Params>: Widget {
 
     /// Inserts a child widget at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is larger than the number of children.
+    /// Returns an error if `idx` is larger than the number of children.
     fn insert(
         this: &mut WidgetMut<'_, Self>,
         idx: usize,
         child: NewWidget<impl Widget + ?Sized>,
         params: impl Into<Params>,
-    );
+    ) -> Result<(), CollectionError>;
 
     /// Replaces the child widget at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
+    /// Returns an error if `idx` is out of bounds.
     fn set(
         this: &mut WidgetMut<'_, Self>,
         idx: usize,
         child: NewWidget<impl Widget + ?Sized>,
         params: impl Into<Params>,
-    );
+    ) -> Result<(), CollectionError>;
 
     /// Sets the child params at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
-    fn set_params(this: &mut WidgetMut<'_, Self>, idx: usize, params: impl Into<Params>);
+    /// Returns an error if `idx` is out of bounds or contains a spacer.
+    fn set_params(
+        this: &mut WidgetMut<'_, Self>,
+        idx: usize,
+        params: impl Into<Params>,
+    ) -> Result<(), CollectionError>;
 
     /// Swaps the index of two children.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `a` or `b` are out of bounds.
-    fn swap(this: &mut WidgetMut<'_, Self>, a: usize, b: usize);
+    /// Returns an error if `a` or `b` are out of bounds.
+    fn swap(this: &mut WidgetMut<'_, Self>, a: usize, b: usize) -> Result<(), CollectionError>;
 
     /// Removes the child at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
-    fn remove(this: &mut WidgetMut<'_, Self>, idx: usize);
+    /// Returns an error if `idx` is out of bounds.
+    fn remove(this: &mut WidgetMut<'_, Self>, idx: usize) -> Result<(), CollectionError>;
 
     /// Removes all children.
     fn clear(this: &mut WidgetMut<'_, Self>);

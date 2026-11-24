@@ -734,58 +734,74 @@ impl CollectionWidget<GridParams> for Grid {
 
     /// Inserts a child widget at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is larger than the number of children.
+    /// Returns an error if `idx` is larger than the number of children.
     fn insert(
         this: &mut WidgetMut<'_, Self>,
         idx: usize,
         child: NewWidget<impl Widget + ?Sized>,
         params: impl Into<GridParams>,
-    ) {
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_insert_slot(idx, this.widget.children.len())?;
         let child = Child::new(child, params.into());
         this.widget.children.insert(idx, child);
         this.widget.needs_placing = true;
         this.ctx.children_changed();
+        Ok(())
     }
 
     /// Replaces the child widget at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
+    /// Returns an error if `idx` is out of bounds.
     fn set(
         this: &mut WidgetMut<'_, Self>,
         idx: usize,
         child: NewWidget<impl Widget + ?Sized>,
         params: impl Into<GridParams>,
-    ) {
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(idx, this.widget.children.len())?;
         let child = Child::new(child, params.into());
         let old_child = mem::replace(&mut this.widget.children[idx], child);
         this.widget.needs_placing = true;
         this.ctx.remove_child(old_child.widget);
+        Ok(())
     }
 
     /// Sets the child params at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
-    fn set_params(this: &mut WidgetMut<'_, Self>, idx: usize, params: impl Into<GridParams>) {
+    /// Returns an error if `idx` is out of bounds.
+    fn set_params(
+        this: &mut WidgetMut<'_, Self>,
+        idx: usize,
+        params: impl Into<GridParams>,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(idx, this.widget.children.len())?;
         let child = &mut this.widget.children[idx];
         child.params = params.into();
         this.widget.needs_placing = true;
         this.ctx.request_layout();
+        Ok(())
     }
 
     /// Swaps the index of two children.
     ///
     /// This also swaps the [`GridParams`] `x` and `y` with the other child.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `a` or `b` are out of bounds.
-    fn swap(this: &mut WidgetMut<'_, Self>, a: usize, b: usize) {
+    /// Returns an error if `a` or `b` are out of bounds.
+    fn swap(
+        this: &mut WidgetMut<'_, Self>,
+        a: usize,
+        b: usize,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(a, this.widget.children.len())?;
+        crate::check_slot(b, this.widget.children.len())?;
         let (a_x, a_y) = (this.widget.children[a].x, this.widget.children[a].y);
         let (b_x, b_y) = (this.widget.children[b].x, this.widget.children[b].y);
 
@@ -796,17 +812,23 @@ impl CollectionWidget<GridParams> for Grid {
 
         this.widget.needs_placing = true;
         this.ctx.children_changed();
+        Ok(())
     }
 
     /// Removes the child at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
-    fn remove(this: &mut WidgetMut<'_, Self>, idx: usize) {
+    /// Returns an error if `idx` is out of bounds.
+    fn remove(
+        this: &mut WidgetMut<'_, Self>,
+        idx: usize,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(idx, this.widget.children.len())?;
         let child = this.widget.children.remove(idx);
         this.ctx.remove_child(child.widget);
         this.widget.needs_placing = true;
+        Ok(())
     }
 
     /// Removes all children.
@@ -1079,7 +1101,7 @@ mod tests {
 
         // Now remove the widget
         harness.edit_root_widget(|mut grid| {
-            Grid::remove(&mut grid, 0);
+            Grid::remove(&mut grid, 0).unwrap();
         });
         assert_render_snapshot!(harness, "grid_2x2_with_removed_widget");
 
@@ -1095,7 +1117,7 @@ mod tests {
 
         // Test replacement
         harness.edit_root_widget(|mut grid| {
-            Grid::remove(&mut grid, 0);
+            Grid::remove(&mut grid, 0).unwrap();
             Grid::add(
                 &mut grid,
                 Button::with_text("X").prepare(),
@@ -1108,19 +1130,20 @@ mod tests {
                 0,
                 Button::with_text("A").prepare(),
                 GridParams::pos(0, 0),
-            );
+            )
+            .unwrap();
         });
         assert_render_snapshot!(harness, "grid_initial_2x2"); // Should be back to the original state
 
         // Change the grid params to position it on the other corner
         harness.edit_root_widget(|mut grid| {
-            Grid::set_params(&mut grid, 0, GridParams::pos(1, 1));
+            Grid::set_params(&mut grid, 0, GridParams::pos(1, 1)).unwrap();
         });
         assert_render_snapshot!(harness, "grid_moved_2x2_1");
 
         // Now make it take up the entire grid
         harness.edit_root_widget(|mut grid| {
-            Grid::set_params(&mut grid, 0, GridParams::pos(0, 0).with_span(2, 2));
+            Grid::set_params(&mut grid, 0, GridParams::pos(0, 0).with_span(2, 2)).unwrap();
         });
         assert_render_snapshot!(harness, "grid_moved_2x2_2");
     }
@@ -1152,7 +1175,8 @@ mod tests {
                 0,
                 Button::with_text("C").prepare(),
                 GridParams::pos(0, 0).with_span(2, 1),
-            );
+            )
+            .unwrap();
         });
         assert_render_snapshot!(harness, "grid_2x2_with_overlapping_c");
     }

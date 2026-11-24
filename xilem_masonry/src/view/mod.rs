@@ -30,6 +30,18 @@ macro_rules! impl_indexed_element {
     };
 }
 
+// A malformed splice cannot propagate a Result through ElementSplice's trait.
+// Report the rejected operation and do not advance its insertion cursor.
+fn collection_succeeded(result: Result<(), masonry::core::CollectionError>) -> bool {
+    match result {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::error!(%error, "Widget collection mutation rejected");
+            false
+        }
+    }
+}
+
 // Indexed views use the same checked element lifecycle regardless of their layout.
 macro_rules! indexed_item_lifecycle {
     ($widget:ident, $params:ident) => {
@@ -42,7 +54,13 @@ macro_rules! indexed_item_lifecycle {
             app_state: &mut State,
         ) {
             if self.$params != prev.$params {
-                widgets::$widget::set_params(&mut element.parent, element.idx, self.$params);
+                if !super::collection_succeeded(widgets::$widget::set_params(
+                    &mut element.parent,
+                    element.idx,
+                    self.$params,
+                )) {
+                    return;
+                }
             }
             if let Some(child) = widgets::$widget::get_mut(&mut element.parent, element.idx) {
                 self.view
@@ -136,6 +154,36 @@ macro_rules! action_child_teardown {
                 }
             });
             ctx.teardown_action_source(element);
+        }
+    };
+}
+
+macro_rules! collection_splice_insert {
+    ($widget:ident, $element:ident, $child:ident, $item:ident => $params:expr) => {
+        fn with_scratch<R>(&mut self, f: impl FnOnce(&mut AppendVec<$element>) -> R) -> R {
+            let ret = f(self.scratch);
+            for $item in self.scratch.drain() {
+                if super::collection_succeeded(widgets::$widget::insert(
+                    &mut self.element,
+                    self.idx,
+                    $item.$child.new_widget,
+                    $params,
+                )) {
+                    self.idx += 1;
+                }
+            }
+            ret
+        }
+
+        fn insert(&mut self, $item: $element) {
+            if super::collection_succeeded(widgets::$widget::insert(
+                &mut self.element,
+                self.idx,
+                $item.$child.new_widget,
+                $params,
+            )) {
+                self.idx += 1;
+            }
         }
     };
 }

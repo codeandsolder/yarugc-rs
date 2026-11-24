@@ -288,29 +288,7 @@ impl<'w, 's> ZStackSplice<'w, 's> {
 }
 
 impl ElementSplice<ZStackElement> for ZStackSplice<'_, '_> {
-    fn with_scratch<R>(&mut self, f: impl FnOnce(&mut AppendVec<ZStackElement>) -> R) -> R {
-        let ret = f(self.scratch);
-        for element in self.scratch.drain() {
-            widgets::ZStack::insert(
-                &mut self.element,
-                self.idx,
-                element.widget.new_widget,
-                element.alignment,
-            );
-            self.idx += 1;
-        }
-        ret
-    }
-
-    fn insert(&mut self, element: ZStackElement) {
-        widgets::ZStack::insert(
-            &mut self.element,
-            self.idx,
-            element.widget.new_widget,
-            element.alignment,
-        );
-        self.idx += 1;
-    }
+    collection_splice_insert!(ZStack, ZStackElement, widget, element => element.alignment);
 
     fn mutate<R>(&mut self, f: impl FnOnce(Mut<'_, ZStackElement>) -> R) -> R {
         let child = ZStackElementMut {
@@ -338,7 +316,7 @@ impl ElementSplice<ZStackElement> for ZStackSplice<'_, '_> {
             };
             f(child)
         };
-        widgets::ZStack::remove(&mut self.element, self.idx);
+        super::collection_succeeded(widgets::ZStack::remove(&mut self.element, self.idx));
         ret
     }
 }

@@ -303,29 +303,7 @@ impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for GridE
 
 // Used for building and rebuilding the ViewSequence
 impl ElementSplice<GridElement> for GridSplice<'_, '_> {
-    fn with_scratch<R>(&mut self, f: impl FnOnce(&mut AppendVec<GridElement>) -> R) -> R {
-        let ret = f(self.scratch);
-        for element in self.scratch.drain() {
-            widgets::Grid::insert(
-                &mut self.element,
-                self.idx,
-                element.child.new_widget,
-                element.params,
-            );
-            self.idx += 1;
-        }
-        ret
-    }
-
-    fn insert(&mut self, element: GridElement) {
-        widgets::Grid::insert(
-            &mut self.element,
-            self.idx,
-            element.child.new_widget,
-            element.params,
-        );
-        self.idx += 1;
-    }
+    collection_splice_insert!(Grid, GridElement, child, element => element.params);
 
     fn mutate<R>(&mut self, f: impl FnOnce(Mut<'_, GridElement>) -> R) -> R {
         let child = GridElementMut {
@@ -353,7 +331,7 @@ impl ElementSplice<GridElement> for GridSplice<'_, '_> {
             };
             f(child)
         };
-        widgets::Grid::remove(&mut self.element, self.idx);
+        super::collection_succeeded(widgets::Grid::remove(&mut self.element, self.idx));
         ret
     }
 }

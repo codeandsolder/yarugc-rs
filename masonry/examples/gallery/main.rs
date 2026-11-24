@@ -99,7 +99,9 @@ impl Driver {
                 Label::set_text(&mut label, name);
             });
             let _ = render_root.edit_widget_with_tag(self.stack_tag, |mut stack| {
-                IndexedStack::set_active_child(&mut stack, idx);
+                if let Err(error) = IndexedStack::set_active_child(&mut stack, idx) {
+                    tracing::error!(%error, "Invalid gallery tab");
+                }
             });
         }
 

@@ -131,7 +131,7 @@ fn typed_child_lookup_respects_registration_and_collection_slots() {
 
         let replacement = NewWidget::new(Label::new("new")).with_tag(new_tag);
         let new_id = replacement.id();
-        Flex::set(&mut parent, 0, replacement, 0.0);
+        Flex::set(&mut parent, 0, replacement, 0.0).unwrap();
         assert!(parent.ctx.get_mut::<Label>(old_id).is_none());
         assert!(parent.ctx.get_mut::<Label>(new_id).is_none());
         assert!(Flex::get_mut::<Label>(&mut parent, 0).is_none());
@@ -145,5 +145,69 @@ fn typed_child_lookup_respects_registration_and_collection_slots() {
             new_id
         );
         assert!(parent.ctx.get_mut::<Label>(old_id).is_none());
+    });
+}
+
+#[test]
+fn rejected_collection_mutations_leave_slots_and_widgets_intact() {
+    use crate::core::{CollectionError, CollectionWidget};
+    use crate::layout::AsUnit;
+    use crate::widgets::{Flex, Label};
+
+    let tag = WidgetTag::named("retained-child");
+    let parent = Flex::row()
+        .with_fixed(NewWidget::new(Label::new("original")).with_tag(tag))
+        .with_fixed_spacer(17.px())
+        .prepare();
+    let mut harness = TestHarness::create(test_property_set(), parent);
+    let original = harness.get_widget(tag).id();
+    let original_size = harness.root_widget().ctx().border_box();
+    harness.edit_root_widget(|mut parent| {
+        let error = CollectionError::OutOfBounds { index: 3, len: 2 };
+        assert_eq!(
+            Flex::insert(&mut parent, 3, Label::new("invalid").prepare(), 0.),
+            Err(error)
+        );
+        assert_eq!(
+            Flex::set(&mut parent, 3, Label::new("invalid").prepare(), 0.),
+            Err(error)
+        );
+        assert_eq!(Flex::remove(&mut parent, 3), Err(error));
+        assert_eq!(Flex::swap(&mut parent, 0, 3), Err(error));
+        assert_eq!(
+            Flex::set_params(&mut parent, 1, 2.),
+            Err(CollectionError::Spacer { index: 1 })
+        );
+        assert_eq!(Flex::set_fixed_spacer(&mut parent, 3, 1.px()), Err(error));
+        assert_eq!(
+            Flex::get_mut::<Label>(&mut parent, 0).unwrap().id(),
+            original
+        );
+        assert_eq!(parent.widget.len(), 2);
+    });
+    assert_eq!(harness.get_widget(tag).id(), original);
+    assert_eq!(harness.root_widget().ctx().border_box(), original_size);
+}
+
+#[test]
+fn indexed_stack_insert_into_empty_and_swap_keep_a_valid_active_child() {
+    use crate::core::{CollectionError, CollectionWidget};
+    use crate::widgets::{IndexedStack, Label};
+
+    let mut harness = TestHarness::create(test_property_set(), IndexedStack::new().prepare());
+    harness.edit_root_widget(|mut stack| {
+        IndexedStack::insert(&mut stack, 0, Label::new("first").prepare(), ()).unwrap();
+        assert_eq!(stack.widget.active_child(), 0);
+        IndexedStack::insert(&mut stack, 0, Label::new("second").prepare(), ()).unwrap();
+        assert_eq!(stack.widget.active_child(), 1);
+        assert_eq!(
+            IndexedStack::set_active_child(&mut stack, 2),
+            Err(CollectionError::OutOfBounds { index: 2, len: 2 })
+        );
+        assert_eq!(stack.widget.active_child(), 1);
+        IndexedStack::swap(&mut stack, 0, 1).unwrap();
+        assert_eq!(stack.widget.active_child(), 0);
+        IndexedStack::remove(&mut stack, 0).unwrap();
+        assert_eq!(stack.widget.active_child(), 0);
     });
 }

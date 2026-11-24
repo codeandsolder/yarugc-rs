@@ -295,23 +295,30 @@ impl Flex {
 
     /// Inserts a non-flex child widget at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is larger than the number of children.
+    /// Returns an error if `idx` is larger than the number of children.
     pub fn insert_fixed(
         this: &mut WidgetMut<'_, Self>,
         idx: usize,
         child: NewWidget<impl Widget + ?Sized>,
-    ) {
-        let child = new_child(0., child.erased().into_pod());
-        this.widget.children.insert(idx, child);
-        this.ctx.children_changed();
+    ) -> Result<(), crate::core::CollectionError> {
+        Self::insert(this, idx, child, 0.)
     }
 
     /// Inserts an empty spacer child with the given size at the given index.
     ///
     /// A good default is [`DEFAULT_SPACER_LEN`](crate::theme::DEFAULT_SPACER_LEN).
-    pub fn insert_fixed_spacer(this: &mut WidgetMut<'_, Self>, idx: usize, len: Length) {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the index exceeds the number of children.
+    pub fn insert_fixed_spacer(
+        this: &mut WidgetMut<'_, Self>,
+        idx: usize,
+        len: Length,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_insert_slot(idx, this.widget.children.len())?;
         let new_child = Child::Spacer {
             flex: 0.,
             basis: len,
@@ -320,6 +327,7 @@ impl Flex {
         };
         this.widget.children.insert(idx, new_child);
         this.ctx.request_layout();
+        Ok(())
     }
 
     /// Adds an empty spacer child with a specific `flex` factor.
@@ -331,8 +339,15 @@ impl Flex {
     ///
     /// Panics if `flex` is non-finite or negative and debug assertions are enabled.
     ///
-    /// Panics if `idx` is larger than the number of children.
-    pub fn insert_spacer(this: &mut WidgetMut<'_, Self>, idx: usize, flex: f64) {
+    /// # Errors
+    ///
+    /// Returns an error if `idx` is larger than the number of children.
+    pub fn insert_spacer(
+        this: &mut WidgetMut<'_, Self>,
+        idx: usize,
+        flex: f64,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_insert_slot(idx, this.widget.children.len())?;
         let flex = flex.sanitize("spacer flex factor");
         let new_child = Child::Spacer {
             flex,
@@ -342,34 +357,35 @@ impl Flex {
         };
         this.widget.children.insert(idx, new_child);
         this.ctx.request_layout();
+        Ok(())
     }
 
     /// Replaces the child widget at the given index with a new non-flex one.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
+    /// Returns an error if `idx` is out of bounds.
     pub fn set_fixed(
         this: &mut WidgetMut<'_, Self>,
         idx: usize,
         child: NewWidget<impl Widget + ?Sized>,
-    ) {
-        let child = new_child(0., child.erased().into_pod());
-        let old_child = std::mem::replace(&mut this.widget.children[idx], child);
-        if let Child::Widget { widget, .. } = old_child {
-            this.ctx.remove_child(widget);
-        }
-        this.ctx.children_changed();
+    ) -> Result<(), crate::core::CollectionError> {
+        Self::set(this, idx, child, 0.)
     }
 
     /// Replaces the child widget at the given index with an empty spacer.
     ///
     /// A good default is [`DEFAULT_SPACER_LEN`](crate::theme::DEFAULT_SPACER_LEN).
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
-    pub fn set_fixed_spacer(this: &mut WidgetMut<'_, Self>, idx: usize, len: Length) {
+    /// Returns an error if `idx` is out of bounds.
+    pub fn set_fixed_spacer(
+        this: &mut WidgetMut<'_, Self>,
+        idx: usize,
+        len: Length,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(idx, this.widget.children.len())?;
         let new_child = Child::Spacer {
             flex: 0.,
             basis: len,
@@ -381,6 +397,7 @@ impl Flex {
             this.ctx.remove_child(widget);
         }
         this.ctx.request_layout();
+        Ok(())
     }
 
     /// Replaces the child widget at the given index
@@ -393,8 +410,15 @@ impl Flex {
     ///
     /// Panics if `flex` is non-finite or negative and debug assertions are enabled.
     ///
-    /// Panics if `idx` is out of bounds.
-    pub fn set_spacer(this: &mut WidgetMut<'_, Self>, idx: usize, flex: f64) {
+    /// # Errors
+    ///
+    /// Returns an error if `idx` is out of bounds.
+    pub fn set_spacer(
+        this: &mut WidgetMut<'_, Self>,
+        idx: usize,
+        flex: f64,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(idx, this.widget.children.len())?;
         let flex = flex.sanitize("spacer flex factor");
         let new_child = Child::Spacer {
             flex,
@@ -407,6 +431,7 @@ impl Flex {
             this.ctx.remove_child(widget);
         }
         this.ctx.request_layout();
+        Ok(())
     }
 }
 
@@ -429,32 +454,35 @@ impl CollectionWidget<FlexParams> for Flex {
 
     /// Inserts a child widget at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is larger than the number of children.
+    /// Returns an error if `idx` is larger than the number of children.
     fn insert(
         this: &mut WidgetMut<'_, Self>,
         idx: usize,
         child: NewWidget<impl Widget + ?Sized>,
         params: impl Into<FlexParams>,
-    ) {
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_insert_slot(idx, this.widget.children.len())?;
         let child = child.erased().into_pod();
         let child = new_child(params, child);
         this.widget.children.insert(idx, child);
         this.ctx.children_changed();
+        Ok(())
     }
 
     /// Replaces the child widget at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
+    /// Returns an error if `idx` is out of bounds.
     fn set(
         this: &mut WidgetMut<'_, Self>,
         idx: usize,
         child: NewWidget<impl Widget + ?Sized>,
         params: impl Into<FlexParams>,
-    ) {
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(idx, this.widget.children.len())?;
         let child = child.erased().into_pod();
         let child = new_child(params, child);
         let old_child = std::mem::replace(&mut this.widget.children[idx], child);
@@ -462,53 +490,68 @@ impl CollectionWidget<FlexParams> for Flex {
             this.ctx.remove_child(widget);
         }
         this.ctx.children_changed();
+        Ok(())
     }
 
     /// Sets the child params at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
+    /// Returns an error if `idx` is out of bounds.
     ///
-    /// Panics if `idx` contains a spacer instead of a widget.
-    fn set_params(this: &mut WidgetMut<'_, Self>, idx: usize, params: impl Into<FlexParams>) {
-        let child = &mut this.widget.children[idx];
-        let child_val = std::mem::replace(
-            child,
-            Child::Spacer {
-                flex: 0.,
-                basis: Length::ZERO,
-                basis_resolved: Length::ZERO,
-                length_resolved: Length::ZERO,
-            },
-        );
-        let widget = match child_val {
-            Child::Widget { widget, .. } => widget,
-            Child::Spacer { .. } => {
-                panic!("Can't update flex parameters of a spacer element");
-            }
+    /// Returns an error if `idx` contains a spacer instead of a widget.
+    fn set_params(
+        this: &mut WidgetMut<'_, Self>,
+        idx: usize,
+        params: impl Into<FlexParams>,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(idx, this.widget.children.len())?;
+        let Child::Widget {
+            alignment,
+            flex,
+            basis,
+            basis_resolved,
+            ..
+        } = &mut this.widget.children[idx]
+        else {
+            return Err(crate::core::CollectionError::Spacer { index: idx });
         };
-        let new_child = new_child(params, widget);
-        *child = new_child;
-        this.ctx.children_changed();
+        let params = params.into();
+        *alignment = params.alignment;
+        *flex = params.flex;
+        *basis = params.basis;
+        *basis_resolved = Length::ZERO;
+        this.ctx.request_layout();
+        Ok(())
     }
 
     /// Swaps the index of two children.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `a` or `b` are out of bounds.
-    fn swap(this: &mut WidgetMut<'_, Self>, a: usize, b: usize) {
+    /// Returns an error if `a` or `b` are out of bounds.
+    fn swap(
+        this: &mut WidgetMut<'_, Self>,
+        a: usize,
+        b: usize,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(a, this.widget.children.len())?;
+        crate::check_slot(b, this.widget.children.len())?;
         this.widget.children.swap(a, b);
         this.ctx.children_changed();
+        Ok(())
     }
 
     /// Removes the child at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
-    fn remove(this: &mut WidgetMut<'_, Self>, idx: usize) {
+    /// Returns an error if `idx` is out of bounds.
+    fn remove(
+        this: &mut WidgetMut<'_, Self>,
+        idx: usize,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(idx, this.widget.children.len())?;
         let child = this.widget.children.remove(idx);
         if let Child::Widget { widget, .. } = child {
             this.ctx.remove_child(widget);
@@ -516,6 +559,7 @@ impl CollectionWidget<FlexParams> for Flex {
             // We need to explicitly request layout in case of spacer removal
             this.ctx.request_layout();
         }
+        Ok(())
     }
 
     /// Removes all children.
@@ -1760,10 +1804,10 @@ mod tests {
         assert_render_snapshot!(harness, "flex_row_baselines_four_center_and_last");
 
         harness.edit_widget(flex_tag, |mut flex| {
-            Flex::set_params(&mut flex, 1, CrossAxisAlignment::FirstBaseline);
-            Flex::set_params(&mut flex, 2, CrossAxisAlignment::FirstBaseline);
-            Flex::set_params(&mut flex, 3, CrossAxisAlignment::FirstBaseline);
-            Flex::set_params(&mut flex, 4, CrossAxisAlignment::FirstBaseline);
+            Flex::set_params(&mut flex, 1, CrossAxisAlignment::FirstBaseline).unwrap();
+            Flex::set_params(&mut flex, 2, CrossAxisAlignment::FirstBaseline).unwrap();
+            Flex::set_params(&mut flex, 3, CrossAxisAlignment::FirstBaseline).unwrap();
+            Flex::set_params(&mut flex, 4, CrossAxisAlignment::FirstBaseline).unwrap();
         });
         assert_render_snapshot!(harness, "flex_row_baselines_four_first_and_last");
 
@@ -1773,7 +1817,7 @@ mod tests {
         assert_render_snapshot!(harness, "flex_row_baselines_four_first_and_first");
 
         harness.edit_widget(flex_tag, |mut flex| {
-            Flex::set_params(&mut flex, 4, CrossAxisAlignment::LastBaseline);
+            Flex::set_params(&mut flex, 4, CrossAxisAlignment::LastBaseline).unwrap();
         });
         assert_render_snapshot!(harness, "flex_row_baselines_three_first_one_last_and_first");
 
@@ -1783,7 +1827,7 @@ mod tests {
         assert_render_snapshot!(harness, "flex_row_baselines_three_first_one_last_and_last");
 
         harness.edit_widget(flex_tag, |mut flex| {
-            Flex::set_params(&mut flex, 3, CrossAxisAlignment::LastBaseline);
+            Flex::set_params(&mut flex, 3, CrossAxisAlignment::LastBaseline).unwrap();
         });
         assert_render_snapshot!(harness, "flex_row_baselines_two_first_two_last_and_last");
 
@@ -1793,7 +1837,7 @@ mod tests {
         assert_render_snapshot!(harness, "flex_row_baselines_two_first_two_last_and_first");
 
         harness.edit_widget(flex_tag, |mut flex| {
-            Flex::set_params(&mut flex, 2, CrossAxisAlignment::LastBaseline);
+            Flex::set_params(&mut flex, 2, CrossAxisAlignment::LastBaseline).unwrap();
         });
         assert_render_snapshot!(harness, "flex_row_baselines_one_first_three_last_and_first");
 
@@ -1803,7 +1847,7 @@ mod tests {
         assert_render_snapshot!(harness, "flex_row_baselines_one_first_three_last_and_last");
 
         harness.edit_widget(flex_tag, |mut flex| {
-            Flex::set_params(&mut flex, 1, CrossAxisAlignment::LastBaseline);
+            Flex::set_params(&mut flex, 1, CrossAxisAlignment::LastBaseline).unwrap();
         });
         assert_render_snapshot!(harness, "flex_row_baselines_four_last_and_last");
 
@@ -1912,11 +1956,11 @@ mod tests {
                 TestHarness::create_with_size(test_property_set(), widget, window_size);
 
             harness.edit_root_widget(|mut flex| {
-                Flex::set_fixed(&mut flex, 0, Label::new("a").prepare());
+                Flex::set_fixed(&mut flex, 0, Label::new("a").prepare()).unwrap();
                 // -> abwd
-                Flex::set(&mut flex, 2, Label::new("c").prepare(), 0.);
+                Flex::set(&mut flex, 2, Label::new("c").prepare(), 0.).unwrap();
                 // -> abcd
-                Flex::remove(&mut flex, 1);
+                Flex::remove(&mut flex, 1).unwrap();
                 // -> acd
                 Flex::add_fixed(&mut flex, Label::new("x").prepare());
                 // -> acdx
@@ -1926,13 +1970,13 @@ mod tests {
                 // -> acdxy_
                 Flex::add_spacer(&mut flex, 1.0);
                 // -> acdxy__
-                Flex::insert_fixed(&mut flex, 2, Label::new("i").prepare());
+                Flex::insert_fixed(&mut flex, 2, Label::new("i").prepare()).unwrap();
                 // -> acidxy__
-                Flex::insert(&mut flex, 2, Label::new("j").prepare(), 2.0);
+                Flex::insert(&mut flex, 2, Label::new("j").prepare(), 2.0).unwrap();
                 // -> acjidxy__
-                Flex::insert_fixed_spacer(&mut flex, 2, 5.px());
+                Flex::insert_fixed_spacer(&mut flex, 2, 5.px()).unwrap();
                 // -> ac_jidxy__
-                Flex::insert_spacer(&mut flex, 2, 1.0);
+                Flex::insert_spacer(&mut flex, 2, 1.0).unwrap();
                 // -> ac__jidxy__
             });
 

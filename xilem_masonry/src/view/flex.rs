@@ -324,37 +324,37 @@ impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for FlexE
     }
 }
 
+fn insert_flex_element(
+    parent: &mut WidgetMut<'_, widgets::Flex>,
+    idx: usize,
+    element: FlexElement,
+) -> Result<(), masonry::core::CollectionError> {
+    match element {
+        FlexElement::Child(child, params) => {
+            widgets::Flex::insert(parent, idx, child.new_widget, params)
+        }
+        FlexElement::FixedSpacer(len) => widgets::Flex::insert_fixed_spacer(parent, idx, len),
+        FlexElement::FlexSpacer(flex) => widgets::Flex::insert_spacer(parent, idx, flex),
+    }
+}
+
 impl ElementSplice<FlexElement> for FlexSplice<'_, '_> {
     fn insert(&mut self, element: FlexElement) {
-        match element {
-            FlexElement::Child(child, params) => {
-                widgets::Flex::insert(&mut self.element, self.idx, child.new_widget, params);
-            }
-            FlexElement::FixedSpacer(len) => {
-                widgets::Flex::insert_fixed_spacer(&mut self.element, self.idx, len);
-            }
-            FlexElement::FlexSpacer(len) => {
-                widgets::Flex::insert_spacer(&mut self.element, self.idx, len);
-            }
-        };
-        self.idx += 1;
+        if super::collection_succeeded(insert_flex_element(&mut self.element, self.idx, element)) {
+            self.idx += 1;
+        }
     }
 
     fn with_scratch<R>(&mut self, f: impl FnOnce(&mut AppendVec<FlexElement>) -> R) -> R {
         let ret = f(self.scratch);
         for element in self.scratch.drain() {
-            match element {
-                FlexElement::Child(child, params) => {
-                    widgets::Flex::insert(&mut self.element, self.idx, child.new_widget, params);
-                }
-                FlexElement::FixedSpacer(len) => {
-                    widgets::Flex::insert_fixed_spacer(&mut self.element, self.idx, len);
-                }
-                FlexElement::FlexSpacer(len) => {
-                    widgets::Flex::insert_spacer(&mut self.element, self.idx, len);
-                }
-            };
-            self.idx += 1;
+            if super::collection_succeeded(insert_flex_element(
+                &mut self.element,
+                self.idx,
+                element,
+            )) {
+                self.idx += 1;
+            }
         }
         ret
     }
@@ -377,7 +377,7 @@ impl ElementSplice<FlexElement> for FlexSplice<'_, '_> {
             };
             f(child)
         };
-        widgets::Flex::remove(&mut self.element, self.idx);
+        super::collection_succeeded(widgets::Flex::remove(&mut self.element, self.idx));
         ret
     }
 
@@ -590,10 +590,18 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for FlexSpacer {
         if self != prev {
             match self {
                 Self::Fixed(len) => {
-                    widgets::Flex::set_fixed_spacer(&mut element.parent, element.idx, *len);
+                    super::collection_succeeded(widgets::Flex::set_fixed_spacer(
+                        &mut element.parent,
+                        element.idx,
+                        *len,
+                    ));
                 }
                 Self::Flex(flex) => {
-                    widgets::Flex::set_spacer(&mut element.parent, element.idx, *flex);
+                    super::collection_succeeded(widgets::Flex::set_spacer(
+                        &mut element.parent,
+                        element.idx,
+                        *flex,
+                    ));
                 }
             };
         }
@@ -737,7 +745,6 @@ where
                         },
                     );
                 });
-                widgets::Flex::remove(&mut element.parent, element.idx);
                 // The Flex item view has just been destroyed, teardown the old view
                 // We increment the generation only on the falling edge (new item `FlexSpacer`) by convention
                 // This choice has no impact on functionality
@@ -751,10 +758,18 @@ where
                 let (spacer_element, ()) = View::<(), (), ViewCtx>::build(new_spacer, ctx, &mut ());
                 match spacer_element {
                     FlexElement::FixedSpacer(len) => {
-                        widgets::Flex::insert_fixed_spacer(&mut element.parent, element.idx, len);
+                        super::collection_succeeded(widgets::Flex::set_fixed_spacer(
+                            &mut element.parent,
+                            element.idx,
+                            len,
+                        ));
                     }
                     FlexElement::FlexSpacer(len) => {
-                        widgets::Flex::insert_spacer(&mut element.parent, element.idx, len);
+                        super::collection_succeeded(widgets::Flex::set_spacer(
+                            &mut element.parent,
+                            element.idx,
+                            len,
+                        ));
                     }
                     FlexElement::Child(_, _) => unreachable!(),
                 };
@@ -769,20 +784,18 @@ where
                         idx: element.idx,
                     },
                 );
-                widgets::Flex::remove(&mut element.parent, element.idx);
-
                 let (flex_item_element, child_state) = ctx
                     .with_id(ViewId::new(view_state.generation), |ctx| {
                         new_flex_item.build(ctx, app_state)
                     });
                 view_state.inner = Some(child_state);
                 if let FlexElement::Child(child, params) = flex_item_element {
-                    widgets::Flex::insert(
+                    super::collection_succeeded(widgets::Flex::set(
                         &mut element.parent,
                         element.idx,
                         child.new_widget,
                         params,
-                    );
+                    ));
                 } else {
                     unreachable!("We just created a new flex item, this should not be reached")
                 }

@@ -287,6 +287,23 @@ macro_rules! label_text_accessors {
     };
 }
 
+// Validate before modifying a collection or converting its input.
+fn check_slot(index: usize, len: usize) -> Result<(), core::CollectionError> {
+    if index < len {
+        Ok(())
+    } else {
+        Err(core::CollectionError::OutOfBounds { index, len })
+    }
+}
+
+fn check_insert_slot(index: usize, len: usize) -> Result<(), core::CollectionError> {
+    if index <= len {
+        Ok(())
+    } else {
+        Err(core::CollectionError::OutOfBounds { index, len })
+    }
+}
+
 pub mod layers;
 pub mod properties;
 pub mod theme;
