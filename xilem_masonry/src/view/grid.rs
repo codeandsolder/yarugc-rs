@@ -305,35 +305,7 @@ impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for GridE
 impl ElementSplice<GridElement> for GridSplice<'_, '_> {
     collection_splice_insert!(Grid, GridElement, child, element => element.params);
 
-    fn mutate<R>(&mut self, f: impl FnOnce(Mut<'_, GridElement>) -> R) -> R {
-        let child = GridElementMut {
-            parent: self.element.reborrow_mut(),
-            idx: self.idx,
-        };
-        let ret = f(child);
-        self.idx += 1;
-        ret
-    }
-
-    fn skip(&mut self, n: usize) {
-        self.idx += n;
-    }
-
-    fn index(&self) -> usize {
-        self.idx
-    }
-
-    fn delete<R>(&mut self, f: impl FnOnce(Mut<'_, GridElement>) -> R) -> R {
-        let ret = {
-            let child = GridElementMut {
-                parent: self.element.reborrow_mut(),
-                idx: self.idx,
-            };
-            f(child)
-        };
-        super::collection_succeeded(widgets::Grid::remove(&mut self.element, self.idx));
-        ret
-    }
+    collection_splice_cursor!(Grid, GridElement, GridElementMut);
 }
 
 /// `GridSequence` is what allows an input to the grid that contains all the grid elements.

@@ -304,6 +304,14 @@ fn check_insert_slot(index: usize, len: usize) -> Result<(), core::CollectionErr
     }
 }
 
+// Both indices must be valid before either slot can change.
+fn swap_slots<T>(slots: &mut [T], a: usize, b: usize) -> Result<(), core::CollectionError> {
+    check_slot(a, slots.len())?;
+    check_slot(b, slots.len())?;
+    slots.swap(a, b);
+    Ok(())
+}
+
 pub mod layers;
 pub mod properties;
 pub mod theme;

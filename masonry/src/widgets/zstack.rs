@@ -182,9 +182,7 @@ impl CollectionWidget<ChildAlignment> for ZStack {
         a: usize,
         b: usize,
     ) -> Result<(), crate::core::CollectionError> {
-        crate::check_slot(a, this.widget.children.len())?;
-        crate::check_slot(b, this.widget.children.len())?;
-        this.widget.children.swap(a, b);
+        crate::swap_slots(&mut this.widget.children, a, b)?;
         this.ctx.children_changed();
         Ok(())
     }

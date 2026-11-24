@@ -207,35 +207,7 @@ impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for Index
 impl ElementSplice<IndexedStackElement> for IndexedStackSplice<'_, '_> {
     collection_splice_insert!(IndexedStack, IndexedStackElement, child, element => ());
 
-    fn mutate<R>(&mut self, f: impl FnOnce(Mut<'_, IndexedStackElement>) -> R) -> R {
-        let child = IndexedStackElementMut {
-            parent: self.element.reborrow_mut(),
-            idx: self.idx,
-        };
-        let ret = f(child);
-        self.idx += 1;
-        ret
-    }
-
-    fn skip(&mut self, n: usize) {
-        self.idx += n;
-    }
-
-    fn index(&self) -> usize {
-        self.idx
-    }
-
-    fn delete<R>(&mut self, f: impl FnOnce(Mut<'_, IndexedStackElement>) -> R) -> R {
-        let ret = {
-            let child = IndexedStackElementMut {
-                parent: self.element.reborrow_mut(),
-                idx: self.idx,
-            };
-            f(child)
-        };
-        super::collection_succeeded(widgets::IndexedStack::remove(&mut self.element, self.idx));
-        ret
-    }
+    collection_splice_cursor!(IndexedStack, IndexedStackElement, IndexedStackElementMut);
 }
 
 /// `IndexedStackSequence` is what allows an input to the indexed stack that contains all the stack elements.

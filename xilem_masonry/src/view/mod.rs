@@ -188,6 +188,37 @@ macro_rules! collection_splice_insert {
     };
 }
 
+// All collection splices advance and delete using the same parent/index handle.
+macro_rules! collection_splice_cursor {
+    ($widget:ident, $element:ident, $handle:ident) => {
+        fn mutate<R>(&mut self, f: impl FnOnce(Mut<'_, $element>) -> R) -> R {
+            let ret = f($handle {
+                parent: self.element.reborrow_mut(),
+                idx: self.idx,
+            });
+            self.idx += 1;
+            ret
+        }
+
+        fn skip(&mut self, n: usize) {
+            self.idx += n;
+        }
+
+        fn index(&self) -> usize {
+            self.idx
+        }
+
+        fn delete<R>(&mut self, f: impl FnOnce(Mut<'_, $element>) -> R) -> R {
+            let ret = f($handle {
+                parent: self.element.reborrow_mut(),
+                idx: self.idx,
+            });
+            super::collection_succeeded(widgets::$widget::remove(&mut self.element, self.idx));
+            ret
+        }
+    };
+}
+
 mod badge;
 mod badged;
 mod button;

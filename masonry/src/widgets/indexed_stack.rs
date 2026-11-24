@@ -173,9 +173,7 @@ impl CollectionWidget<()> for IndexedStack {
         a: usize,
         b: usize,
     ) -> Result<(), crate::core::CollectionError> {
-        crate::check_slot(a, this.widget.children.len())?;
-        crate::check_slot(b, this.widget.children.len())?;
-        this.widget.children.swap(a, b);
+        crate::swap_slots(&mut this.widget.children, a, b)?;
         if this.widget.active_child == a {
             this.widget.active_child = b;
         } else if this.widget.active_child == b {

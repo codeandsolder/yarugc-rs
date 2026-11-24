@@ -359,35 +359,7 @@ impl ElementSplice<FlexElement> for FlexSplice<'_, '_> {
         ret
     }
 
-    fn mutate<R>(&mut self, f: impl FnOnce(Mut<'_, FlexElement>) -> R) -> R {
-        let child = FlexElementMut {
-            parent: self.element.reborrow_mut(),
-            idx: self.idx,
-        };
-        let ret = f(child);
-        self.idx += 1;
-        ret
-    }
-
-    fn delete<R>(&mut self, f: impl FnOnce(Mut<'_, FlexElement>) -> R) -> R {
-        let ret = {
-            let child = FlexElementMut {
-                parent: self.element.reborrow_mut(),
-                idx: self.idx,
-            };
-            f(child)
-        };
-        super::collection_succeeded(widgets::Flex::remove(&mut self.element, self.idx));
-        ret
-    }
-
-    fn skip(&mut self, n: usize) {
-        self.idx += n;
-    }
-
-    fn index(&self) -> usize {
-        self.idx
-    }
+    collection_splice_cursor!(Flex, FlexElement, FlexElementMut);
 }
 
 /// An ordered sequence of views for a [`Flex`] view.
