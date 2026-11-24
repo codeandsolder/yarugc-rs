@@ -101,17 +101,17 @@ fn record_widget(
 ) {
     let state = &mut node.item.state;
     let cache_missing = !scene_cache.contains_key(&state.id);
-    if state.is_stashed
+    if state.is_stashed()
         || !(cache_missing
-            || state.request_pre_paint
-            || state.request_paint
-            || state.request_post_paint)
+            || state.request_pre_paint()
+            || state.request_paint()
+            || state.request_post_paint())
     {
         return;
     }
 
     let widget = &mut *node.item.widget;
-    if global_state.trace.paint {
+    if global_state.trace.enabled(crate::passes::TracePass::Paint) {
         trace!(
             "Painting widget '{}' {}",
             widget.short_type_name(),
@@ -129,17 +129,17 @@ fn record_widget(
     let (pre, content, post) = scene_cache.entry(state.id).or_default();
     let phases = [
         (
-            cache_missing || state.request_pre_paint,
+            cache_missing || state.request_pre_paint(),
             pre,
             PaintPhase::Pre,
         ),
         (
-            cache_missing || state.request_paint,
+            cache_missing || state.request_paint(),
             content,
             PaintPhase::Content,
         ),
         (
-            cache_missing || state.request_post_paint,
+            cache_missing || state.request_post_paint(),
             post,
             PaintPhase::Post,
         ),
@@ -182,7 +182,10 @@ fn paint_widget(
     node: ArenaMut<'_, WidgetArenaNode>,
 ) {
     let mut node = node;
-    let _span = enter_span_if(global_state.trace.paint, &node.item.state);
+    let _span = enter_span_if(
+        global_state.trace.enabled(crate::passes::TracePass::Paint),
+        &node.item.state,
+    );
     record_widget(
         global_state,
         property_arena,
@@ -194,12 +197,12 @@ fn paint_widget(
     let state = &mut node.item.state;
     let id = state.id;
     // Still visit stashed subtrees to clear pending flags.
-    let is_stashed = state.is_stashed;
+    let is_stashed = state.is_stashed();
 
-    state.request_pre_paint = false;
-    state.request_paint = false;
-    state.request_post_paint = false;
-    state.needs_paint = false;
+    state.set_request_pre_paint(false);
+    state.set_request_paint(false);
+    state.set_request_post_paint(false);
+    state.set_needs_paint(false);
 
     let paint_layer_mode = if is_stashed {
         PaintLayerMode::Inline
@@ -276,7 +279,7 @@ fn paint_widget(
     });
 
     if !is_stashed && !paint_as_external {
-        if global_state.debug_paint {
+        if global_state.debug_paint() {
             paint_debug_geometry(
                 layer_collector.scene_mut(),
                 state,
@@ -416,10 +419,10 @@ fn paint_layer(
         return;
     };
     let state = &mut root_node.item.state;
-    state.request_pre_paint = false;
-    state.request_paint = false;
-    state.request_post_paint = false;
-    state.needs_paint = false;
+    state.set_request_pre_paint(false);
+    state.set_request_paint(false);
+    state.set_request_post_paint(false);
+    state.set_needs_paint(false);
 
     // Get the layer child from the same arena handle.
     let Some(layer_node) = root_node.children.into_item_mut(layer_widget_id) else {

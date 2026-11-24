@@ -90,7 +90,7 @@ fn run_event_pass<E>(
             break;
         };
 
-        if skip_if_disabled && node.item.state.is_disabled {
+        if skip_if_disabled && node.item.state.is_disabled() {
             // If the widget is disabled, we skip it and bubble to its parent.
             target_widget_id = parent_id;
             continue;
@@ -155,7 +155,7 @@ pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEv
     if event_pos != root.global_state.last_mouse_pos {
         root.global_state.last_mouse_pos = event_pos;
     }
-    root.global_state.needs_pointer_pass = true;
+    root.global_state.set_needs_pointer_pass(true);
 
     if root.global_state.inspector_state.is_picking_widget
         && matches!(event, PointerEvent::Move(..))
@@ -178,7 +178,7 @@ pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEv
         root.global_state.inspector_state.is_picking_widget = false;
         root.global_state.inspector_state.hovered_widget = None;
         if let Some(state) = root.root_state_mut() {
-            state.needs_paint = true;
+            state.set_needs_paint(true);
         }
         return Handled::Yes;
     }
@@ -288,7 +288,7 @@ pub(crate) fn run_on_text_event_pass(root: &mut RenderRoot, event: &TextEvent) -
     trace!("Running ON_TEXT_EVENT pass with {}", event.short_name());
 
     if let TextEvent::WindowFocusChange(focused) = event {
-        root.global_state.window_focused = *focused;
+        root.global_state.set_window_focused(*focused);
     }
 
     let target = root.global_state.focused_widget.or_else(|| {
@@ -334,7 +334,7 @@ pub(crate) fn run_on_text_event_pass(root: &mut RenderRoot, event: &TextEvent) -
                 !root.global_state.inspector_state.is_picking_widget;
             root.global_state.inspector_state.hovered_widget = None;
             if let Some(state) = root.root_state_mut() {
-                state.needs_paint = true;
+                state.set_needs_paint(true);
             }
             handled = Handled::Yes;
         }
@@ -343,9 +343,10 @@ pub(crate) fn run_on_text_event_pass(root: &mut RenderRoot, event: &TextEvent) -
             && key.state == KeyState::Down
             && handled == Handled::No
         {
-            root.global_state.debug_paint = !root.global_state.debug_paint;
+            root.global_state
+                .set_debug_paint(!root.global_state.debug_paint());
             if let Some(state) = root.root_state_mut() {
-                state.needs_paint = true;
+                state.set_needs_paint(true);
             }
             handled = Handled::Yes;
         }

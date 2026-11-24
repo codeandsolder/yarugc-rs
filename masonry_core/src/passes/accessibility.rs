@@ -27,14 +27,17 @@ fn build_accessibility_tree(
     let properties = &mut node.item.properties;
     let class_set = &node.item.class_set;
     let id = state.id;
-    let _span = enter_span_if(global_state.trace.access, state);
+    let _span = enter_span_if(
+        global_state.trace.enabled(crate::passes::TracePass::Access),
+        state,
+    );
 
-    if !state.needs_accessibility {
+    if !state.needs_accessibility() {
         return;
     }
 
-    if state.request_accessibility && !state.is_stashed {
-        if global_state.trace.access {
+    if state.request_accessibility() && !state.is_stashed() {
+        if global_state.trace.enabled(crate::passes::TracePass::Access) {
             trace!(
                 "Building accessibility node for widget '{}' {}",
                 widget.short_type_name(),
@@ -59,14 +62,18 @@ fn build_accessibility_tree(
         widget.accessibility(&mut ctx, &props, &mut node);
 
         let id: NodeId = ctx.widget_state.id.into();
-        if ctx.global_state.trace.access {
+        if ctx
+            .global_state
+            .trace
+            .enabled(crate::passes::TracePass::Access)
+        {
             trace!("Built node {} with role={:?}", id.0, node.role());
         }
         ctx.tree_update.nodes.push((id, node));
     }
 
-    state.request_accessibility = false;
-    state.needs_accessibility = false;
+    state.set_request_accessibility(false);
+    state.set_needs_accessibility(false);
 
     let parent_state = state;
     recurse_on_children(id, widget, children, |mut node| {
@@ -102,7 +109,7 @@ fn build_access_node(widget: &dyn Widget, ctx: &AccessCtx<'_>, scale_factor: Opt
             .into_iter()
             .filter_map(|id| {
                 let child = ctx.children.item(id)?;
-                (!child.item.state.is_stashed).then_some(id.into())
+                (!child.item.state.is_stashed()).then_some(id.into())
             })
             .collect::<Vec<NodeId>>(),
     );

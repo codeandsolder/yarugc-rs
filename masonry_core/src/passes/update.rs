@@ -145,9 +145,9 @@ enum PathStatus {
 impl PathStatus {
     const fn has(self, state: &WidgetState) -> bool {
         match self {
-            Self::Active => state.has_active,
-            Self::Hovered => state.has_hovered,
-            Self::Focused => state.has_focus_target,
+            Self::Active => state.has_active(),
+            Self::Hovered => state.has_hovered(),
+            Self::Focused => state.has_focus_target(),
         }
     }
 
@@ -170,14 +170,14 @@ impl PathStatus {
                     .class_diff
                     .pseudo
                     .set(PseudoClass::Focused, value);
-                ctx.widget_state.request_update_props = true;
-                ctx.widget_state.needs_update_props = true;
+                ctx.widget_state.set_request_update_props(true);
+                ctx.widget_state.set_needs_update_props(true);
             }
         }
         match self {
-            Self::Active => ctx.widget_state.has_active = value,
-            Self::Hovered => ctx.widget_state.has_hovered = value,
-            Self::Focused => ctx.widget_state.has_focus_target = value,
+            Self::Active => ctx.widget_state.set_has_active(value),
+            Self::Hovered => ctx.widget_state.set_has_hovered(value),
+            Self::Focused => ctx.widget_state.set_has_focus_target(value),
         }
     }
 }
@@ -226,17 +226,17 @@ impl PointerStatus {
                 let state = &mut *ctx.widget_state;
                 let (pseudo, event) = match self {
                     Self::Active => {
-                        state.is_active = value;
+                        state.set_is_active(value);
                         (PseudoClass::Active, Update::ActiveChanged(value))
                     }
                     Self::Hovered => {
-                        state.is_hovered = value;
+                        state.set_is_hovered(value);
                         (PseudoClass::Hovered, Update::HoveredChanged(value))
                     }
                 };
                 state.class_diff.pseudo.set(pseudo, value);
-                state.request_update_props = true;
-                state.needs_update_props = true;
+                state.set_request_update_props(true);
+                state.set_needs_update_props(true);
                 widget.update(ctx, props, &event);
             });
         }
@@ -258,16 +258,18 @@ fn update_widget_tree(
     let class_set = &node.item.class_set;
     let id = state.id;
 
-    let trace = global_state.trace.update_tree;
+    let trace = global_state
+        .trace
+        .enabled(crate::passes::TracePass::UpdateTree);
     let _span = enter_span_if(trace, state);
 
-    if !state.children_changed {
+    if !state.children_changed() {
         return;
     }
 
     register_children(global_state, widget, state, children.reborrow_mut());
 
-    if state.is_new {
+    if state.is_new() {
         let stack = property_arena.get(state.property_stack_id, widget.type_id());
         let mut ctx = UpdateCtx {
             global_state,
@@ -286,14 +288,14 @@ fn update_widget_tree(
         if trace {
             trace!("{} received Update::WidgetAdded", widget.short_type_name());
         }
-        state.accepts_pointer_interaction = widget.accepts_pointer_interaction();
-        state.propagates_pointer_interaction = widget.propagates_pointer_interaction();
-        state.accepts_focus = widget.accepts_focus();
-        state.accepts_text_input = widget.accepts_text_input();
+        state.set_accepts_pointer_interaction(widget.accepts_pointer_interaction());
+        state.set_propagates_pointer_interaction(widget.propagates_pointer_interaction());
+        state.set_accepts_focus(widget.accepts_focus());
+        state.set_accepts_text_input(widget.accepts_text_input());
         state.trace_span = widget.make_trace_span(state.id);
-        state.is_new = false;
+        state.set_is_new(false);
 
-        if state.children_changed {
+        if state.children_changed() {
             register_children(global_state, widget, state, children.reborrow_mut());
         }
     }
@@ -324,7 +326,7 @@ fn register_children(
     state: &mut WidgetState,
     mut children: ArenaMutList<'_, WidgetArenaNode>,
 ) {
-    state.children_changed = false;
+    state.set_children_changed(false);
 
     let mut ctx = RegisterCtx {
         global_state,
@@ -415,12 +417,12 @@ fn update_disabled_for_widget(
 
     let _span = enter_span(state);
 
-    let disabled = state.is_explicitly_disabled || parent_disabled;
-    if !state.needs_update_disabled && disabled == state.is_disabled {
+    let disabled = state.is_explicitly_disabled() || parent_disabled;
+    if !state.needs_update_disabled() && disabled == state.is_disabled() {
         return;
     }
 
-    if disabled != state.is_disabled {
+    if disabled != state.is_disabled() {
         let stack = property_arena.get(state.property_stack_id, widget.type_id());
         let mut ctx = UpdateCtx {
             global_state,
@@ -436,16 +438,16 @@ fn update_disabled_for_widget(
             class_set,
         };
         widget.update(&mut ctx, &mut props, &Update::DisabledChanged(disabled));
-        state.is_disabled = disabled;
+        state.set_is_disabled(disabled);
         state.class_diff.pseudo.set(PseudoClass::Disabled, disabled);
-        state.request_update_props = true;
-        state.needs_update_props = true;
-        state.needs_update_focusable = true;
-        state.request_accessibility = true;
-        state.needs_accessibility = true;
+        state.set_request_update_props(true);
+        state.set_needs_update_props(true);
+        state.set_needs_update_focusable(true);
+        state.set_request_accessibility(true);
+        state.set_needs_accessibility(true);
     }
 
-    state.needs_update_disabled = false;
+    state.set_needs_update_disabled(false);
 
     let parent_state = state;
     recurse_on_children(id, widget, children, |mut node| {
@@ -466,9 +468,9 @@ pub(crate) fn run_update_disabled_pass(root: &mut RenderRoot) {
     // If a widget was enabled or disabled, the pointer icon may need to change.
     if root
         .root_state()
-        .is_some_and(|state| state.needs_update_disabled)
+        .is_some_and(|state| state.needs_update_disabled())
     {
-        root.global_state.needs_pointer_pass = true;
+        root.global_state.set_needs_pointer_pass(true);
     }
 
     let Some(root_node) = root.widget_arena.nodes.find_mut(root.root_id()) else {
@@ -507,12 +509,12 @@ fn update_stashed_for_widget(
 
     let _span = enter_span(state);
 
-    let stashed = state.is_explicitly_stashed || parent_stashed;
-    if !state.needs_update_stashed && stashed == state.is_stashed {
+    let stashed = state.is_explicitly_stashed() || parent_stashed;
+    if !state.needs_update_stashed() && stashed == state.is_stashed() {
         return;
     }
 
-    if stashed != state.is_stashed {
+    if stashed != state.is_stashed() {
         let stack = property_arena.get(state.property_stack_id, widget.type_id());
         let mut ctx = UpdateCtx {
             global_state,
@@ -528,22 +530,22 @@ fn update_stashed_for_widget(
             class_set,
         };
         widget.update(&mut ctx, &mut props, &Update::StashedChanged(stashed));
-        state.is_stashed = stashed;
-        state.needs_update_focusable = true;
+        state.set_is_stashed(stashed);
+        state.set_needs_update_focusable(true);
 
         // Items may have been changed while they were stashed in ways that require a
         // relayout and a re-render.
         if !stashed {
             state.set_needs_layout(true);
-            state.request_layout = true;
-            state.request_paint = true;
-            state.needs_paint = true;
-            state.needs_accessibility = true;
-            state.request_accessibility = true;
+            state.set_request_layout(true);
+            state.set_request_paint(true);
+            state.set_needs_paint(true);
+            state.set_needs_accessibility(true);
+            state.set_request_accessibility(true);
         }
     }
 
-    state.needs_update_stashed = false;
+    state.set_needs_update_stashed(false);
 
     let parent_state = state;
     recurse_on_children(id, widget, children, |mut node| {
@@ -585,26 +587,26 @@ fn update_focusable_for_widget(node: ArenaMut<'_, WidgetArenaNode>) {
 
     let _span = enter_span(state);
 
-    if !state.needs_update_focusable {
+    if !state.needs_update_focusable() {
         return;
     }
 
-    state.descendant_is_focusable = false;
+    state.set_descendant_is_focusable(false);
 
-    if state.accepts_focus && !state.is_disabled && !state.is_stashed {
-        state.descendant_is_focusable = true;
+    if state.accepts_focus() && !state.is_disabled() && !state.is_stashed() {
+        state.set_descendant_is_focusable(true);
     }
 
     let parent_state = &mut *state;
     recurse_on_children(id, widget, children, |mut node| {
         update_focusable_for_widget(node.reborrow_mut());
 
-        if node.item.state.descendant_is_focusable {
-            parent_state.descendant_is_focusable = true;
+        if node.item.state.descendant_is_focusable() {
+            parent_state.set_descendant_is_focusable(true);
         }
     });
 
-    state.needs_update_focusable = false;
+    state.set_needs_update_focusable(false);
 }
 
 pub(crate) fn run_update_focusable_pass(root: &mut RenderRoot) {
@@ -644,12 +646,13 @@ fn find_first_focusable(
     forward: bool,
 ) -> Option<WidgetId> {
     let state = &node.item.state;
-    if !state.descendant_is_focusable {
+    if !state.descendant_is_focusable() {
         return None;
     }
 
     let is_anchor = anchor == Some(state.id);
-    let can_focus = state.accepts_focus && !state.is_disabled && !state.is_stashed && !is_anchor;
+    let can_focus =
+        state.accepts_focus() && !state.is_disabled() && !state.is_stashed() && !is_anchor;
     let children = node.item.widget.children_ids();
 
     if forward && anchor_path.is_empty() && can_focus {
@@ -716,7 +719,7 @@ pub(crate) fn run_update_focus_pass(root: &mut RenderRoot) {
     }
 
     let prev_focused = root.global_state.focused_widget;
-    let was_ime_active = root.global_state.is_ime_active;
+    let was_ime_active = root.global_state.is_ime_active();
 
     if was_ime_active && prev_focused != root.global_state.next_focused_widget {
         // IME was active, but the next focused widget is going to receive the Ime::Disabled event
@@ -782,19 +785,19 @@ pub(crate) fn run_update_focus_pass(root: &mut RenderRoot) {
         // We also request accessibility, because build_access_node() depends on the focus state.
         run_single_update_pass(root, prev_focused, |widget, ctx, props| {
             widget.update(ctx, props, &Update::FocusChanged(false));
-            ctx.widget_state.request_accessibility = true;
-            ctx.widget_state.needs_accessibility = true;
+            ctx.widget_state.set_request_accessibility(true);
+            ctx.widget_state.set_needs_accessibility(true);
         });
         run_single_update_pass(root, next_focused, |widget, ctx, props| {
             widget.update(ctx, props, &Update::FocusChanged(true));
-            ctx.widget_state.request_accessibility = true;
-            ctx.widget_state.needs_accessibility = true;
+            ctx.widget_state.set_request_accessibility(true);
+            ctx.widget_state.set_needs_accessibility(true);
         });
 
         let accepts_text = next_focused
             .and_then(|id| root.widget_arena.get_state(id))
-            .is_some_and(|state| state.accepts_text_input);
-        root.global_state.is_ime_active = accepts_text;
+            .is_some_and(|state| state.accepts_text_input());
+        root.global_state.set_is_ime_active(accepts_text);
         if accepts_text {
             root.global_state.emit_signal(RenderRootSignal::StartIme);
         }
@@ -851,12 +854,12 @@ pub(crate) fn run_update_scroll_pass(root: &mut RenderRoot) {
 // --- MARK: POINTER
 /// See the [passes documentation](crate::doc::pass_system#update-passes).
 pub(crate) fn run_update_pointer_pass(root: &mut RenderRoot) {
-    if !root.global_state.needs_pointer_pass {
+    if !root.global_state.needs_pointer_pass() {
         return;
     }
     let _span = info_span!("update_pointer").entered();
 
-    root.global_state.needs_pointer_pass = false;
+    root.global_state.set_needs_pointer_pass(false);
 
     let pointer_pos = root
         .global_state
@@ -871,7 +874,7 @@ pub(crate) fn run_update_pointer_pass(root: &mut RenderRoot) {
                 .map(|widget| widget.id());
         }
         if let Some(state) = root.root_state_mut() {
-            state.needs_paint = true;
+            state.set_needs_paint(true);
         }
         return;
     }
@@ -920,7 +923,7 @@ pub(crate) fn run_update_pointer_pass(root: &mut RenderRoot) {
         && root
             .widget_arena
             .get_state(id)
-            .is_none_or(|state| state.is_disabled)
+            .is_none_or(|state| state.is_disabled())
     {
         next_hovered_widget = None;
     }
@@ -986,14 +989,14 @@ fn update_props_for_widget(
     let class_set = &mut node.item.class_set;
     let id = state.id;
 
-    if !state.needs_update_props {
+    if !state.needs_update_props() {
         return;
     }
 
     // Consume this pass's requests before invoking user callbacks. Requests
     // made by property_changed must survive for the next rewrite pass.
-    state.needs_update_props = false;
-    if std::mem::take(&mut state.request_update_props) {
+    state.set_needs_update_props(false);
+    if state.take_request_update_props() {
         let class_diff = std::mem::take(&mut state.class_diff);
         class_set.apply(&class_diff);
 
@@ -1056,7 +1059,7 @@ pub(crate) fn run_update_props_pass(root: &mut RenderRoot) {
 
     if !root
         .root_state()
-        .is_some_and(|state| state.needs_update_props)
+        .is_some_and(|state| state.needs_update_props())
     {
         return;
     }

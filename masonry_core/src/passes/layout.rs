@@ -317,7 +317,7 @@ pub(crate) fn run_layout_on(
     let properties = &mut node.item.properties;
     let class_set = &node.item.class_set;
     let id = state.id;
-    let trace = global_state.trace.layout;
+    let trace = global_state.trace.enabled(crate::passes::TracePass::Layout);
     let _span = enter_span_if(trace, state);
 
     // This checks reads `is_explicitly_stashed` instead of `is_stashed` because the latter may be outdated.
@@ -326,7 +326,7 @@ pub(crate) fn run_layout_on(
     // Note that, because this check exits before recursing, `run_layout` can only ever be
     // reached for a widget whose parent is not stashed, which means `is_explicitly_stashed`
     // being false is sufficient to know the widget is non-stashed.
-    if state.is_explicitly_stashed {
+    if state.is_explicitly_stashed() {
         debug_panic!(
             "Error in '{}' {}: trying to compute layout of stashed widget.",
             widget.short_type_name(),
@@ -358,20 +358,20 @@ pub(crate) fn run_layout_on(
 
     if !state.needs_layout() && state.layout_border_box_size == border_box_size {
         // We reset this to false to mark that the current widget has been visited.
-        state.request_layout = false;
+        state.set_request_layout(false);
         return;
     }
     state.layout_border_box_size = border_box_size;
 
     // TODO - Not everything that has been re-laid out needs to be repainted.
-    state.needs_paint = true;
-    state.needs_compose = true;
-    state.needs_accessibility = true;
-    state.request_pre_paint = true;
-    state.request_paint = true;
-    state.request_post_paint = true;
-    state.request_compose = true;
-    state.request_accessibility = true;
+    state.set_needs_paint(true);
+    state.set_needs_compose(true);
+    state.set_needs_accessibility(true);
+    state.set_request_pre_paint(true);
+    state.set_request_paint(true);
+    state.set_request_post_paint(true);
+    state.set_request_compose(true);
+    state.set_request_accessibility(true);
 
     if trace {
         trace!(
@@ -409,7 +409,7 @@ pub(crate) fn run_layout_on(
     //
     // See the notes about `is_explicitly_stashed` above.
     recurse_on_children(id, widget, children.reborrow_mut(), |node| {
-        if node.item.state.is_explicitly_stashed {
+        if node.item.state.is_explicitly_stashed() {
             clear_layout_flags(node);
         }
     });
@@ -433,9 +433,9 @@ pub(crate) fn run_layout_on(
         );
     }
 
-    state.request_layout = false;
+    state.set_request_layout(false);
     state.set_needs_layout(false);
-    state.is_expecting_place_child_call = true;
+    state.set_is_expecting_place_child_call(true);
 
     #[cfg(debug_assertions)]
     validate_layout_children(widget, state, children, &children_ids);
@@ -458,8 +458,8 @@ fn mark_layout_children(
             continue;
         };
         let state = &mut child.item.state;
-        if !state.is_explicitly_stashed {
-            state.request_layout = true;
+        if !state.is_explicitly_stashed() {
+            state.set_request_layout(true);
         }
     }
     ids
@@ -482,18 +482,18 @@ fn validate_layout_children(
             continue;
         };
         let child_state = &mut child.item.state;
-        if child_state.is_explicitly_stashed {
-            child_state.request_layout = false;
+        if child_state.is_explicitly_stashed() {
+            child_state.set_request_layout(false);
             continue;
         }
-        if child_state.request_layout {
+        if child_state.request_layout() {
             debug_panic!(
                 "Error in '{name}' {id}: LayoutCtx::run_layout() was not called with child widget '{}' {}.",
                 child_state.widget_name,
                 child_state.id,
             );
         }
-        if child_state.is_expecting_place_child_call {
+        if child_state.is_expecting_place_child_call() {
             debug_panic!(
                 "Error in '{name}' {id}: LayoutCtx::place_child() was not called with child widget '{}' {}.",
                 child_state.widget_name,
@@ -501,7 +501,7 @@ fn validate_layout_children(
             );
         }
     }
-    if *old_ids != ids && !state.children_changed {
+    if *old_ids != ids && !state.children_changed() {
         debug_panic!("Error in '{name}' {id}: children changed during layout pass");
     }
 }
@@ -521,7 +521,7 @@ fn clear_layout_flags(node: ArenaMut<'_, WidgetArenaNode>) {
     }
 
     state.set_needs_layout(false);
-    state.request_layout = false;
+    state.set_request_layout(false);
 
     recurse_on_children(id, widget, children, |node| {
         clear_layout_flags(node);
@@ -539,13 +539,13 @@ pub(crate) fn place_widget(child_state: &mut WidgetState, origin: Point) {
 
     // TODO - We may want to invalidate in other cases as well
     if origin != child_state.origin {
-        child_state.transform_changed = true;
-        child_state.needs_compose = true;
+        child_state.set_transform_changed(true);
+        child_state.set_needs_compose(true);
     }
     child_state.origin = origin;
     child_state.end_point = end_point;
 
-    child_state.is_expecting_place_child_call = false;
+    child_state.set_is_expecting_place_child_call(false);
 }
 
 // --- MARK: ROOT
@@ -556,7 +556,7 @@ pub(crate) fn run_layout_pass(root: &mut RenderRoot) {
     }
 
     let _span = info_span!("layout").entered();
-    root.global_state.needs_pointer_pass = true;
+    root.global_state.set_needs_pointer_pass(true);
 
     let window_size = root.get_kurbo_size();
     let Some(mut root_node) = root.widget_arena.nodes.find_mut(root.root_id()) else {

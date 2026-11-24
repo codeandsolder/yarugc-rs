@@ -232,8 +232,8 @@ impl Widget for ProgressBar {
             painter,
             border_box,
             &border_color,
-            &border_width,
-            &corner_radius,
+            border_width,
+            corner_radius,
         );
     }
 

@@ -70,6 +70,7 @@ pub struct RenderRoot {
 
 /// State shared between passes.
 pub(crate) struct RenderRootState {
+    flags: u8,
     /// Sink for signals to be processed by the event loop.
     pub(crate) signal_sink: Box<dyn FnMut(RenderRootSignal)>,
 
@@ -104,9 +105,6 @@ pub(crate) struct RenderRootState {
     /// Widget which will get text events if no widget is focused.
     pub(crate) focus_fallback: Option<WidgetId>,
 
-    /// Whether the window is focused.
-    pub(crate) window_focused: bool,
-
     /// Widgets that have requested to be scrolled into view.
     ///
     /// The `WidgetId` is the id of the widget that made the request.
@@ -140,9 +138,6 @@ pub(crate) struct RenderRootState {
     /// List of actions that will be handled in the next `action` pass.
     pub(crate) actions: Vec<(ErasedAction, WidgetId)>,
 
-    /// Whether an IME session is active.
-    pub(crate) is_ime_active: bool,
-
     /// The cursor area last sent to the platform.
     pub(crate) last_sent_ime_area: Rect,
 
@@ -154,25 +149,16 @@ pub(crate) struct RenderRootState {
     /// Map of layers attached to widgets, keyed by the attached widget id, then the type of the layer root.
     pub(crate) attached_layers: HashMap<WidgetId, HashMap<TypeId, WidgetId>>,
 
-    /// Whether data set in the pointer pass has been invalidated.
-    pub(crate) needs_pointer_pass: bool,
-
     /// Pass tracing configuration, used to skip tracing to limit overhead.
     pub(crate) trace: PassTracing,
 
     /// Internal state of the widget inspector.
     pub(crate) inspector_state: InspectorState,
 
-    /// Whether the next accessibility pass tree should be updated during `render()`.
-    pub(crate) access_tree_active: bool,
-
     /// DPI scale factor.
     ///
     /// Kurbo coordinates are assumed to be in logical pixels
     pub(crate) scale_factor: f64,
-
-    /// Whether to paint widget's bounding boxes and other visual helpers.
-    pub(crate) debug_paint: bool,
 }
 
 type DeferredMutation = Box<dyn FnOnce(WidgetMut<'_, dyn Widget>)>;
@@ -349,7 +335,8 @@ impl RenderRoot {
                 next_focused_widget: None,
                 focus_anchor: None,
                 focus_fallback: None,
-                window_focused: true,
+                flags: RootFlag::WindowFocused as u8
+                    | ((debug_paint as u8) * RootFlag::DebugPaint as u8),
                 scroll_request_targets: Vec::new(),
                 hovered_path: Vec::new(),
                 active_path: Vec::new(),
@@ -365,20 +352,16 @@ impl RenderRoot {
                 text_layout_context: LayoutContext::new(),
                 mutate_callbacks: Vec::new(),
                 actions: Vec::new(),
-                is_ime_active: false,
                 last_sent_ime_area: INVALID_IME_AREA,
                 scene_cache: HashMap::new(),
                 widget_tags: HashMap::new(),
                 attached_layers: HashMap::new(),
-                needs_pointer_pass: false,
                 trace: PassTracing::from_env(),
                 inspector_state: InspectorState {
                     is_picking_widget: false,
                     hovered_widget: None,
                 },
-                access_tree_active: false,
                 scale_factor,
-                debug_paint,
             },
             property_arena: PropertyArena::new(default_properties),
             widget_arena: WidgetArena {
@@ -434,8 +417,8 @@ impl RenderRoot {
             let widget = &mut *node.item.widget;
             let state = &mut node.item.state;
 
-            state.request_update_props = true;
-            state.needs_update_props = true;
+            state.set_request_update_props(true);
+            state.set_needs_update_props(true);
             state.property_cache.invalidate();
 
             let id = state.id;
@@ -492,7 +475,7 @@ impl RenderRoot {
             WindowEvent::Resize(size) => {
                 self.global_state.size = size;
                 if let Some(state) = self.root_state_mut() {
-                    state.request_layout = true;
+                    state.set_request_layout(true);
                     state.set_needs_layout(true);
                 }
                 self.run_rewrite_passes();
@@ -502,7 +485,7 @@ impl RenderRoot {
                 self.run_rewrite_passes();
             }
             WindowEvent::EnableAccessTree => {
-                self.global_state.access_tree_active = true;
+                self.global_state.set_access_tree_active(true);
                 // AccessKit expects the next update to have include
                 // a description of every single node.
                 self.request_access_all();
@@ -510,7 +493,7 @@ impl RenderRoot {
                     .emit_signal(RenderRootSignal::RequestRedraw);
             }
             WindowEvent::DisableAccessTree => {
-                self.global_state.access_tree_active = false;
+                self.global_state.set_access_tree_active(false);
             }
         }
         Handled::Yes
@@ -585,7 +568,7 @@ impl RenderRoot {
     pub fn redraw(&mut self) -> (VisualLayerPlan, Option<TreeUpdate>) {
         self.run_rewrite_passes();
 
-        let access_tree_active = self.global_state.access_tree_active;
+        let access_tree_active = self.global_state.access_tree_active();
 
         // TODO - Handle invalidation regions
         let visual_layers = run_paint_pass(self);
@@ -798,7 +781,7 @@ impl RenderRoot {
                 .emit_signal(RenderRootSignal::RequestRedraw);
         }
 
-        if self.root_state().is_some_and(|state| state.needs_anim) {
+        if self.root_state().is_some_and(|state| state.needs_anim()) {
             self.global_state
                 .emit_signal(RenderRootSignal::RequestAnimFrame);
         }
@@ -806,18 +789,19 @@ impl RenderRoot {
         // We request a redraw if either the render tree or the accessibility
         // tree needs to be rebuilt. Usually both are rebuilt at the same time.
         // A redraw will trigger a rebuild of the accessibility tree.
-        if self.root_state().is_some_and(|state| state.needs_paint) || self.needs_accessibility() {
+        if self.root_state().is_some_and(|state| state.needs_paint()) || self.needs_accessibility()
+        {
             self.global_state
                 .emit_signal(RenderRootSignal::RequestRedraw);
         }
 
-        if self.global_state.is_ime_active {
+        if self.global_state.is_ime_active() {
             let Some(state) = self
                 .global_state
                 .focused_widget
                 .and_then(|id| self.widget_arena.get_state(id))
             else {
-                self.global_state.is_ime_active = false;
+                self.global_state.set_is_ime_active(false);
                 self.global_state.emit_signal(RenderRootSignal::EndIme);
                 return;
             };
@@ -843,8 +827,8 @@ impl RenderRoot {
             let widget = &mut *node.item.widget;
             let state = &mut node.item.state;
 
-            state.needs_accessibility = true;
-            state.request_accessibility = true;
+            state.set_needs_accessibility(true);
+            state.set_request_accessibility(true);
 
             let id = state.id;
             recurse_on_children(id, widget, children, |node| {
@@ -865,12 +849,12 @@ impl RenderRoot {
             let widget = &mut *node.item.widget;
             let state = &mut node.item.state;
 
-            state.needs_paint = true;
-            state.needs_accessibility = true;
-            state.request_pre_paint = true;
-            state.request_paint = true;
-            state.request_accessibility = true;
-            state.request_post_paint = true;
+            state.set_needs_paint(true);
+            state.set_needs_accessibility(true);
+            state.set_request_pre_paint(true);
+            state.set_request_paint(true);
+            state.set_request_accessibility(true);
+            state.set_request_post_paint(true);
 
             let id = state.id;
             recurse_on_children(id, widget, children, |node| {
@@ -894,7 +878,7 @@ impl RenderRoot {
         };
         let state = &node.item.state;
 
-        !state.is_stashed && !state.is_disabled
+        !state.is_stashed() && !state.is_disabled()
     }
 
     /// Returns the [`WidgetId`] of the [focused widget](crate::doc::masonry_concepts#text-focus).
@@ -938,17 +922,17 @@ impl RenderRoot {
 
     /// Returns true if the widget tree is waiting for an animation frame.
     pub fn needs_anim(&self) -> bool {
-        self.root_state().is_some_and(|state| state.needs_anim)
+        self.root_state().is_some_and(|state| state.needs_anim())
     }
 
     /// Returns true if the accessibility tree needs to be rebuilt.
     ///
     /// This will be inhibited if `access_tree_active` is false.
     pub fn needs_accessibility(&self) -> bool {
-        self.global_state.access_tree_active
+        self.global_state.access_tree_active()
             && self
                 .root_state()
-                .is_some_and(|state| state.needs_accessibility)
+                .is_some_and(|state| state.needs_accessibility())
     }
 
     /// Returns `true` if something requires a rewrite pass or a re-render.
@@ -1024,12 +1008,12 @@ impl RenderRoot {
             // We tell the node state there some props update that needs to be done,
             // since we can't tell in advance if its child has the property stack id.
             // If not, the property changes will be not visible when we run the rewrite passes.
-            state.needs_update_props = true;
+            state.set_needs_update_props(true);
 
             let is_linked_to_p_stack = state.property_stack_id == Some(stack_id);
 
             if is_linked_to_p_stack {
-                state.request_update_props = true;
+                state.set_request_update_props(true);
                 state.property_cache.invalidate();
             }
 
@@ -1066,7 +1050,36 @@ impl std::fmt::Debug for RenderRootState {
     }
 }
 
+#[derive(Clone, Copy)]
+#[repr(u8)]
+enum RootFlag {
+    WindowFocused = 1 << 0,
+    IsImeActive = 1 << 1,
+    NeedsPointerPass = 1 << 2,
+    AccessTreeActive = 1 << 3,
+    DebugPaint = 1 << 4,
+}
+
+macro_rules! root_flag_accessors {
+    ($get:ident, $set:ident, $flag:ident) => {
+        pub(crate) const fn $get(&self) -> bool {
+            self.flags & RootFlag::$flag as u8 != 0
+        }
+
+        pub(crate) const fn $set(&mut self, value: bool) {
+            self.flags =
+                (self.flags & !(RootFlag::$flag as u8)) | ((value as u8) * RootFlag::$flag as u8);
+        }
+    };
+}
+
 impl RenderRootState {
+    root_flag_accessors!(window_focused, set_window_focused, WindowFocused);
+    root_flag_accessors!(is_ime_active, set_is_ime_active, IsImeActive);
+    root_flag_accessors!(needs_pointer_pass, set_needs_pointer_pass, NeedsPointerPass);
+    root_flag_accessors!(access_tree_active, set_access_tree_active, AccessTreeActive);
+    root_flag_accessors!(debug_paint, set_debug_paint, DebugPaint);
+
     /// Sends a signal to the runner of this app, which allows global actions to be triggered by a widget.
     pub(crate) fn emit_signal(&mut self, signal: RenderRootSignal) {
         (self.signal_sink)(signal);
@@ -1078,7 +1091,7 @@ impl RenderRootState {
     /// either returns true, the fixed point loop of the rewrite passes will be run again.
     /// All passes have a fast-path exit check; these together are the union of those checks.
     pub(crate) fn needs_rewrite_passes(&self) -> bool {
-        self.needs_pointer_pass
+        self.needs_pointer_pass()
             || self.focused_widget != self.next_focused_widget
             || !self.mutate_callbacks.is_empty()
             || !self.actions.is_empty()

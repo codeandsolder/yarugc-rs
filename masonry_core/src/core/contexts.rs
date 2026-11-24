@@ -423,7 +423,7 @@ impl EventCtx<'_> {
         }
         // TODO: plumb pointer capture through to platform (through winit)
         self.global_state.pointer_capture_target = Some(id);
-        self.global_state.needs_pointer_pass = true;
+        self.global_state.set_needs_pointer_pass(true);
     }
 
     /// Releases the pointer previously [captured] through [`capture_pointer`].
@@ -441,7 +441,7 @@ impl EventCtx<'_> {
             return;
         }
         self.global_state.pointer_capture_target = None;
-        self.global_state.needs_pointer_pass = true;
+        self.global_state.set_needs_pointer_pass(true);
     }
 
     /// The widget originally targeted by the event.
@@ -789,7 +789,7 @@ impl LayoutCtx<'_> {
     ) -> Option<&WidgetState> {
         let state = self.get_child_state(child)?;
         // In debug builds, request_layout remains true until visited.
-        if state.needs_layout() || (cfg!(debug_assertions) && state.request_layout) {
+        if state.needs_layout() || (cfg!(debug_assertions) && state.request_layout()) {
             debug_panic!(
                 "Error in {}: trying to call '{}' with child {} before computing its layout",
                 self.widget_id(),
@@ -808,7 +808,7 @@ impl LayoutCtx<'_> {
         method_name: &str,
     ) -> Option<&WidgetState> {
         let state = self.laid_out_child(child, method_name)?;
-        if state.is_expecting_place_child_call {
+        if state.is_expecting_place_child_call() {
             debug_panic!(
                 "Error in {}: trying to call '{}' with child {} before placing it",
                 self.widget_id(),
@@ -1109,9 +1109,9 @@ impl LayoutCtx<'_> {
         self.widget_state.clip_path = Some(path);
         // TODO - Updating the clip path may have
         // other knock-on effects we'd need to document.
-        self.widget_state.request_accessibility = true;
-        self.widget_state.needs_accessibility = true;
-        self.widget_state.needs_paint = true;
+        self.widget_state.set_request_accessibility(true);
+        self.widget_state.set_needs_accessibility(true);
+        self.widget_state.set_needs_paint(true);
     }
 
     /// Removes the widget's clip path.
@@ -1122,9 +1122,9 @@ impl LayoutCtx<'_> {
         self.widget_state.clip_path = None;
         // TODO - Updating the clip path may have
         // other knock-on effects we'd need to document.
-        self.widget_state.request_accessibility = true;
-        self.widget_state.needs_accessibility = true;
-        self.widget_state.needs_paint = true;
+        self.widget_state.set_request_accessibility(true);
+        self.widget_state.set_needs_accessibility(true);
+        self.widget_state.set_needs_paint(true);
     }
 }
 
@@ -1167,8 +1167,8 @@ impl ComposeCtx<'_> {
             && translation != child.scroll_translation
         {
             child.scroll_translation = translation;
-            child.transform_changed = true;
-            child.needs_compose = true;
+            child.set_transform_changed(true);
+            child.set_needs_compose(true);
         }
     }
 }
@@ -1338,7 +1338,7 @@ impl_context_method!(
         /// [captured]: crate::doc::masonry_concepts#pointer-capture
         #[must_use = "Inspect the widget's hover state."]
         pub const fn is_hovered(&self) -> bool {
-            self.widget_state.is_hovered
+            self.widget_state.is_hovered()
         }
 
         /// Whether this widget or any of its descendants are hovered.
@@ -1346,7 +1346,7 @@ impl_context_method!(
         /// To check if only this specific widget is hovered use [`is_hovered`](Self::is_hovered).
         #[must_use = "Inspect hover state in the subtree."]
         pub const fn has_hovered(&self) -> bool {
-            self.widget_state.has_hovered
+            self.widget_state.has_hovered()
         }
 
         /// The "active" status of a widget.
@@ -1358,7 +1358,7 @@ impl_context_method!(
         /// [captured]: crate::doc::masonry_concepts#pointer-capture
         #[must_use = "Inspect the widget's active state."]
         pub const fn is_active(&self) -> bool {
-            self.widget_state.is_active
+            self.widget_state.is_active()
         }
 
         /// Whether this widget or any of its descendants are active.
@@ -1366,7 +1366,7 @@ impl_context_method!(
         /// To check if only this specific widget is active use [`is_active`](Self::is_active).
         #[must_use = "Inspect active state in the subtree."]
         pub const fn has_active(&self) -> bool {
-            self.widget_state.has_active
+            self.widget_state.has_active()
         }
 
         /// Whether a pointer is [captured] by this widget.
@@ -1399,13 +1399,13 @@ impl_context_method!(
         /// To check if only this specific widget is focused use [`is_focus_target`](Self::is_focus_target).
         #[must_use = "Check whether this subtree contains focus."]
         pub const fn has_focus_target(&self) -> bool {
-            self.widget_state.has_focus_target
+            self.widget_state.has_focus_target()
         }
 
         /// Whether the window is focused.
         #[must_use = "Check the window's focus state."]
         pub const fn is_window_focused(&self) -> bool {
-            self.global_state.window_focused
+            self.global_state.window_focused()
         }
 
         /// The widget, if any, which has [pointer capture].
@@ -1434,7 +1434,7 @@ impl_context_method!(
         /// See [`Widget::accepts_pointer_interaction()`] for details.
         #[must_use = "Check whether this widget accepts pointer input."]
         pub const fn accepts_pointer_interaction(&self) -> bool {
-            self.widget_state.accepts_pointer_interaction
+            self.widget_state.accepts_pointer_interaction()
         }
 
         /// Whether children of this widget get pointer events and hovered status.
@@ -1442,7 +1442,7 @@ impl_context_method!(
         /// See [`Widget::propagates_pointer_interaction()`] for details.
         #[must_use = "Check whether this widget permits pointer input to children."]
         pub const fn propagates_pointer_interaction(&self) -> bool {
-            self.widget_state.propagates_pointer_interaction
+            self.widget_state.propagates_pointer_interaction()
         }
 
         /// Whether this widget gets text focus.
@@ -1450,7 +1450,7 @@ impl_context_method!(
         /// See [`Widget::accepts_focus()`] for details.
         #[must_use = "Check whether this widget accepts keyboard focus."]
         pub const fn accepts_focus(&self) -> bool {
-            self.widget_state.accepts_focus
+            self.widget_state.accepts_focus()
         }
 
         /// Whether this widget gets IME events.
@@ -1458,7 +1458,7 @@ impl_context_method!(
         /// See [`Widget::accepts_text_input()`] for details.
         #[must_use = "Check whether this widget accepts IME input."]
         pub const fn accepts_text_input(&self) -> bool {
-            self.widget_state.accepts_text_input
+            self.widget_state.accepts_text_input()
         }
 
         /// Whether this widget is [disabled].
@@ -1470,7 +1470,7 @@ impl_context_method!(
         /// [`set_disabled`]: EventCtx::set_disabled
         #[must_use = "Inspect the effective disabled state."]
         pub const fn is_disabled(&self) -> bool {
-            self.widget_state.is_disabled
+            self.widget_state.is_disabled()
         }
 
         /// Whether this widget is [stashed].
@@ -1478,7 +1478,7 @@ impl_context_method!(
         /// [stashed]: crate::doc::masonry_concepts#stashed
         #[must_use = "Inspect the effective stashed state."]
         pub const fn is_stashed(&self) -> bool {
-            self.widget_state.is_stashed
+            self.widget_state.is_stashed()
         }
 
         /// Returns whether the given child is [stashed].
@@ -1491,7 +1491,7 @@ impl_context_method!(
         #[must_use = "Check whether the child is stashed."]
         pub fn child_is_stashed(&self, child: &WidgetPod<impl Widget + ?Sized>) -> bool {
             self.get_child_state(child)
-                .is_none_or(|state| state.is_stashed)
+                .is_none_or(|state| state.is_stashed())
         }
     }
 );
@@ -1508,19 +1508,19 @@ impl_context_method!(
         /// [`accessibility`](crate::core::Widget::accessibility) pass.
         pub fn request_render(&mut self) {
             trace!("request_render");
-            self.widget_state.request_pre_paint = true;
-            self.widget_state.request_paint = true;
-            self.widget_state.request_post_paint = true;
-            self.widget_state.needs_paint = true;
-            self.widget_state.needs_accessibility = true;
-            self.widget_state.request_accessibility = true;
+            self.widget_state.set_request_pre_paint(true);
+            self.widget_state.set_request_paint(true);
+            self.widget_state.set_request_post_paint(true);
+            self.widget_state.set_needs_paint(true);
+            self.widget_state.set_needs_accessibility(true);
+            self.widget_state.set_request_accessibility(true);
         }
 
         /// Requests a paint pass for the [`pre_paint`](crate::core::Widget::pre_paint) method.
         pub fn request_pre_paint(&mut self) {
             trace!("request_pre_paint");
-            self.widget_state.request_pre_paint = true;
-            self.widget_state.needs_paint = true;
+            self.widget_state.set_request_pre_paint(true);
+            self.widget_state.set_needs_paint(true);
         }
 
         /// Requests a paint pass, specifically for the [`paint`] method.
@@ -1537,15 +1537,15 @@ impl_context_method!(
         /// [`post_paint`]: crate::core::Widget::post_paint
         pub fn request_paint_only(&mut self) {
             trace!("request_paint_only");
-            self.widget_state.request_paint = true;
-            self.widget_state.needs_paint = true;
+            self.widget_state.set_request_paint(true);
+            self.widget_state.set_needs_paint(true);
         }
 
         /// Requests a paint pass for the [`post_paint`](crate::core::Widget::post_paint) method.
         pub fn request_post_paint(&mut self) {
             trace!("request_post_paint");
-            self.widget_state.request_post_paint = true;
-            self.widget_state.needs_paint = true;
+            self.widget_state.set_request_post_paint(true);
+            self.widget_state.set_needs_paint(true);
         }
 
         /// Requests an [`accessibility`](crate::core::Widget::accessibility) pass.
@@ -1555,8 +1555,8 @@ impl_context_method!(
         /// use [`request_render`](Self::request_render).
         pub fn request_accessibility_update(&mut self) {
             trace!("request_accessibility_update");
-            self.widget_state.needs_accessibility = true;
-            self.widget_state.request_accessibility = true;
+            self.widget_state.set_needs_accessibility(true);
+            self.widget_state.set_request_accessibility(true);
         }
 
         /// Requests a [`layout`] pass.
@@ -1566,7 +1566,7 @@ impl_context_method!(
         /// [`layout`]: crate::core::Widget::layout
         pub fn request_layout(&mut self) {
             trace!("request_layout");
-            self.widget_state.request_layout = true;
+            self.widget_state.set_request_layout(true);
             self.widget_state.set_needs_layout(true);
         }
 
@@ -1580,15 +1580,15 @@ impl_context_method!(
         /// [`compose`]: crate::core::Widget::compose
         pub fn request_compose(&mut self) {
             trace!("request_compose");
-            self.widget_state.needs_compose = true;
-            self.widget_state.request_compose = true;
+            self.widget_state.set_needs_compose(true);
+            self.widget_state.set_request_compose(true);
         }
 
         /// Requests an animation frame.
         pub fn request_anim_frame(&mut self) {
             trace!("request_anim_frame");
-            self.widget_state.request_anim = true;
-            self.widget_state.needs_anim = true;
+            self.widget_state.set_request_anim(true);
+            self.widget_state.set_needs_anim(true);
         }
 
         /// Notifies Masonry that the cursor returned by [`Widget::get_cursor`] has changed.
@@ -1597,7 +1597,7 @@ impl_context_method!(
         /// move, because the nature of the widget has changed somehow.
         pub fn request_cursor_icon_change(&mut self) {
             trace!("request_cursor_icon_change");
-            self.global_state.needs_pointer_pass = true;
+            self.global_state.set_needs_pointer_pass(true);
         }
 
         /// Indicates that your children have changed.
@@ -1607,8 +1607,8 @@ impl_context_method!(
         /// This method will also call [`request_layout`](Self::request_layout).
         pub fn children_changed(&mut self) {
             trace!("children_changed");
-            self.widget_state.children_changed = true;
-            self.widget_state.needs_update_focusable = true;
+            self.widget_state.set_children_changed(true);
+            self.widget_state.set_needs_update_focusable(true);
             self.request_layout();
         }
 
@@ -1669,8 +1669,8 @@ impl_context_method!(
         ///
         /// [`is_disabled`]: EventCtx::is_disabled
         pub const fn set_disabled(&mut self, disabled: bool) {
-            self.widget_state.needs_update_disabled = true;
-            self.widget_state.is_explicitly_disabled = disabled;
+            self.widget_state.set_needs_update_disabled(true);
+            self.widget_state.set_is_explicitly_disabled(disabled);
         }
 
         /// Sets the local transform for this widget.
@@ -1681,8 +1681,8 @@ impl_context_method!(
         /// It behaves similarly as CSS transforms.
         pub const fn set_transform(&mut self, transform: Affine) {
             self.widget_state.transform = transform;
-            self.widget_state.transform_changed = true;
-            self.widget_state.needs_compose = true;
+            self.widget_state.set_transform_changed(true);
+            self.widget_state.set_needs_compose(true);
         }
 
         /// Adds a string to this widget's [class set].
@@ -1692,8 +1692,8 @@ impl_context_method!(
         /// [class]: crate::doc::masonry_concepts#classes
         pub fn add_class(&mut self, class: &str) {
             self.widget_state.class_diff.add(class);
-            self.widget_state.request_update_props = true;
-            self.widget_state.needs_update_props = true;
+            self.widget_state.set_request_update_props(true);
+            self.widget_state.set_needs_update_props(true);
         }
 
         /// Removes a string from this widget's [class set].
@@ -1703,8 +1703,8 @@ impl_context_method!(
         /// [class]: crate::doc::masonry_concepts#classes
         pub fn remove_class(&mut self, class: &str) {
             self.widget_state.class_diff.remove(class);
-            self.widget_state.request_update_props = true;
-            self.widget_state.needs_update_props = true;
+            self.widget_state.set_request_update_props(true);
+            self.widget_state.set_needs_update_props(true);
         }
     }
 );
@@ -1734,10 +1734,10 @@ impl_context_method!(
             // Stashing is generally a property derived from the parent widget's state
             // (rather than set imperatively), so it is likely to be set as part of passes.
             // Therefore, we avoid re-running the update_stashed_pass in most cases.
-            if child_state.is_explicitly_stashed != stashed {
-                child_state.is_explicitly_stashed = stashed;
-                child_state.needs_update_stashed = true;
-                self.widget_state.needs_update_stashed = true;
+            if child_state.is_explicitly_stashed() != stashed {
+                child_state.set_is_explicitly_stashed(stashed);
+                child_state.set_needs_update_stashed(true);
+                self.widget_state.set_needs_update_stashed(true);
             }
         }
 
@@ -2174,7 +2174,7 @@ impl PaintCtx<'_> {
     /// Debug paint can be enabled by setting the environment variable `MASONRY_DEBUG_PAINT`.
     #[must_use = "Check whether debug painting is enabled."]
     pub const fn debug_paint_enabled(&self) -> bool {
-        self.global_state.debug_paint
+        self.global_state.debug_paint()
     }
 
     /// A color used for debug painting in this widget.

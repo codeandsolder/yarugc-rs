@@ -90,63 +90,76 @@ pub(crate) fn merge_state_up(arena: &mut WidgetArena, widget_id: WidgetId) {
 /// (at best) non-trivial to make that work.
 ///
 /// We could *maybe* use a global parent span called "Pass", with a name field, but that's extremely ugly.
-pub(crate) struct PassTracing {
-    pub(crate) update_tree: bool,
-    pub(crate) anim: bool,
-    pub(crate) layout: bool,
-    /// Compose is the biggest offender, as it is likely caused by a mouse move.
-    pub(crate) compose: bool,
-    pub(crate) paint: bool,
-    pub(crate) access: bool,
+pub(crate) struct PassTracing(u8);
+
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub(crate) enum TracePass {
+    UpdateTree = 1 << 0,
+    Anim = 1 << 1,
+    Layout = 1 << 2,
+    Compose = 1 << 3,
+    Paint = 1 << 4,
+    Access = 1 << 5,
 }
 
 impl PassTracing {
+    const ALL: u8 = TracePass::UpdateTree as u8
+        | TracePass::Anim as u8
+        | TracePass::Layout as u8
+        | TracePass::Compose as u8
+        | TracePass::Paint as u8
+        | TracePass::Access as u8;
+
+    pub(crate) const fn enabled(&self, pass: TracePass) -> bool {
+        self.0 & pass as u8 != 0
+    }
+
     pub(crate) fn from_env() -> Self {
         let env_var = match std::env::var("MASONRY_TRACE_PASSES") {
             Ok(env_var) => env_var,
-            // If it's not set, don't show any passes.
-            Err(std::env::VarError::NotPresent) => return Self::unit(false),
+            Err(std::env::VarError::NotPresent) => return Self(0),
             Err(std::env::VarError::NotUnicode(value)) => {
                 tracing::error!(
                     ?value,
                     "Couldn't parse `MASONRY_TRACE_PASSES` environment variable: Not valid UTF-8",
                 );
-                return Self::unit(false);
+                return Self(0);
             }
         };
-        let env_var = env_var.trim();
 
+        let env_var = env_var.trim();
         if env_var.eq_ignore_ascii_case("all") {
-            return Self::unit(true);
+            return Self(Self::ALL);
         }
-        let mut result = Self::unit(false);
+        let mut result = Self(0);
         let mut show_help = false;
-        let mut supported_passes = [
-            ("update_tree", &mut result.update_tree),
-            ("anim", &mut result.anim),
-            ("layout", &mut result.layout),
-            ("compose", &mut result.compose),
-            ("paint", &mut result.paint),
-            ("access", &mut result.access),
+        let supported_passes = [
+            ("update_tree", TracePass::UpdateTree),
+            ("anim", TracePass::Anim),
+            ("layout", TracePass::Layout),
+            ("compose", TracePass::Compose),
+            ("paint", TracePass::Paint),
+            ("access", TracePass::Access),
         ];
         for input_name in env_var.split(',').map(str::trim) {
-            if input_name == "all" {
+            if input_name.eq_ignore_ascii_case("all") {
                 tracing::warn!(
                     "`MASONRY_TRACE_PASSES=all` cannot be meaningfully combined with other passes"
                 );
-                return Self::unit(true);
+                return Self(Self::ALL);
             }
-            if let Some((_, value)) = supported_passes
-                .iter_mut()
-                .find(|(pass_name, _)| pass_name.eq_ignore_ascii_case(input_name))
+            if let Some((_, pass)) = supported_passes
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case(input_name))
             {
-                if **value {
+                if result.enabled(*pass) {
                     tracing::warn!(
                         pass = input_name,
                         "MASONRY_TRACE_PASSES: Enabled tracing for same pass twice"
                     );
                 }
-                **value = true;
+                result.0 |= *pass as u8;
             } else {
                 tracing::warn!(pass = input_name, "MASONRY_TRACE_PASSES: Unknown pass");
                 show_help = true;
@@ -155,8 +168,7 @@ impl PassTracing {
         if show_help {
             let supported_str = supported_passes
                 .iter()
-                .map(|(name, _)| name)
-                .copied()
+                .map(|(name, _)| *name)
                 .collect::<Vec<_>>()
                 .join(", ");
             tracing::warn!(
@@ -164,17 +176,5 @@ impl PassTracing {
             );
         }
         result
-    }
-
-    /// A `PassTracing` where all the fields have the same `value`.
-    const fn unit(value: bool) -> Self {
-        Self {
-            update_tree: value,
-            anim: value,
-            layout: value,
-            compose: value,
-            paint: value,
-            access: value,
-        }
     }
 }

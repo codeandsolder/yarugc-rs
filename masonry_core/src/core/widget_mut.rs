@@ -159,8 +159,8 @@ impl<W: Widget + ?Sized> WidgetMut<'_, W> {
         if state.property_stack_id == stack_id {
             return;
         }
-        state.request_update_props = true;
-        state.needs_update_props = true;
+        state.set_request_update_props(true);
+        state.set_needs_update_props(true);
         state.property_cache.invalidate();
         state.property_stack_id = stack_id;
         self.ctx.properties.stack = self
