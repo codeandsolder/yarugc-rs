@@ -19,6 +19,10 @@ wgpu.workspace = true
 peniko.workspace = true
 
 [dev-dependencies]
+glyphon = "=0.12.0"
+sluggrs_skylines = "=0.3.4"
+vello = "=0.11.0"
+wgpu-font-renderer = { git = "https://github.com/ValentinRio/wgpu-font-renderer", rev = "831beb37d2a6fc5e366d4acb6d23876df367ed44" } # v1.1.0, LF shader source
 masonry.workspace = true
 pollster = "0.4"
 
