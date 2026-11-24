@@ -17,30 +17,8 @@ use crate::{DomView, ViewCtx};
 
 type CowStr = std::borrow::Cow<'static, str>;
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-/// An modifier element to either set or remove an inline style.
-///
-/// It's used in [`Styles`].
-pub enum StyleModifier {
-    Set(CowStr, CowStr),
-    Remove(CowStr),
-}
-
-impl StyleModifier {
-    /// Returns the property name of this modifier.
-    #[must_use = "Use the modifier style name."]
-    pub const fn name(&self) -> &CowStr {
-        let (Self::Set(name, _) | Self::Remove(name)) = self;
-        name
-    }
-
-    /// Convert this modifier into its property name.
-    #[must_use = "Use the modifier style name."]
-    pub fn into_name(self) -> CowStr {
-        let (Self::Set(name, _) | Self::Remove(name)) = self;
-        name
-    }
-}
+/// A modifier that sets or removes a named style property.
+pub type StyleModifier = super::NamedModifier<CowStr>;
 
 impl<V: Into<Option<CowStr>>, K: Into<CowStr>> From<(K, V)> for StyleModifier {
     fn from((name, value): (K, V)) -> Self {

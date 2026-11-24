@@ -71,6 +71,31 @@ pub use elements::*;
 
 use crate::{AnyPod, DomNode, Pod, PodFlags, PodMut};
 
+/// A named DOM property that is either set to a value or removed.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum NamedModifier<V> {
+    /// Set the property.
+    Set(std::borrow::Cow<'static, str>, V),
+    /// Remove the property.
+    Remove(std::borrow::Cow<'static, str>),
+}
+
+impl<V> NamedModifier<V> {
+    /// The property name.
+    #[must_use = "Use the name to identify the property."]
+    pub const fn name(&self) -> &std::borrow::Cow<'static, str> {
+        let (Self::Set(name, _) | Self::Remove(name)) = self;
+        name
+    }
+
+    /// Consume the modifier and return its property name.
+    #[must_use = "Use the name to identify the property."]
+    pub fn into_name(self) -> std::borrow::Cow<'static, str> {
+        let (Self::Set(name, _) | Self::Remove(name)) = self;
+        name
+    }
+}
+
 /// This struct is a container, with the current Element state (e.g. whether it was created/hydrated or generally needs an update), and the modifier itself.
 pub struct Modifier<'a, M> {
     pub modifier: &'a mut M,

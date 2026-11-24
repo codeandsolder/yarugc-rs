@@ -12,30 +12,8 @@ use crate::{AttributeValue, DomView, IntoAttributeValue, ViewCtx};
 
 type CowStr = std::borrow::Cow<'static, str>;
 
-#[derive(Debug, PartialEq, Clone)]
-/// An modifier element to either set or remove an attribute.
-///
-/// It's used in [`Attributes`].
-pub enum AttributeModifier {
-    Set(CowStr, AttributeValue),
-    Remove(CowStr),
-}
-
-impl AttributeModifier {
-    /// Returns the attribute name of this modifier.
-    #[must_use = "Use the modifier attribute name."]
-    pub const fn name(&self) -> &CowStr {
-        let (Self::Set(name, _) | Self::Remove(name)) = self;
-        name
-    }
-
-    /// Convert this modifier into its attribute name.
-    #[must_use = "Use the modifier attribute name."]
-    pub fn into_name(self) -> CowStr {
-        let (Self::Set(name, _) | Self::Remove(name)) = self;
-        name
-    }
-}
+/// A modifier that sets or removes a named attribute property.
+pub type AttributeModifier = super::NamedModifier<AttributeValue>;
 
 impl<K: Into<CowStr>, V: IntoAttributeValue> From<(K, V)> for AttributeModifier {
     fn from((name, value): (K, V)) -> Self {
