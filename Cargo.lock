@@ -6920,6 +6920,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
+name = "yarugc"
+version = "0.4.0"
+dependencies = [
+ "masonry",
+ "masonry_core",
+ "masonry_imaging",
+ "peniko",
+ "pollster",
+ "wgpu",
+]
+
+[[package]]
 name = "yeslogic-fontconfig-sys"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

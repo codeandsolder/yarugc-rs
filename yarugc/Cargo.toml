@@ -1,0 +1,24 @@
+[package]
+name = "yarugc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository = "https://github.com/codeandsolder/yarugc-rs"
+description = "Engine-owned retained GPU window composition for Masonry widgets"
+keywords = ["gui", "wgpu", "compositor"]
+categories = ["gui", "rendering"]
+readme = "README.md"
+
+[dependencies]
+masonry_core.workspace = true
+masonry_imaging = { workspace = true, features = ["imaging_vello"] }
+wgpu.workspace = true
+peniko.workspace = true
+
+[dev-dependencies]
+masonry.workspace = true
+pollster = "0.4"
+
+[lints]
+workspace = true
