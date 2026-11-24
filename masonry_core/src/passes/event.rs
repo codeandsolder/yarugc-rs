@@ -141,6 +141,41 @@ fn run_event_pass<E>(
 }
 
 // --- MARK: POINTER_EVENT
+fn capture_layer_pointer_events(root: &mut RenderRoot, event: &PointerEvent) {
+    let layer_ids = root.layer_root_ids();
+    for layer_id in layer_ids {
+        let Some(mut layer_root) = root.widget_arena.nodes.find_mut(layer_id) else {
+            continue;
+        };
+        let layer_type_id = layer_root.item.widget.as_ref().type_id();
+        if let Some(layer) = layer_root.item.widget.as_layer() {
+            let stack = root
+                .property_arena
+                .get(layer_root.item.state.property_stack_id, layer_type_id);
+            let mut ctx = EventCtx {
+                global_state: &mut root.global_state,
+                widget_state: &mut layer_root.item.state,
+                children: layer_root.children.reborrow_mut(),
+                property_arena: &root.property_arena,
+                target: layer_id,
+                allow_pointer_capture: false,
+                is_handled: false,
+            };
+            let mut props = PropertiesMut {
+                local: &mut layer_root.item.properties,
+                default_map: root
+                    .property_arena
+                    .default_properties
+                    .for_widget(layer.type_id()),
+                stack,
+                class_set: &layer_root.item.class_set,
+            };
+
+            layer.capture_pointer_event(&mut ctx, &mut props, event);
+        }
+    }
+}
+
 /// See the [passes documentation](crate::doc::pass_system#event-passes).
 pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEvent) -> Handled {
     let _span = info_span!("dispatch_pointer_event").entered();
@@ -183,38 +218,7 @@ pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEv
         return Handled::Yes;
     }
 
-    let layer_ids = root.layer_root_ids();
-    for layer_id in layer_ids {
-        let Some(mut layer_root) = root.widget_arena.nodes.find_mut(layer_id) else {
-            continue;
-        };
-        let layer_type_id = layer_root.item.widget.as_ref().type_id();
-        if let Some(layer) = layer_root.item.widget.as_layer() {
-            let stack = root
-                .property_arena
-                .get(layer_root.item.state.property_stack_id, layer_type_id);
-            let mut ctx = EventCtx {
-                global_state: &mut root.global_state,
-                widget_state: &mut layer_root.item.state,
-                children: layer_root.children.reborrow_mut(),
-                property_arena: &root.property_arena,
-                target: layer_id,
-                allow_pointer_capture: false,
-                is_handled: false,
-            };
-            let mut props = PropertiesMut {
-                local: &mut layer_root.item.properties,
-                default_map: root
-                    .property_arena
-                    .default_properties
-                    .for_widget(layer.type_id()),
-                stack,
-                class_set: &layer_root.item.class_set,
-            };
-
-            layer.capture_pointer_event(&mut ctx, &mut props, event);
-        }
-    }
+    capture_layer_pointer_events(root, event);
 
     let target_widget_id = get_pointer_target(root, event_pos);
 

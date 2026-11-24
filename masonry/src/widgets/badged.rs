@@ -193,19 +193,13 @@ impl Widget for Badged {
     ) -> Length {
         let auto_length = len_req.into();
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-        ctx.compute_length(
-            &mut self.content,
-            auto_length,
-            context_size,
-            axis,
-            cross_length,
-        )
+        ctx.compute_length(&self.content, auto_length, context_size, axis, cross_length)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let content_size = ctx.compute_size(&mut self.content, SizeDef::fit(size), size.into());
-        ctx.run_layout(&mut self.content, content_size);
-        ctx.place_child(&mut self.content, Point::ORIGIN);
+        let content_size = ctx.compute_size(&self.content, SizeDef::fit(size), size.into());
+        ctx.run_layout(&self.content, content_size);
+        ctx.place_child(&self.content, Point::ORIGIN);
         ctx.derive_baselines(&self.content);
 
         let Some(badge) = &mut self.badge else {

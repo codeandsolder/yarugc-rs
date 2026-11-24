@@ -1335,10 +1335,10 @@ impl<T: Steppable> Widget for StepInput<T> {
         let style = props.get::<StepInputStyle>(cache);
 
         let (len_req, min_result) = match len_req {
-            LenReq::MinContent | LenReq::MaxContent => (len_req, Length::ZERO),
+            LenReq::Min | LenReq::Max => (len_req, Length::ZERO),
             // We always want to use up all offered space but may need even more,
             // so we implement FitContent as space.max(MinContent).
-            LenReq::FitContent(space) => (LenReq::MinContent, space),
+            LenReq::Fit(space) => (LenReq::Min, space),
         };
 
         let calc_button_length = |axis| match axis {
@@ -1348,9 +1348,9 @@ impl<T: Steppable> Widget for StepInput<T> {
                     let (btn_length, btn_edge_pad) =
                         Self::basic_button_length(vertical_space.get(), None);
                     match len_req {
-                        LenReq::MinContent => 2. * (btn_length + 2. * btn_edge_pad),
-                        LenReq::MaxContent => 2. * (btn_length * 3.),
-                        LenReq::FitContent(_) => unreachable!(),
+                        LenReq::Min => 2. * (btn_length + 2. * btn_edge_pad),
+                        LenReq::Max => 2. * (btn_length * 3.),
+                        LenReq::Fit(_) => unreachable!(),
                     }
                 }
                 StepInputStyle::Flow => {
@@ -1358,9 +1358,9 @@ impl<T: Steppable> Widget for StepInput<T> {
                     let (arrow_width, _, arrow_edge_pad) =
                         Self::flow_button_length(vertical_space.get(), None);
                     match len_req {
-                        LenReq::MinContent => 2. * (2. * arrow_width + arrow_edge_pad),
-                        LenReq::MaxContent => 2. * (4. * arrow_width + arrow_edge_pad),
-                        LenReq::FitContent(_) => unreachable!(),
+                        LenReq::Min => 2. * (2. * arrow_width + arrow_edge_pad),
+                        LenReq::Max => 2. * (4. * arrow_width + arrow_edge_pad),
+                        LenReq::Fit(_) => unreachable!(),
                     }
                 }
             }

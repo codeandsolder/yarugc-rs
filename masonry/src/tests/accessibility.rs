@@ -73,7 +73,7 @@ fn access_node_children() {
 
     // We stash a child
     harness.edit_widget(parent_tag, |mut parent| {
-        parent.ctx.set_stashed(&mut parent.widget.state[1], true);
+        parent.ctx.set_stashed(&parent.widget.state[1], true);
         parent.ctx.request_accessibility_update();
     });
     let _ = harness.render();

@@ -148,18 +148,13 @@ impl Widget for ProgressBar {
         let auto_length = len_req.into();
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);
 
-        let label_length = ctx.compute_length(
-            &mut self.label,
-            auto_length,
-            context_size,
-            axis,
-            cross_length,
-        );
+        let label_length =
+            ctx.compute_length(&self.label, auto_length, context_size, axis, cross_length);
 
         let potential_length = match axis {
             Axis::Horizontal => match len_req {
-                LenReq::MinContent | LenReq::MaxContent => DEFAULT_WIDTH,
-                LenReq::FitContent(space) => space,
+                LenReq::Min | LenReq::Max => DEFAULT_WIDTH,
+                LenReq::Fit(space) => space,
             },
             Axis::Vertical => theme::BASIC_WIDGET_HEIGHT,
         };
@@ -169,11 +164,11 @@ impl Widget for ProgressBar {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let label_size = ctx.compute_size(&mut self.label, SizeDef::fit(size), size.into());
-        ctx.run_layout(&mut self.label, label_size);
+        let label_size = ctx.compute_size(&self.label, SizeDef::fit(size), size.into());
+        ctx.run_layout(&self.label, label_size);
 
         let child_origin = ((size - label_size).to_vec2() * 0.5).to_point();
-        ctx.place_child(&mut self.label, child_origin);
+        ctx.place_child(&self.label, child_origin);
 
         ctx.derive_baselines(&self.label);
     }

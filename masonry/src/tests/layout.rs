@@ -144,7 +144,7 @@ fn run_layout_on_stashed() {
 
     assert_debug_panics!(
         harness.edit_widget(parent_tag, |mut parent| {
-            parent.ctx.set_stashed(&mut parent.widget.state, true);
+            parent.ctx.set_stashed(&parent.widget.state, true);
             parent.ctx.request_layout();
         }),
         "trying to compute layout of stashed widget"
@@ -186,7 +186,7 @@ fn unstash_then_run_layout() {
     let mut harness = TestHarness::create(test_property_set(), widget);
 
     harness.edit_widget(parent_tag, |mut parent| {
-        parent.ctx.set_stashed(&mut parent.widget.state, true);
+        parent.ctx.set_stashed(&parent.widget.state, true);
         parent.ctx.request_layout();
     });
 }
@@ -248,7 +248,7 @@ fn pixel_snapping() {
     let ctx = child.ctx();
     let border_box = ctx.border_box();
     let content_box = ctx.content_box();
-    let child_pos = ctx.to_window(border_box.origin());
+    let child_pos = ctx.local_to_window(border_box.origin());
     let first_baseline = harness.get_widget(parent_tag).ctx().first_baseline();
     let last_baseline = harness.get_widget(parent_tag).ctx().last_baseline();
 
@@ -451,18 +451,18 @@ fn boxes_use_content_box_coordinates() {
     );
 
     assert_point_approx_eq(
-        "to_window content box origin",
-        ctx.to_window(Point::ORIGIN),
+        "local_to_window content box origin",
+        ctx.local_to_window(Point::ORIGIN),
         Point::new(6.9, 12.1),
     );
     assert_point_approx_eq(
-        "to_window border box origin",
-        ctx.to_window(ctx.border_box().origin()),
+        "local_to_window border box origin",
+        ctx.local_to_window(ctx.border_box().origin()),
         Point::new(5., 8.),
     );
     assert_point_approx_eq(
-        "to_local content box origin",
-        ctx.to_local(Point::new(6.9, 12.1)),
+        "window_to_local content box origin",
+        ctx.window_to_local(Point::new(6.9, 12.1)),
         Point::ORIGIN,
     );
     assert_point_approx_eq(

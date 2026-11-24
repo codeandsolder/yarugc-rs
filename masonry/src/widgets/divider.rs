@@ -626,9 +626,9 @@ impl Widget for Divider {
 
         if axis == self.axis {
             match len_req {
-                LenReq::MinContent => content_length,
-                LenReq::MaxContent => DEFAULT_LENGTH.max(content_length),
-                LenReq::FitContent(space) => space.max(content_length),
+                LenReq::Min => content_length,
+                LenReq::Max => DEFAULT_LENGTH.max(content_length),
+                LenReq::Fit(space) => space.max(content_length),
             }
         } else {
             thickness.max(content_length)

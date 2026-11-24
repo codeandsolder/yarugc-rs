@@ -336,7 +336,7 @@ impl RenderRoot {
                 focus_anchor: None,
                 focus_fallback: None,
                 flags: RootFlag::WindowFocused as u8
-                    | ((debug_paint as u8) * RootFlag::DebugPaint as u8),
+                    | (u8::from(debug_paint) * RootFlag::DebugPaint as u8),
                 scroll_request_targets: Vec::new(),
                 hovered_path: Vec::new(),
                 active_path: Vec::new(),
@@ -501,18 +501,18 @@ impl RenderRoot {
 
     // --- MARK: PUB FUNCTIONS
     /// Handles a pointer event.
-    pub fn handle_pointer_event(&mut self, event: PointerEvent) -> Handled {
+    pub fn handle_pointer_event(&mut self, event: &PointerEvent) -> Handled {
         let _span = info_span!("pointer_event");
-        let handled = run_on_pointer_event_pass(self, &event);
+        let handled = run_on_pointer_event_pass(self, event);
         self.run_rewrite_passes();
 
         handled
     }
 
     /// Handles a text event.
-    pub fn handle_text_event(&mut self, event: TextEvent) -> Handled {
+    pub fn handle_text_event(&mut self, event: &TextEvent) -> Handled {
         let _span = info_span!("text_event");
-        let handled = run_on_text_event_pass(self, &event);
+        let handled = run_on_text_event_pass(self, event);
         run_update_focus_pass(self);
 
         if matches!(event, TextEvent::Ime(Ime::Enabled)) {
@@ -781,7 +781,7 @@ impl RenderRoot {
                 .emit_signal(RenderRootSignal::RequestRedraw);
         }
 
-        if self.root_state().is_some_and(|state| state.needs_anim()) {
+        if self.root_state().is_some_and(WidgetState::needs_anim) {
             self.global_state
                 .emit_signal(RenderRootSignal::RequestAnimFrame);
         }
@@ -789,8 +789,7 @@ impl RenderRoot {
         // We request a redraw if either the render tree or the accessibility
         // tree needs to be rebuilt. Usually both are rebuilt at the same time.
         // A redraw will trigger a rebuild of the accessibility tree.
-        if self.root_state().is_some_and(|state| state.needs_paint()) || self.needs_accessibility()
-        {
+        if self.root_state().is_some_and(WidgetState::needs_paint) || self.needs_accessibility() {
             self.global_state
                 .emit_signal(RenderRootSignal::RequestRedraw);
         }
@@ -922,7 +921,7 @@ impl RenderRoot {
 
     /// Returns true if the widget tree is waiting for an animation frame.
     pub fn needs_anim(&self) -> bool {
-        self.root_state().is_some_and(|state| state.needs_anim())
+        self.root_state().is_some_and(WidgetState::needs_anim)
     }
 
     /// Returns true if the accessibility tree needs to be rebuilt.
@@ -932,7 +931,7 @@ impl RenderRoot {
         self.global_state.access_tree_active()
             && self
                 .root_state()
-                .is_some_and(|state| state.needs_accessibility())
+                .is_some_and(WidgetState::needs_accessibility)
     }
 
     /// Returns `true` if something requires a rewrite pass or a re-render.

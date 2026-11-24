@@ -6,6 +6,7 @@ use tracing::info_span;
 use tree_arena::ArenaMut;
 
 use crate::app::{RenderRoot, RenderRootState};
+use crate::core::WidgetState;
 use crate::core::{ComposeCtx, PropertyArena, WidgetArenaNode};
 use crate::passes::{enter_span_if, recurse_on_children};
 
@@ -86,7 +87,7 @@ pub(crate) fn run_compose_pass(root: &mut RenderRoot) {
 
     // If widgets have moved, pointer-related info may be stale.
     // For instance, the "hovered" widget may have moved and no longer be under the pointer.
-    if root.root_state().is_some_and(|state| state.needs_compose()) {
+    if root.root_state().is_some_and(WidgetState::needs_compose) {
         root.global_state.set_needs_pointer_pass(true);
     }
 

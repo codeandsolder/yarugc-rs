@@ -360,7 +360,7 @@ impl Grid {
                 GridTrackSize::FitContent(limit) => (LenDef::FitContent(limit), 0.),
                 GridTrackSize::Fixed(length) => (LenDef::Fixed(length), length.get()),
                 GridTrackSize::Percentage(percent) => match len_req {
-                    LenReq::FitContent(space) => {
+                    LenReq::Fit(space) => {
                         let fixed = space.get() * percent;
                         (LenDef::FitContent(fixed.px()), fixed)
                     }
@@ -502,13 +502,13 @@ impl Grid {
                 .collect()
         };
 
-        if len_req == LenReq::MinContent {
+        if len_req == LenReq::Min {
             // if the grid is required to be min-content, fractional tracks are sized zero.
             return extract_bases_with_fr(track_lengths, 0.);
         }
 
         if let Some(context_length) = context_length
-            && (matches!(len_req, LenReq::FitContent(_)) || !is_measuring_only)
+            && (matches!(len_req, LenReq::Fit(_)) || !is_measuring_only)
         {
             // if context length is provided and the grid is fit-content sized,
             // distribute the remaining context length after sizing non-fractional tracks
@@ -892,7 +892,7 @@ impl Widget for Grid {
         );
 
         match len_req {
-            LenReq::FitContent(space) => computed.min(space),
+            LenReq::Fit(space) => computed.min(space),
             _ => computed,
         }
     }
@@ -908,7 +908,7 @@ impl Widget for Grid {
         let mut resolve_track = |grid: &mut Self, axis: Axis| {
             grid.resolve_track_lengths(
                 axis,
-                LenReq::FitContent(size.get_coord(axis).px()),
+                LenReq::Fit(size.get_coord(axis).px()),
                 Some(size.get_coord(axis.cross()).px()),
                 gap.gap,
                 Some(size.get_coord(axis).px()),
@@ -951,10 +951,10 @@ impl Widget for Grid {
             )
             .max(Size::ZERO);
 
-            ctx.run_layout(&mut child.widget, size);
+            ctx.run_layout(&child.widget, size);
 
             let origin = Point::new(col_offsets[col], row_offsets[row]);
-            ctx.place_child(&mut child.widget, origin);
+            ctx.place_child(&child.widget, origin);
 
             let Some(placement) = ctx.child_placement(&child.widget) else {
                 continue;

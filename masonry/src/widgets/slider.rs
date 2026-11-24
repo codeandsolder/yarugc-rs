@@ -313,8 +313,8 @@ impl Widget for Slider {
         match axis {
             Axis::Horizontal => match len_req {
                 // TODO: Move this 100. to theme?
-                LenReq::MinContent | LenReq::MaxContent => crate::layout::length!(100.),
-                LenReq::FitContent(space) => space,
+                LenReq::Min | LenReq::Max => crate::layout::length!(100.),
+                LenReq::Fit(space) => space,
             },
             Axis::Vertical => {
                 let cache = ctx.property_cache();

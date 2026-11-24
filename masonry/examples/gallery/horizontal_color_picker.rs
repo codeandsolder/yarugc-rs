@@ -131,13 +131,7 @@ impl Widget for HorizontalColorPicker {
     ) -> Length {
         let auto_length = len_req.into();
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-        ctx.compute_length(
-            &mut self.widget,
-            auto_length,
-            context_size,
-            axis,
-            cross_length,
-        )
+        ctx.compute_length(&self.widget, auto_length, context_size, axis, cross_length)
     }
 
     fn on_action(
@@ -169,9 +163,9 @@ impl Widget for HorizontalColorPicker {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let content_size = ctx.compute_size(&mut self.widget, SizeDef::fit(size), size.into());
-        ctx.run_layout(&mut self.widget, content_size);
-        ctx.place_child(&mut self.widget, Point::ORIGIN);
+        let content_size = ctx.compute_size(&self.widget, SizeDef::fit(size), size.into());
+        ctx.run_layout(&self.widget, content_size);
+        ctx.place_child(&self.widget, Point::ORIGIN);
         ctx.derive_baselines(&self.widget);
     }
 

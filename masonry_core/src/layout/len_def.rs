@@ -40,9 +40,9 @@ pub enum LenDef {
 impl From<LenReq> for LenDef {
     fn from(len_req: LenReq) -> Self {
         match len_req {
-            LenReq::MinContent => Self::MinContent,
-            LenReq::MaxContent => Self::MaxContent,
-            LenReq::FitContent(space) => Self::FitContent(space),
+            LenReq::Min => Self::MinContent,
+            LenReq::Max => Self::MaxContent,
+            LenReq::Fit(space) => Self::FitContent(space),
         }
     }
 }

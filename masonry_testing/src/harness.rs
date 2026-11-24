@@ -446,7 +446,7 @@ impl<W: Widget> TestHarness<W> {
     ///
     /// This will run [rewrite passes](masonry_core::doc::pass_system#rewrite-passes) after the event is processed.
     pub fn process_pointer_event(&mut self, event: PointerEvent) -> Handled {
-        let handled = self.render_root.handle_pointer_event(event);
+        let handled = self.render_root.handle_pointer_event(&event);
         self.process_signals();
         handled
     }
@@ -455,7 +455,7 @@ impl<W: Widget> TestHarness<W> {
     ///
     /// This will run [rewrite passes](masonry_core::doc::pass_system#rewrite-passes) after the event is processed.
     pub fn process_text_event(&mut self, event: TextEvent) -> Handled {
-        let handled = self.render_root.handle_text_event(event);
+        let handled = self.render_root.handle_text_event(&event);
         self.process_signals();
         handled
     }
@@ -791,7 +791,7 @@ impl<W: Widget> TestHarness<W> {
         // For each character
         for c in text.split("").filter(|s| !s.is_empty()) {
             let event = TextEvent::Ime(Ime::Commit(c.to_string()));
-            self.render_root.handle_text_event(event);
+            self.render_root.handle_text_event(&event);
         }
         self.process_signals();
     }
@@ -810,7 +810,7 @@ impl<W: Widget> TestHarness<W> {
             modifiers,
             ..KeyboardEvent::default()
         });
-        self.render_root.handle_text_event(event);
+        self.render_root.handle_text_event(&event);
         self.process_signals();
     }
 

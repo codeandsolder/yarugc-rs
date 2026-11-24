@@ -924,21 +924,21 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
                     // This is a common optimization also present on the web.
                     match len_req {
                         // Zero space will get us the length of longest unbreakable word
-                        LenReq::MinContent => Some(Length::ZERO),
+                        LenReq::Min => Some(Length::ZERO),
                         // Unbounded space will get us the length of the unwrapped string
-                        LenReq::MaxContent => None,
+                        LenReq::Max => None,
                         // Attempt to wrap according to the parent's request
-                        LenReq::FitContent(space) => Some(space),
+                        LenReq::Fit(space) => Some(space),
                     }
                 } else {
                     // Block axis is dependent on the inline axis, so cross_length dominates.
                     // If there is no explicit cross_length present, we fall back to inline defaults.
                     match len_req {
                         // Fallback is inline axis MinContent
-                        LenReq::MinContent => cross_length.or(Some(Length::ZERO)),
+                        LenReq::Min => cross_length.or(Some(Length::ZERO)),
                         // Fallback is inline axis MaxContent, even for FitContent, because
                         // as we don't have the inline space bound we'll consider it unbounded.
-                        LenReq::MaxContent | LenReq::FitContent(_) => cross_length,
+                        LenReq::Max | LenReq::Fit(_) => cross_length,
                     }
                 }
             }

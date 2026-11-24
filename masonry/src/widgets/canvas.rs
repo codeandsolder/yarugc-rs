@@ -96,7 +96,7 @@ impl Widget for Canvas {
     ) -> Length {
         // We use all the available space or fall back to our const preferred size.
         match len_req {
-            LenReq::FitContent(space) => space,
+            LenReq::Fit(space) => space,
             _ => DEFAULT_LENGTH,
         }
     }

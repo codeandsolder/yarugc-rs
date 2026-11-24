@@ -883,18 +883,20 @@ impl MasonryState {
                             Ok(text) => {
                                 window
                                     .render_root
-                                    .handle_text_event(TextEvent::ClipboardPaste(text));
+                                    .handle_text_event(&TextEvent::ClipboardPaste(text));
                             }
                             Err(error) => {
                                 tracing::warn!(?error, "Unable to read clipboard contents");
                             }
                         }
                     } else {
-                        window.render_root.handle_text_event(TextEvent::Keyboard(k));
+                        window
+                            .render_root
+                            .handle_text_event(&TextEvent::Keyboard(k));
                     }
                 }
                 WindowEventTranslation::Pointer(p) => {
-                    window.render_root.handle_pointer_event(p);
+                    window.render_root.handle_pointer_event(&p);
                 }
             }
         }
@@ -944,12 +946,12 @@ impl MasonryState {
             }
             WinitWindowEvent::Ime(ime) => {
                 let ime = winit_ime_to_masonry(ime);
-                window.render_root.handle_text_event(TextEvent::Ime(ime));
+                window.render_root.handle_text_event(&TextEvent::Ime(ime));
             }
             WinitWindowEvent::Focused(new_focus) => {
                 window
                     .render_root
-                    .handle_text_event(TextEvent::WindowFocusChange(new_focus));
+                    .handle_text_event(&TextEvent::WindowFocusChange(new_focus));
             }
             _ => (),
         }

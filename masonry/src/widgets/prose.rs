@@ -198,8 +198,8 @@ impl Widget for Prose {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        ctx.run_layout(&mut self.text, size);
-        ctx.place_child(&mut self.text, Point::ORIGIN);
+        ctx.run_layout(&self.text, size);
+        ctx.place_child(&self.text, Point::ORIGIN);
         ctx.derive_baselines(&self.text);
 
         if self.clip {

@@ -184,7 +184,7 @@ fn stashed_widget_loses_focus() {
     harness.flush_records_of(button_tag);
 
     harness.edit_widget(parent_tag, |mut widget| {
-        widget.ctx.set_stashed(&mut widget.widget.state, true);
+        widget.ctx.set_stashed(&widget.widget.state, true);
     });
     assert_matches!(
         harness.take_records_of(button_tag)[..],
@@ -214,7 +214,7 @@ fn stash_parent() {
 
     // First we stash the button: the button should get a "StashedChanged" event.
     harness.edit_widget(parent_tag, |mut widget| {
-        widget.ctx.set_stashed(&mut widget.widget.state, true);
+        widget.ctx.set_stashed(&widget.widget.state, true);
     });
     assert_matches!(
         harness.take_records_of(button_tag)[..],
@@ -226,20 +226,20 @@ fn stash_parent() {
     // Then we stash the parent: nothing should happen,
     // the button is already stashed.
     harness.edit_widget(grandparent_tag, |mut widget| {
-        widget.ctx.set_stashed(&mut widget.widget.state, true);
+        widget.ctx.set_stashed(&widget.widget.state, true);
     });
     assert_matches!(harness.take_records_of(button_tag)[..], []);
 
     // Then we un-stash the button: nothing should happen,
     // the button is still stashed through the parent.
     harness.edit_widget(parent_tag, |mut widget| {
-        widget.ctx.set_stashed(&mut widget.widget.state, false);
+        widget.ctx.set_stashed(&widget.widget.state, false);
     });
     assert_matches!(harness.take_records_of(button_tag)[..], []);
 
     // Then we un-stash the parent: the button should get a "StashedChanged" event.
     harness.edit_widget(grandparent_tag, |mut widget| {
-        widget.ctx.set_stashed(&mut widget.widget.state, false);
+        widget.ctx.set_stashed(&widget.widget.state, false);
     });
     assert_matches!(
         harness.take_records_of(button_tag)[..],
@@ -431,7 +431,7 @@ fn stash_focusable() {
     harness.focus_on(Some(button2_id));
 
     harness.edit_root_widget(|mut parent| {
-        parent.ctx.set_stashed(&mut parent.widget.state[1], true);
+        parent.ctx.set_stashed(&parent.widget.state[1], true);
     });
 
     // We skip button2 and jump from button1 to button3.

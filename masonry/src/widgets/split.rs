@@ -594,7 +594,7 @@ where
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        if let LenReq::FitContent(space) = len_req {
+        if let LenReq::Fit(space) = len_req {
             // We always want to use up all offered space
             if axis == self.split_axis {
                 // Don't go below the bar thickness, which we always want to paint.
@@ -626,14 +626,14 @@ where
         let child2_context_size = LayoutSize::maybe(cross, child2_cross_space);
 
         let child1_length = ctx.compute_length(
-            &mut self.child1,
+            &self.child1,
             auto_length,
             child1_context_size,
             axis,
             child1_cross_space,
         );
         let child2_length = ctx.compute_length(
-            &mut self.child2,
+            &self.child2,
             auto_length,
             child2_context_size,
             axis,
@@ -663,16 +663,16 @@ where
         let child1_size = self.split_axis.pack_size(child1_split_space, cross_space);
         let child2_size = self.split_axis.pack_size(child2_split_space, cross_space);
 
-        ctx.run_layout(&mut self.child1, child1_size);
-        ctx.run_layout(&mut self.child2, child2_size);
+        ctx.run_layout(&self.child1, child1_size);
+        ctx.run_layout(&self.child2, child2_size);
 
         // Top-left align both children.
         let child1_origin = Point::ORIGIN;
         let child2_origin = self
             .split_axis
             .pack_point(child1_split_space + bar_thickness, 0.);
-        ctx.place_child(&mut self.child1, child1_origin);
-        ctx.place_child(&mut self.child2, child2_origin);
+        ctx.place_child(&self.child1, child1_origin);
+        ctx.place_child(&self.child2, child2_origin);
     }
 
     fn paint(
@@ -699,7 +699,7 @@ where
 
     fn get_cursor(&self, ctx: &QueryCtx<'_>, pos: Point) -> CursorIcon {
         let length = ctx.content_box().size().get_coord(self.split_axis);
-        let local_pos = ctx.to_local(pos).get_coord(self.split_axis);
+        let local_pos = ctx.window_to_local(pos).get_coord(self.split_axis);
         let is_bar_area_hovered = self.bar_area_hit_test(length, local_pos);
 
         if self.draggable && (ctx.is_active() || is_bar_area_hovered) {

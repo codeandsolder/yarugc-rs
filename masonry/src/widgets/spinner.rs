@@ -98,10 +98,8 @@ impl Widget for Spinner {
         match len_req {
             // For preferred length we try to keep a square aspect ratio,
             // and when the cross length is unknown we fall back to the theme's default.
-            LenReq::MinContent | LenReq::MaxContent => {
-                cross_length.unwrap_or(theme::BASIC_WIDGET_HEIGHT)
-            }
-            LenReq::FitContent(space) => space,
+            LenReq::Min | LenReq::Max => cross_length.unwrap_or(theme::BASIC_WIDGET_HEIGHT),
+            LenReq::Fit(space) => space,
         }
     }
 

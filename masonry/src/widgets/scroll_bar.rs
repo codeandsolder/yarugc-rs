@@ -378,8 +378,8 @@ impl Widget for ScrollBar {
         if axis == self.axis {
             // TODO: Consider .max(theme::SCROLLBAR_MIN_SIZE)
             match len_req {
-                LenReq::MinContent | LenReq::MaxContent => self.portal_size.px(),
-                LenReq::FitContent(space) => space,
+                LenReq::Min | LenReq::Max => self.portal_size.px(),
+                LenReq::Fit(space) => space,
             }
         } else {
             let scrollbar_width = theme::SCROLLBAR_WIDTH;

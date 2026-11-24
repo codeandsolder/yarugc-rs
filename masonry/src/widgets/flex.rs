@@ -741,10 +741,10 @@ impl Widget for Flex {
         let context_size = LayoutSize::maybe(perp, perp_length);
 
         let (len_req, min_result) = match len_req {
-            LenReq::MinContent | LenReq::MaxContent => (len_req, Length::ZERO),
+            LenReq::Min | LenReq::Max => (len_req, Length::ZERO),
             // We always want to use up all offered space but may need even more,
             // so we implement FitContent as space.max(MinContent).
-            LenReq::FitContent(space) => (LenReq::MinContent, space),
+            LenReq::Fit(space) => (LenReq::Min, space),
         };
 
         // We can skip resolving bases if we don't know the main space when measuring cross.

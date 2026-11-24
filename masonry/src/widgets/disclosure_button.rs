@@ -149,8 +149,8 @@ impl Widget for DisclosureButton {
         let length = DEFAULT_LENGTH;
 
         match len_req {
-            LenReq::MinContent | LenReq::MaxContent => length,
-            LenReq::FitContent(space) => length.min(space),
+            LenReq::Min | LenReq::Max => length,
+            LenReq::Fit(space) => length.min(space),
         }
     }
 

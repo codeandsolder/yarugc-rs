@@ -711,8 +711,8 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
         cross_length: Option<Length>,
     ) -> Length {
         match len_req {
-            LenReq::MinContent => Length::ZERO,
-            LenReq::MaxContent => {
+            LenReq::Min => Length::ZERO,
+            LenReq::Max => {
                 let context_size = LayoutSize::maybe(axis.cross(), cross_length);
                 let auto_length = len_req.into();
 
@@ -722,15 +722,9 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
                     Axis::Vertical => self.constrain_vertical,
                 });
 
-                ctx.compute_length(
-                    &mut self.child,
-                    auto_length,
-                    context_size,
-                    axis,
-                    cross_space,
-                )
+                ctx.compute_length(&self.child, auto_length, context_size, axis, cross_space)
             }
-            LenReq::FitContent(space) => space,
+            LenReq::Fit(space) => space,
         }
     }
 
@@ -746,14 +740,14 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
             },
         );
         let content_size = {
-            let child_size = ctx.compute_size(&mut self.child, auto_size, size.into());
+            let child_size = ctx.compute_size(&self.child, auto_size, size.into());
             if self.must_fill {
                 child_size.max(size)
             } else {
                 child_size
             }
         };
-        ctx.run_layout(&mut self.child, content_size);
+        ctx.run_layout(&self.child, content_size);
         self.content_size = content_size;
 
         // TODO - document better
@@ -763,7 +757,7 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
 
         ctx.set_clip_path(size.to_rect());
 
-        ctx.place_child(&mut self.child, Point::ZERO);
+        ctx.place_child(&self.child, Point::ZERO);
 
         self.scrollbar_horizontal_visible =
             !self.constrain_horizontal && size.width < content_size.width;
@@ -771,7 +765,7 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
             !self.constrain_vertical && size.height < content_size.height;
 
         ctx.set_stashed(
-            &mut self.scrollbar_horizontal,
+            &self.scrollbar_horizontal,
             !self.scrollbar_horizontal_visible,
         );
         if self.scrollbar_horizontal_visible {
@@ -781,22 +775,16 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
                 sb_ctx.request_render();
             }
 
-            let scrollbar_size = ctx.compute_size(
-                &mut self.scrollbar_horizontal,
-                SizeDef::fit(size),
-                size.into(),
-            );
-            ctx.run_layout(&mut self.scrollbar_horizontal, scrollbar_size);
+            let scrollbar_size =
+                ctx.compute_size(&self.scrollbar_horizontal, SizeDef::fit(size), size.into());
+            ctx.run_layout(&self.scrollbar_horizontal, scrollbar_size);
             ctx.place_child(
-                &mut self.scrollbar_horizontal,
+                &self.scrollbar_horizontal,
                 Point::new(0.0, size.height - scrollbar_size.height),
             );
         }
 
-        ctx.set_stashed(
-            &mut self.scrollbar_vertical,
-            !self.scrollbar_vertical_visible,
-        );
+        ctx.set_stashed(&self.scrollbar_vertical, !self.scrollbar_vertical_visible);
         if self.scrollbar_vertical_visible {
             if let Some((scrollbar, mut sb_ctx)) = ctx.get_raw_mut(&self.scrollbar_vertical) {
                 scrollbar.portal_size = size.height;
@@ -804,14 +792,11 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
                 sb_ctx.request_render();
             }
 
-            let scrollbar_size = ctx.compute_size(
-                &mut self.scrollbar_vertical,
-                SizeDef::fit(size),
-                size.into(),
-            );
-            ctx.run_layout(&mut self.scrollbar_vertical, scrollbar_size);
+            let scrollbar_size =
+                ctx.compute_size(&self.scrollbar_vertical, SizeDef::fit(size), size.into());
+            ctx.run_layout(&self.scrollbar_vertical, scrollbar_size);
             ctx.place_child(
-                &mut self.scrollbar_vertical,
+                &self.scrollbar_vertical,
                 Point::new(size.width - scrollbar_size.width, 0.0),
             );
         }
@@ -819,7 +804,7 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
 
     fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {
         ctx.set_child_scroll_translation(
-            &mut self.child,
+            &self.child,
             Vec2::new(-self.viewport_pos.x, -self.viewport_pos.y),
         );
     }

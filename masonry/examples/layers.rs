@@ -122,19 +122,13 @@ impl Widget for OverlayBox {
         let auto_length = len_req.into();
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);
 
-        ctx.compute_length(
-            &mut self.child,
-            auto_length,
-            context_size,
-            axis,
-            cross_length,
-        )
+        ctx.compute_length(&self.child, auto_length, context_size, axis, cross_length)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let child_size = ctx.compute_size(&mut self.child, SizeDef::fit(size), size.into());
-        ctx.run_layout(&mut self.child, child_size);
-        ctx.place_child(&mut self.child, Point::ORIGIN);
+        let child_size = ctx.compute_size(&self.child, SizeDef::fit(size), size.into());
+        ctx.run_layout(&self.child, child_size);
+        ctx.place_child(&self.child, Point::ORIGIN);
     }
 
     fn paint(

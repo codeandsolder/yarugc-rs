@@ -4,7 +4,7 @@
 use std::any::{Any, TypeId};
 use std::fmt::{Debug, Display};
 use std::num::NonZeroU64;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 
 use accesskit::{Node, Role};
 use kurbo::{Axis, Point, Size};
@@ -648,7 +648,7 @@ pub fn find_widget_under_pointer<'c>(
         return None;
     }
 
-    let local_pos = ctx.to_local(pos);
+    let local_pos = ctx.window_to_local(pos);
 
     if let Some(clip) = ctx.clip_path()
         && !clip.contains(local_pos)
@@ -711,8 +711,7 @@ impl WidgetId {
     /// widget at a time.
     pub(crate) fn next() -> Self {
         static WIDGET_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-        let id = WIDGET_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
-        Self(id.try_into().unwrap())
+        Self(crate::util::allocate_id(&WIDGET_ID_COUNTER))
     }
 
     /// Returns the integer value of the `WidgetId`.

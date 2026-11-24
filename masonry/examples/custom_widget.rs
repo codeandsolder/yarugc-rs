@@ -96,9 +96,9 @@ impl Widget for CustomWidget {
 
         // Return a result based on the parent's request
         match len_req {
-            LenReq::MinContent => min_length,
-            LenReq::MaxContent => max_length,
-            LenReq::FitContent(space) => space.max(min_length).min(max_length),
+            LenReq::Min => min_length,
+            LenReq::Max => max_length,
+            LenReq::Fit(space) => space.max(min_length).min(max_length),
         }
     }
 

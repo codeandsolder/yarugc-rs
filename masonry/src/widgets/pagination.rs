@@ -218,7 +218,7 @@ impl Pagination {
             .filter(|button| !button.stashed)
         {
             button.stashed = true;
-            ctx.set_stashed(&mut button.widget, true);
+            ctx.set_stashed(&button.widget, true);
         }
         // Make sure all the existing buttons have the correct info.
         for (button, &page_idx) in self.buttons.iter_mut().zip(button_pages.iter()) {
@@ -241,7 +241,7 @@ impl Pagination {
             }
             if button.stashed {
                 button.stashed = false;
-                ctx.set_stashed(&mut button.widget, false);
+                ctx.set_stashed(&button.widget, false);
             }
         }
         // Create any missing buttons.
@@ -325,7 +325,7 @@ impl Widget for Pagination {
         for button in self.buttons.iter_mut().filter(|button| !button.stashed) {
             let auto_length = len_req.reduce(length).into();
             let button_length = ctx.compute_length(
-                &mut button.widget,
+                &button.widget,
                 auto_length,
                 context_size,
                 axis,
@@ -344,13 +344,12 @@ impl Widget for Pagination {
         let mut used_width = 0.;
         for button in self.buttons.iter_mut().filter(|button| !button.stashed) {
             let space = Size::new((size.width - used_width).max(0.), size.height);
-            let button_size =
-                ctx.compute_size(&mut button.widget, SizeDef::fit(space), size.into());
+            let button_size = ctx.compute_size(&button.widget, SizeDef::fit(space), size.into());
 
-            ctx.run_layout(&mut button.widget, button_size);
+            ctx.run_layout(&button.widget, button_size);
 
             let button_origin = Point::new(used_width, 0.);
-            ctx.place_child(&mut button.widget, button_origin);
+            ctx.place_child(&button.widget, button_origin);
 
             used_width += button_size.width;
         }
@@ -396,7 +395,7 @@ impl Widget for Pagination {
 /// Collections of context methods required to sync buttons.
 trait SyncCtx {
     fn children_changed(&mut self);
-    fn set_stashed(&mut self, child: &mut WidgetPod<impl Widget + ?Sized>, stashed: bool);
+    fn set_stashed(&mut self, child: &WidgetPod<impl Widget + ?Sized>, stashed: bool);
     fn remove_child(&mut self, child: WidgetPod<impl Widget + ?Sized>);
     fn mutate_child_later<W: Widget + FromDynWidget + ?Sized>(
         &mut self,
@@ -410,7 +409,7 @@ impl SyncCtx for MutateCtx<'_> {
         self.children_changed();
     }
 
-    fn set_stashed(&mut self, child: &mut WidgetPod<impl Widget + ?Sized>, stashed: bool) {
+    fn set_stashed(&mut self, child: &WidgetPod<impl Widget + ?Sized>, stashed: bool) {
         self.set_stashed(child, stashed);
     }
 
@@ -432,7 +431,7 @@ impl SyncCtx for ActionCtx<'_> {
         self.children_changed();
     }
 
-    fn set_stashed(&mut self, child: &mut WidgetPod<impl Widget + ?Sized>, stashed: bool) {
+    fn set_stashed(&mut self, child: &WidgetPod<impl Widget + ?Sized>, stashed: bool) {
         self.set_stashed(child, stashed);
     }
 
@@ -454,7 +453,7 @@ impl SyncCtx for UpdateCtx<'_> {
         self.children_changed();
     }
 
-    fn set_stashed(&mut self, child: &mut WidgetPod<impl Widget + ?Sized>, stashed: bool) {
+    fn set_stashed(&mut self, child: &WidgetPod<impl Widget + ?Sized>, stashed: bool) {
         self.set_stashed(child, stashed);
     }
 

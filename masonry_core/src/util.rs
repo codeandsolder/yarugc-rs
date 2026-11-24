@@ -165,3 +165,23 @@ pub(crate) struct ParentLinkedList<'a> {
     pub(crate) id: WidgetId,
     pub(crate) parent: Option<&'a Self>,
 }
+
+/// Allocate a process-unique nonzero identifier without wrapping the counter.
+///
+/// Counter exhaustion is unrecoverable: reissuing an identifier would violate
+/// arena identity and could route an operation to an unrelated widget.
+pub(crate) fn allocate_id(counter: &std::sync::atomic::AtomicU64) -> std::num::NonZeroU64 {
+    use std::sync::atomic::Ordering;
+    let mut current = counter.load(Ordering::Relaxed);
+    while let Some(id) = std::num::NonZeroU64::new(current) {
+        let Some(next) = current.checked_add(1) else {
+            break;
+        };
+        match counter.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return id,
+            Err(actual) => current = actual,
+        }
+    }
+    tracing::error!("Unique identifier space exhausted");
+    std::process::abort();
+}

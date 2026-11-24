@@ -468,7 +468,7 @@ pub(crate) fn run_update_disabled_pass(root: &mut RenderRoot) {
     // If a widget was enabled or disabled, the pointer icon may need to change.
     if root
         .root_state()
-        .is_some_and(|state| state.needs_update_disabled())
+        .is_some_and(WidgetState::needs_update_disabled)
     {
         root.global_state.set_needs_pointer_pass(true);
     }
@@ -796,7 +796,7 @@ pub(crate) fn run_update_focus_pass(root: &mut RenderRoot) {
 
         let accepts_text = next_focused
             .and_then(|id| root.widget_arena.get_state(id))
-            .is_some_and(|state| state.accepts_text_input());
+            .is_some_and(WidgetState::accepts_text_input);
         root.global_state.set_is_ime_active(accepts_text);
         if accepts_text {
             root.global_state.emit_signal(RenderRootSignal::StartIme);
@@ -923,7 +923,7 @@ pub(crate) fn run_update_pointer_pass(root: &mut RenderRoot) {
         && root
             .widget_arena
             .get_state(id)
-            .is_none_or(|state| state.is_disabled())
+            .is_none_or(WidgetState::is_disabled)
     {
         next_hovered_widget = None;
     }
@@ -1059,7 +1059,7 @@ pub(crate) fn run_update_props_pass(root: &mut RenderRoot) {
 
     if !root
         .root_state()
-        .is_some_and(|state| state.needs_update_props())
+        .is_some_and(WidgetState::needs_update_props)
     {
         return;
     }

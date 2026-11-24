@@ -144,7 +144,7 @@ impl Selector {
         ctx.create_layer(
             layer_type,
             layer_widget,
-            ctx.to_window(border_box.origin()) + Vec2::new(0., border_box.size().height),
+            ctx.local_to_window(border_box.origin()) + Vec2::new(0., border_box.size().height),
         );
     }
 }

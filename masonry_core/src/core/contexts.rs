@@ -457,7 +457,7 @@ impl EventCtx<'_> {
     #[must_use = "Use the transformed event position."]
     pub fn local_position(&self, p: PhysicalPosition<f64>) -> Point {
         let LogicalPosition { x, y } = p.to_logical(self.global_state.scale_factor);
-        self.to_local(Point { x, y })
+        self.window_to_local(Point { x, y })
     }
 }
 
@@ -592,7 +592,7 @@ impl_context_method!(MeasureCtx<'_>, LayoutCtx<'_>, {
     /// [`LenReq::reduce`]: crate::layout::LenReq::reduce
     pub fn compute_length(
         &mut self,
-        child: &mut WidgetPod<impl Widget + ?Sized>,
+        child: &WidgetPod<impl Widget + ?Sized>,
         auto_length: LenDef,
         context_size: LayoutSize,
         axis: Axis,
@@ -628,7 +628,7 @@ impl MeasureCtx<'_> {
     /// propagate the outer container's measurement context or disable caching.
     pub fn measure_child(
         &mut self,
-        child: &mut WidgetPod<impl Widget + ?Sized>,
+        child: &WidgetPod<impl Widget + ?Sized>,
         axis: Axis,
         len_req: LenReq,
         cross_length: Option<Length>,
@@ -733,7 +733,7 @@ impl MeasureCtx<'_> {
     /// [`context_size`]: Self::context_size
     pub fn redirect_measurement(
         &mut self,
-        child: &mut WidgetPod<impl Widget + ?Sized>,
+        child: &WidgetPod<impl Widget + ?Sized>,
         axis: Axis,
         cross_length: Option<Length>,
     ) -> Length {
@@ -826,7 +826,7 @@ impl LayoutCtx<'_> {
     /// the parent. For oversized children, alignment also controls overflow.
     pub fn layout_child(
         &mut self,
-        child: &mut WidgetPod<impl Widget + ?Sized>,
+        child: &WidgetPod<impl Widget + ?Sized>,
         size: Size,
         alignment: UnitPoint,
     ) {
@@ -865,7 +865,7 @@ impl LayoutCtx<'_> {
     /// [`run_layout`]: Self::run_layout
     pub fn compute_size(
         &mut self,
-        child: &mut WidgetPod<impl Widget + ?Sized>,
+        child: &WidgetPod<impl Widget + ?Sized>,
         auto_size: SizeDef,
         context_size: LayoutSize,
     ) -> Size {
@@ -906,7 +906,7 @@ impl LayoutCtx<'_> {
     ///
     /// [`layout`]: Widget::layout
     /// [`compute_size`]: Self::compute_size
-    pub fn run_layout(&mut self, child: &mut WidgetPod<impl Widget + ?Sized>, chosen_size: Size) {
+    pub fn run_layout(&mut self, child: &WidgetPod<impl Widget + ?Sized>, chosen_size: Size) {
         let parent = self.widget_id();
         let Some(mut node) = self.children.item_mut(child.id()) else {
             debug_panic!(
@@ -935,7 +935,7 @@ impl LayoutCtx<'_> {
     ///
     /// [`layout`]: Widget::layout
     #[track_caller]
-    pub fn place_child(&mut self, child: &mut WidgetPod<impl Widget + ?Sized>, origin: Point) {
+    pub fn place_child(&mut self, child: &WidgetPod<impl Widget + ?Sized>, origin: Point) {
         if self.laid_out_child(child, "place_child").is_none() {
             return;
         }
@@ -1137,7 +1137,7 @@ impl ComposeCtx<'_> {
     /// stays pixel-perfect.
     pub fn set_child_scroll_translation(
         &mut self,
-        child: &mut WidgetPod<impl Widget + ?Sized>,
+        child: &WidgetPod<impl Widget + ?Sized>,
         translation: Vec2,
     ) {
         self.set_animated_child_scroll_translation(child, translation.round());
@@ -1151,7 +1151,7 @@ impl ComposeCtx<'_> {
     /// This method should be used for intermediary scroll values during scroll animations.
     pub fn set_animated_child_scroll_translation(
         &mut self,
-        child: &mut WidgetPod<impl Widget + ?Sized>,
+        child: &WidgetPod<impl Widget + ?Sized>,
         translation: Vec2,
     ) {
         if !translation.x.is_finite() || !translation.y.is_finite() {
@@ -1283,7 +1283,7 @@ impl_context_method!(
         /// Converts the `point` from the window's coordinate space
         /// to this widget's content-box coordinate space.
         #[must_use = "Use the point in local coordinates."]
-        pub fn to_local(&self, point: Point) -> Point {
+        pub fn window_to_local(&self, point: Point) -> Point {
             let to_border_box = self.widget_state.window_transform.inverse();
             let to_content_box = -self.widget_state.border_box_translation();
             to_border_box.then_translate(to_content_box) * point
@@ -1294,7 +1294,7 @@ impl_context_method!(
         ///
         /// The returned point is relative to the window's content area; it excludes window chrome.
         #[must_use = "Use the point in window coordinates."]
-        pub fn to_window(&self, point: Point) -> Point {
+        pub fn local_to_window(&self, point: Point) -> Point {
             let translation = self.widget_state.border_box_translation();
             self.widget_state.window_transform * (point + translation)
         }
@@ -1491,7 +1491,7 @@ impl_context_method!(
         #[must_use = "Check whether the child is stashed."]
         pub fn child_is_stashed(&self, child: &WidgetPod<impl Widget + ?Sized>) -> bool {
             self.get_child_state(child)
-                .is_none_or(|state| state.is_stashed())
+                .is_none_or(WidgetState::is_stashed)
         }
     }
 );
@@ -1727,7 +1727,7 @@ impl_context_method!(
         /// If `stashed` is true, the child will not be painted or listed in the accessibility tree.
         ///
         /// This will *not* trigger a layout pass.
-        pub fn set_stashed(&mut self, child: &mut WidgetPod<impl Widget + ?Sized>, stashed: bool) {
+        pub fn set_stashed(&mut self, child: &WidgetPod<impl Widget + ?Sized>, stashed: bool) {
             let Some(child_state) = self.get_child_state_mut(child) else {
                 return;
             };

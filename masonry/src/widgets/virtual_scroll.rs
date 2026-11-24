@@ -690,8 +690,8 @@ impl Widget for VirtualScroll {
         const DEFAULT_LENGTH: Length = crate::layout::length!(100.);
 
         match len_req {
-            LenReq::MinContent | LenReq::MaxContent => DEFAULT_LENGTH,
-            LenReq::FitContent(space) => space,
+            LenReq::Min | LenReq::Max => DEFAULT_LENGTH,
+            LenReq::Fit(space) => space,
         }
     }
 

@@ -134,11 +134,11 @@ impl Widget for ColorRectangle {
         _cross_length: Option<Length>,
     ) -> Length {
         match len_req {
-            LenReq::MinContent | LenReq::MaxContent => match axis {
+            LenReq::Min | LenReq::Max => match axis {
                 Axis::Horizontal => 200.px(),
                 Axis::Vertical => 100.px(),
             },
-            LenReq::FitContent(space) => space,
+            LenReq::Fit(space) => space,
         }
     }
 

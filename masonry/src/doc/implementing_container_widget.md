@@ -101,8 +101,8 @@ impl Widget for VerticalStack {
         cross_length: Option<Length>,
     ) -> Length {
         let (len_req, min_result) = match len_req {
-            LenReq::MinContent | LenReq::MaxContent => (len_req, Length::ZERO),
-            LenReq::FitContent(space) => (LenReq::MinContent, space),
+            LenReq::Min | LenReq::Max => (len_req, Length::ZERO),
+            LenReq::Fit(space) => (LenReq::Min, space),
         };
 
         let auto_length = len_req.into();
@@ -157,7 +157,7 @@ impl Widget for VerticalStack {
 
 There are a few things to note here:
 
-- We refer to `LenReq::FitContent` to get the total space available to the container.
+- We refer to `LenReq::Fit` to get the total space available to the container.
 - We compute the height of the container by summing the heights of all children and adding the gap between them.
   We compute the width of the container by taking the largest child width.
 

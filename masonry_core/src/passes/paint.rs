@@ -231,34 +231,16 @@ fn paint_widget(
     let border_box_to_layer_transform = *window_to_layer_transform * state.window_transform;
     let content_box_to_layer_transform =
         border_box_to_layer_transform.pre_translate(state.border_box_translation());
-    let has_clip = state.clip_path.is_some();
     let paint_as_external = paint_layer_mode == PaintLayerMode::External;
-
-    if !is_stashed && !paint_as_external {
-        let Some((pre_scene, scene, _)) = &mut scene_cache.get(&id) else {
-            debug_panic!(
-                "Error in paint pass: scene should have been cached earlier in this function."
-            );
-            return;
-        };
-
-        layer_collector
-            .scene_mut()
-            .append_transformed(pre_scene, content_box_to_layer_transform);
-
-        if let Some(clip) = state.clip_path {
-            // The clip path is stored in border-box space, so need to use that transform.
-            layer_collector.push_clip(Clip::Fill {
-                transform: border_box_to_layer_transform,
-                shape: Geometry::Rect(clip),
-                fill_rule: Fill::NonZero,
-            });
-        }
-
-        layer_collector
-            .scene_mut()
-            .append_transformed(scene, content_box_to_layer_transform);
-    }
+    let has_clip = !is_stashed
+        && !paint_as_external
+        && append_before_children(
+            layer_collector,
+            scene_cache,
+            state,
+            border_box_to_layer_transform,
+            content_box_to_layer_transform,
+        );
 
     let parent_state = &mut *state;
     recurse_on_children(id, widget, children, |mut node| {
@@ -279,37 +261,15 @@ fn paint_widget(
     });
 
     if !is_stashed && !paint_as_external {
-        if global_state.debug_paint() {
-            paint_debug_geometry(
-                layer_collector.scene_mut(),
-                state,
-                border_box_to_layer_transform,
-            );
-        }
-
-        if has_clip {
-            layer_collector.pop_clip();
-        }
-
-        let Some((_, _, post_scene)) = &mut scene_cache.get(&id) else {
-            debug_panic!(
-                "Error in paint pass: scene should have been cached earlier in this function."
-            );
-            return;
-        };
-
-        layer_collector
-            .scene_mut()
-            .append_transformed(post_scene, content_box_to_layer_transform);
-
-        if global_state.inspector_state.hovered_widget == Some(id) {
-            const HOVER_FILL_COLOR: Color = Color::from_rgba8(60, 60, 250, 100);
-            let rect = state.border_box();
-            Painter::new(layer_collector.scene_mut())
-                .fill(rect, HOVER_FILL_COLOR)
-                .transform(border_box_to_layer_transform)
-                .draw();
-        }
+        append_after_children(
+            global_state,
+            layer_collector,
+            scene_cache,
+            state,
+            has_clip,
+            border_box_to_layer_transform,
+            content_box_to_layer_transform,
+        );
     }
 
     if paint_as_external {
@@ -327,6 +287,68 @@ fn paint_widget(
     }
 
     layer_collector.current_owner_id = previous_owner_id;
+}
+
+fn append_before_children(
+    collector: &mut LayerCollector,
+    scene_cache: &HashMap<WidgetId, (Scene, Scene, Scene)>,
+    state: &crate::core::WidgetState,
+    border_transform: Affine,
+    content_transform: Affine,
+) -> bool {
+    let Some((pre_scene, scene, _)) = scene_cache.get(&state.id) else {
+        debug_panic!(
+            "Error in paint pass: scene should have been cached earlier in this function."
+        );
+        return false;
+    };
+    collector
+        .scene_mut()
+        .append_transformed(pre_scene, content_transform);
+    if let Some(clip) = state.clip_path {
+        collector.push_clip(Clip::Fill {
+            transform: border_transform,
+            shape: Geometry::Rect(clip),
+            fill_rule: Fill::NonZero,
+        });
+    }
+    collector
+        .scene_mut()
+        .append_transformed(scene, content_transform);
+    state.clip_path.is_some()
+}
+
+fn append_after_children(
+    global_state: &RenderRootState,
+    collector: &mut LayerCollector,
+    scene_cache: &HashMap<WidgetId, (Scene, Scene, Scene)>,
+    state: &crate::core::WidgetState,
+    has_clip: bool,
+    border_transform: Affine,
+    content_transform: Affine,
+) {
+    if global_state.debug_paint() {
+        paint_debug_geometry(collector.scene_mut(), state, border_transform);
+    }
+    if has_clip {
+        collector.pop_clip();
+    }
+    if let Some((_, _, post_scene)) = scene_cache.get(&state.id) {
+        collector
+            .scene_mut()
+            .append_transformed(post_scene, content_transform);
+    } else {
+        debug_panic!(
+            "Error in paint pass: scene should have been cached earlier in this function."
+        );
+    }
+    if global_state.inspector_state.hovered_widget == Some(state.id) {
+        const HOVER_FILL_COLOR: Color = Color::from_rgba8(60, 60, 250, 100);
+        Painter::new(collector.scene_mut())
+            .fill(state.border_box(), HOVER_FILL_COLOR)
+            .transform(border_transform)
+            .draw();
+    }
 }
 
 fn paint_debug_geometry(

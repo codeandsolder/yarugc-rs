@@ -169,7 +169,7 @@ impl Widget for LayerStack {
             return Length::ZERO;
         };
         // Let the base layer handle the response
-        ctx.redirect_measurement(&mut base_layer.root, axis, cross_length)
+        ctx.redirect_measurement(&base_layer.root, axis, cross_length)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
@@ -181,9 +181,9 @@ impl Widget for LayerStack {
 
         // Our measurement is just the passed on result from the base layer,
         // so the size we received is effectively meant for the base layer.
-        ctx.run_layout(&mut base_layer.root, size);
+        ctx.run_layout(&base_layer.root, size);
         // The base layer is always located at our origin.
-        ctx.place_child(&mut base_layer.root, Point::ORIGIN);
+        ctx.place_child(&base_layer.root, Point::ORIGIN);
 
         ctx.derive_baselines(&base_layer.root);
 
@@ -193,9 +193,9 @@ impl Widget for LayerStack {
             // We don't really care if they go outside the bounds of the base layer,
             // so we won't give any FitContent fallback and instead just use MaxContent.
             // These other layers still have access to the window size via context size.
-            let layer_size = ctx.compute_size(&mut layer.root, SizeDef::MAX, size.into());
-            ctx.run_layout(&mut layer.root, layer_size);
-            ctx.place_child(&mut layer.root, layer.position);
+            let layer_size = ctx.compute_size(&layer.root, SizeDef::MAX, size.into());
+            ctx.run_layout(&layer.root, layer_size);
+            ctx.place_child(&layer.root, layer.position);
         }
     }
 

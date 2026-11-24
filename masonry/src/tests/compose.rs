@@ -32,12 +32,12 @@ fn request_compose() {
     let parent = ModularWidget::new(child)
         .measure_fn(|_state, _ctx, _props, _axis, _len_req, _cross_length| Length::ZERO)
         .layout_fn(|state, ctx, _props, size| {
-            let child_size = ctx.compute_size(&mut state.child, SizeDef::fit(size), size.into());
-            ctx.run_layout(&mut state.child, child_size);
-            ctx.place_child(&mut state.child, state.pos);
+            let child_size = ctx.compute_size(&state.child, SizeDef::fit(size), size.into());
+            ctx.run_layout(&state.child, child_size);
+            ctx.place_child(&state.child, state.pos);
         })
         .compose_fn(|state, ctx| {
-            ctx.set_child_scroll_translation(&mut state.child, state.offset);
+            ctx.set_child_scroll_translation(&state.child, state.offset);
         })
         .register_children_fn(move |state, ctx| {
             ctx.register_child(&mut state.child);
@@ -74,7 +74,7 @@ fn request_compose() {
     // Origin should be "parent_origin + pos + scroll_offset"
     let child = harness.get_widget(child_tag);
     let ctx = child.ctx();
-    let origin = ctx.to_window(ctx.border_box().origin());
+    let origin = ctx.local_to_window(ctx.border_box().origin());
     assert_eq!(
         origin.to_vec2(),
         Vec2::new(7., 7.) + Point::new(30., 30.).to_vec2() + Vec2::new(8., 8.)
@@ -102,12 +102,12 @@ fn scroll_translation_updates_composed_geometry_without_layout() {
         offset: Vec2::ZERO,
     })
     .layout_fn(|state, ctx, _, size| {
-        let child_size = ctx.compute_size(&mut state.child, SizeDef::fit(size), size.into());
-        ctx.run_layout(&mut state.child, child_size);
-        ctx.place_child(&mut state.child, Point::new(5.1, 5.3));
+        let child_size = ctx.compute_size(&state.child, SizeDef::fit(size), size.into());
+        ctx.run_layout(&state.child, child_size);
+        ctx.place_child(&state.child, Point::new(5.1, 5.3));
     })
     .compose_fn(|state, ctx| {
-        ctx.set_child_scroll_translation(&mut state.child, state.offset);
+        ctx.set_child_scroll_translation(&state.child, state.offset);
     })
     .register_children_fn(|state, ctx| {
         ctx.register_child(&mut state.child);
@@ -198,6 +198,6 @@ fn scroll_pixel_snap() {
     // Origin should be rounded to (0., 1.) by pixel-snapping.
     let child = harness.get_widget(child_tag);
     let ctx = child.ctx();
-    let origin = ctx.to_window(ctx.border_box().origin());
+    let origin = ctx.local_to_window(ctx.border_box().origin());
     assert_eq!(origin, Point::new(0., 1.));
 }

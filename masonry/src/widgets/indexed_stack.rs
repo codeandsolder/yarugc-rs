@@ -242,7 +242,7 @@ impl Widget for IndexedStack {
             let context_size = LayoutSize::maybe(axis.cross(), cross_length);
 
             ctx.compute_length(
-                &mut self.children[self.active_child],
+                &self.children[self.active_child],
                 auto_length,
                 context_size,
                 axis,
@@ -265,14 +265,14 @@ impl Widget for IndexedStack {
         }
 
         let child_size = ctx.compute_size(
-            &mut self.children[self.active_child],
+            &self.children[self.active_child],
             SizeDef::fit(size),
             size.into(),
         );
-        ctx.run_layout(&mut self.children[self.active_child], child_size);
+        ctx.run_layout(&self.children[self.active_child], child_size);
 
         let child_origin = Point::ORIGIN;
-        ctx.place_child(&mut self.children[self.active_child], child_origin);
+        ctx.place_child(&self.children[self.active_child], child_origin);
 
         ctx.derive_baselines(&self.children[self.active_child]);
     }

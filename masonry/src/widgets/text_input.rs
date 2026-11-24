@@ -275,39 +275,33 @@ impl Widget for TextInput {
         cross_length: Option<Length>,
     ) -> Length {
         match len_req {
-            LenReq::MaxContent | LenReq::MinContent => {
+            LenReq::Max | LenReq::Min => {
                 let auto_length = len_req.into();
                 let context_size = LayoutSize::maybe(axis.cross(), cross_length);
 
-                ctx.compute_length(
-                    &mut self.text,
-                    auto_length,
-                    context_size,
-                    axis,
-                    cross_length,
-                )
+                ctx.compute_length(&self.text, auto_length, context_size, axis, cross_length)
             }
             // We always want to use all the offered space,
             // even on the block axis as we have multi-line display.
-            LenReq::FitContent(space) => space,
+            LenReq::Fit(space) => space,
         }
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        ctx.run_layout(&mut self.text, size);
+        ctx.run_layout(&self.text, size);
 
         let child_origin = Point::ORIGIN;
-        ctx.place_child(&mut self.text, child_origin);
+        ctx.place_child(&self.text, child_origin);
 
         ctx.derive_baselines(&self.text);
 
         let text_is_empty = ctx
             .get_child(&self.text)
             .is_some_and(|text| text.is_empty());
-        ctx.set_stashed(&mut self.placeholder, !text_is_empty);
+        ctx.set_stashed(&self.placeholder, !text_is_empty);
         if text_is_empty {
-            ctx.run_layout(&mut self.placeholder, size);
-            ctx.place_child(&mut self.placeholder, child_origin);
+            ctx.run_layout(&self.placeholder, size);
+            ctx.place_child(&self.placeholder, child_origin);
         }
 
         if self.clip {

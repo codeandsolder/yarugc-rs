@@ -3,7 +3,7 @@
 
 use std::fmt::{Debug, Display};
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 
 use crate::core::Widget;
 
@@ -51,7 +51,7 @@ impl<W: Widget> WidgetTag<W> {
     #[must_use = "Use the allocated widget tag."]
     pub fn unique() -> Self {
         static TAG_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-        let id = TAG_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let id = crate::util::allocate_id(&TAG_ID_COUNTER).get();
 
         Self {
             inner: WidgetTagInner { id, name: "" },

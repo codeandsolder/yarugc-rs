@@ -505,7 +505,7 @@ impl WidgetState {
         Self {
             id,
             flags: INITIAL_FLAGS
-                | ((options.disabled as u64) * WidgetFlag::IsExplicitlyDisabled as u64),
+                | (u64::from(options.disabled) * WidgetFlag::IsExplicitlyDisabled as u64),
 
             origin: Point::ORIGIN,
             end_point: Point::ORIGIN,
@@ -570,7 +570,7 @@ impl WidgetState {
             self.measurement_cache.clear();
         }
         self.flags = (self.flags & !(WidgetFlag::NeedsLayout as u64))
-            | ((needs_layout as u64) * WidgetFlag::NeedsLayout as u64);
+            | (u64::from(needs_layout) * WidgetFlag::NeedsLayout as u64);
     }
 
     /// Returns the widget's aligned content-box in the widget's border-box coordinate space.

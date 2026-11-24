@@ -100,8 +100,8 @@ impl Widget for VerticalStack {
         cross_length: Option<Length>,
     ) -> Length {
         let (len_req, min_result) = match len_req {
-            LenReq::MinContent | LenReq::MaxContent => (len_req, Length::ZERO),
-            LenReq::FitContent(space) => (LenReq::MinContent, space),
+            LenReq::Min | LenReq::Max => (len_req, Length::ZERO),
+            LenReq::Fit(space) => (LenReq::Min, space),
         };
 
         let auto_length = len_req.into();

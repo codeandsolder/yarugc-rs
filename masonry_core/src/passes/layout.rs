@@ -73,9 +73,9 @@ fn resolve_len_def(
 ) -> Length {
     let len_req = match len_def {
         LenDef::Fixed(val) => return val,
-        LenDef::MinContent => LenReq::MinContent,
-        LenDef::MaxContent => LenReq::MaxContent,
-        LenDef::FitContent(space) => LenReq::FitContent(space),
+        LenDef::MinContent => LenReq::Min,
+        LenDef::MaxContent => LenReq::Max,
+        LenDef::FitContent(space) => LenReq::Fit(space),
     };
 
     let inputs = MeasurementInputs::new(axis, len_req, cross_length);

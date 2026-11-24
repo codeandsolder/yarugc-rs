@@ -140,9 +140,9 @@ impl ObjectFit {
         let preferred_length = preferred_size.get_coord(axis);
 
         let (space, space_or_preferred) = match len_req {
-            LenReq::MinContent => return Length::px(preferred_length),
-            LenReq::MaxContent => (f64::INFINITY, preferred_length),
-            LenReq::FitContent(space) => (space.get(), space.get()),
+            LenReq::Min => return Length::px(preferred_length),
+            LenReq::Max => (f64::INFINITY, preferred_length),
+            LenReq::Fit(space) => (space.get(), space.get()),
         };
 
         let mut ar = preferred_size.get_coord(axis) / preferred_size.get_coord(axis.cross());
