@@ -268,6 +268,86 @@ fn external_placeholders_appear_in_painter_order() {
     ));
 }
 
+#[test]
+fn layer_declarations_survive_cached_and_partial_paints() {
+    let target = WidgetTag::named("retained-layer");
+    let child = NewWidget::new(
+        ModularWidget::new((true, true))
+            .measure_fn(|_, _, _, _, _, _| 20.px())
+            .pre_paint_fn(|state, ctx, _, _| {
+                if state.0 {
+                    ctx.set_paint_layer_mode(PaintLayerMode::IsolatedScene);
+                }
+            })
+            .paint_fn(|_, ctx, _, scene| {
+                scene.fill(ctx.content_box(), BLUE).draw();
+            })
+            .post_paint_fn(|state, ctx, _, _| {
+                if state.1 {
+                    ctx.set_paint_layer_mode(PaintLayerMode::External);
+                }
+            }),
+    )
+    .with_tag(target);
+    let leading =
+        NewWidget::new(SizedBox::empty().size(20.px(), 20.px())).with_props(Background::Color(RED));
+    let mut root = create_render_root(Flex::row().with_fixed(leading).with_fixed(child).prepare());
+    let target_id = root.get_widget_with_tag(target).unwrap().id();
+
+    // The post-paint declaration wins, and survives cached redraws and
+    // re-recording the content phase alone.
+    for _ in 0..2 {
+        let (plan, _) = root.redraw();
+        assert!(plan.layers.iter().any(|layer| layer.widget_id == target_id
+            && matches!(layer.kind, crate::app::VisualLayerKind::External { .. })));
+    }
+    root.edit_widget_with_tag(target, |mut child| child.ctx.request_paint_only())
+        .unwrap();
+    let (plan, _) = root.redraw();
+    let placeholder = plan
+        .layers
+        .iter()
+        .find(|layer| {
+            layer.widget_id == target_id
+                && matches!(layer.kind, crate::app::VisualLayerKind::External { .. })
+        })
+        .unwrap();
+    let crate::app::VisualLayerKind::External { bounds } = placeholder.kind else {
+        unreachable!()
+    };
+    let widget = root.get_widget_with_tag(target).unwrap();
+    let expected = widget
+        .ctx()
+        .window_transform()
+        .transform_rect_bbox(widget.ctx().border_box());
+    assert_eq!(placeholder.transform.transform_rect_bbox(bounds), expected);
+
+    // Clearing the later declaration reveals the earlier isolated scene.
+    root.edit_widget_with_tag(target, |mut child| {
+        child.widget.state.1 = false;
+        child.ctx.request_post_paint();
+    })
+    .unwrap();
+    let (plan, _) = root.redraw();
+    assert!(plan.layers.iter().any(|layer| layer.widget_id == target_id
+        && matches!(layer.kind, crate::app::VisualLayerKind::Scene(_))));
+    assert!(
+        !plan
+            .layers
+            .iter()
+            .any(|layer| matches!(layer.kind, crate::app::VisualLayerKind::External { .. }))
+    );
+
+    // Clearing the pre-paint declaration returns to the parent's inline scene.
+    root.edit_widget_with_tag(target, |mut child| {
+        child.widget.state.0 = false;
+        child.ctx.request_pre_paint();
+    })
+    .unwrap();
+    let (plan, _) = root.redraw();
+    assert!(!plan.layers.iter().any(|layer| layer.widget_id == target_id));
+}
+
 // Layered slightly misaligned grid layer painting:
 //
 // Color background

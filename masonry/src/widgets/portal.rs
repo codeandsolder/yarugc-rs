@@ -9,8 +9,8 @@ use tracing::{Span, trace_span};
 use crate::core::{
     AccessCtx, AccessEvent, ChildrenIds, ComposeCtx, EventCtx, FromDynWidget, LayoutCtx,
     MeasureCtx, NewWidget, NoAction, PaintCtx, PointerEvent, PointerScrollEvent, PropertiesMut,
-    PropertiesRef, Property, RegisterCtx, TextEvent, Update, UpdateCtx, UsesProperty, Widget,
-    WidgetId, WidgetMut, WidgetPod,
+    PropertiesRef, Property, RawCtx, RegisterCtx, TextEvent, Update, UpdateCtx, UsesProperty,
+    Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::dpi::{LogicalPosition, PhysicalPosition};
 use crate::imaging::Painter;
@@ -152,35 +152,37 @@ pub(crate) fn compute_pan_range(mut viewport: Range<f64>, target: Range<f64>) ->
 
 // --- MARK: METHODS
 impl<W: Widget + ?Sized> Portal<W> {
+    fn scrollbar_progress(&self, portal_size: Size, content_size: Size) -> Vec2 {
+        let range = (content_size - portal_size).max(Size::ZERO);
+        let progress = |position: f64, range: f64| {
+            if range > 0.0 {
+                (position / range).clamp(0.0, 1.0)
+            } else {
+                0.0
+            }
+        };
+        Vec2::new(
+            progress(self.viewport_pos.x, range.width),
+            progress(self.viewport_pos.y, range.height),
+        )
+    }
+
+    fn update_scrollbar_progress(child: Option<(&mut ScrollBar, RawCtx<'_>)>, progress: f64) {
+        if let Some((bar, mut ctx)) = child {
+            bar.cursor_progress = progress;
+            ctx.request_render();
+        }
+    }
+
     fn update_scrollbars_from_viewport(
         &mut self,
         ctx: &mut EventCtx<'_>,
         portal_size: Size,
         content_size: Size,
     ) {
-        let scroll_range = (content_size - portal_size).max(Size::ZERO);
-
-        let progress_x = if scroll_range.width > 1e-12 {
-            (self.viewport_pos.x / scroll_range.width).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let progress_y = if scroll_range.height > 1e-12 {
-            (self.viewport_pos.y / scroll_range.height).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-
-        {
-            let (scrollbar, mut scrollbar_ctx) = ctx.get_raw_mut(&mut self.scrollbar_horizontal);
-            scrollbar.cursor_progress = progress_x;
-            scrollbar_ctx.request_render();
-        }
-        {
-            let (scrollbar, mut scrollbar_ctx) = ctx.get_raw_mut(&mut self.scrollbar_vertical);
-            scrollbar.cursor_progress = progress_y;
-            scrollbar_ctx.request_render();
-        }
+        let progress = self.scrollbar_progress(portal_size, content_size);
+        Self::update_scrollbar_progress(ctx.get_raw_mut(&self.scrollbar_horizontal), progress.x);
+        Self::update_scrollbar_progress(ctx.get_raw_mut(&self.scrollbar_vertical), progress.y);
     }
 
     fn set_viewport_pos_event_ctx(
@@ -226,8 +228,7 @@ impl<W: Widget + ?Sized> Portal<W> {
         let mut changed = false;
         let scroll_range = (content_size - portal_size).max(Size::ZERO);
 
-        {
-            let (scrollbar, _) = ctx.get_raw_mut(&mut self.scrollbar_horizontal);
+        if let Some((scrollbar, _)) = ctx.get_raw_mut(&self.scrollbar_horizontal) {
             if scrollbar.moved {
                 scrollbar.moved = false;
                 let x = scrollbar.cursor_progress * scroll_range.width;
@@ -238,8 +239,7 @@ impl<W: Widget + ?Sized> Portal<W> {
                 );
             }
         }
-        {
-            let (scrollbar, _) = ctx.get_raw_mut(&mut self.scrollbar_vertical);
+        if let Some((scrollbar, _)) = ctx.get_raw_mut(&self.scrollbar_vertical) {
             if scrollbar.moved {
                 scrollbar.moved = false;
                 let y = scrollbar.cursor_progress * scroll_range.height;
@@ -366,12 +366,15 @@ impl<W: Widget + FromDynWidget + ?Sized> Portal<W> {
             .widget
             .set_viewport_pos_raw(portal_size, content_size, position);
         if pos_changed {
-            let progress_x = this.widget.viewport_pos.x / (content_size - portal_size).width;
-            Self::horizontal_scrollbar_mut(this).widget.cursor_progress = progress_x;
-            Self::horizontal_scrollbar_mut(this).ctx.request_render();
-            let progress_y = this.widget.viewport_pos.y / (content_size - portal_size).height;
-            Self::vertical_scrollbar_mut(this).widget.cursor_progress = progress_y;
-            Self::vertical_scrollbar_mut(this).ctx.request_render();
+            let progress = this.widget.scrollbar_progress(portal_size, content_size);
+            Self::update_scrollbar_progress(
+                this.ctx.get_raw_mut(&this.widget.scrollbar_horizontal),
+                progress.x,
+            );
+            Self::update_scrollbar_progress(
+                this.ctx.get_raw_mut(&this.widget.scrollbar_vertical),
+                progress.y,
+            );
             this.ctx.request_compose();
         }
         pos_changed
@@ -688,22 +691,15 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
                 self.pan_viewport_to_raw(portal_size, content_size, *target);
                 ctx.request_compose();
 
-                // TODO - There's a lot of code here that's duplicated from the `MouseWheel`
-                // event in `on_pointer_event`.
-                // Because this code directly manipulates child widgets, it's hard to factor
-                // it out.
-                let (scrollbar, mut scrollbar_ctx) = ctx.get_raw_mut(&mut self.scrollbar_vertical);
-                scrollbar.cursor_progress =
-                    self.viewport_pos.y / (content_size - portal_size).height;
-                scrollbar_ctx.request_render();
-
-                drop(scrollbar_ctx);
-
-                let (scrollbar, mut scrollbar_ctx) =
-                    ctx.get_raw_mut(&mut self.scrollbar_horizontal);
-                scrollbar.cursor_progress =
-                    self.viewport_pos.x / (content_size - portal_size).width;
-                scrollbar_ctx.request_render();
+                let progress = self.scrollbar_progress(portal_size, content_size);
+                Self::update_scrollbar_progress(
+                    ctx.get_raw_mut(&self.scrollbar_horizontal),
+                    progress.x,
+                );
+                Self::update_scrollbar_progress(
+                    ctx.get_raw_mut(&self.scrollbar_vertical),
+                    progress.y,
+                );
             }
             _ => {}
         }
@@ -788,11 +784,11 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
             !self.scrollbar_horizontal_visible,
         );
         if self.scrollbar_horizontal_visible {
-            let (scrollbar, mut sb_ctx) = ctx.get_raw_mut(&mut self.scrollbar_horizontal);
-            scrollbar.portal_size = size.width;
-            scrollbar.content_size = content_size.width;
-            sb_ctx.request_render();
-            drop(sb_ctx);
+            if let Some((scrollbar, mut sb_ctx)) = ctx.get_raw_mut(&self.scrollbar_horizontal) {
+                scrollbar.portal_size = size.width;
+                scrollbar.content_size = content_size.width;
+                sb_ctx.request_render();
+            }
 
             let scrollbar_size = ctx.compute_size(
                 &mut self.scrollbar_horizontal,
@@ -811,11 +807,11 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
             !self.scrollbar_vertical_visible,
         );
         if self.scrollbar_vertical_visible {
-            let (scrollbar, mut sb_ctx) = ctx.get_raw_mut(&mut self.scrollbar_vertical);
-            scrollbar.portal_size = size.height;
-            scrollbar.content_size = content_size.height;
-            sb_ctx.request_render();
-            drop(sb_ctx);
+            if let Some((scrollbar, mut sb_ctx)) = ctx.get_raw_mut(&self.scrollbar_vertical) {
+                scrollbar.portal_size = size.height;
+                scrollbar.content_size = content_size.height;
+                sb_ctx.request_render();
+            }
 
             let scrollbar_size = ctx.compute_size(
                 &mut self.scrollbar_vertical,
@@ -1085,6 +1081,67 @@ mod tests {
 
         let node = harness.access_node(portal_id).unwrap();
         assert!(node.data().scroll_y().unwrap_or(0.0) > 0.0);
+    }
+
+    #[test]
+    fn single_axis_scroll_keeps_both_scrollbar_progress_values_finite() {
+        let top = WidgetTag::named("scroll-top");
+        let bottom = WidgetTag::named("scroll-bottom");
+        let content = Flex::column()
+            .with_fixed(NewWidget::new(SizedBox::empty().size(20.px(), 20.px())).with_tag(top))
+            .with_fixed_spacer(400.px())
+            .with_fixed(NewWidget::new(SizedBox::empty().size(20.px(), 20.px())).with_tag(bottom))
+            .prepare();
+        let portal = Portal::new(content)
+            .constrain_horizontal(true)
+            .content_must_fill(true)
+            .prepare();
+        let mut harness = TestHarness::create_with_size(test_property_set(), portal, (100, 100));
+        harness.edit_root_widget(|mut portal| {
+            assert!(Portal::set_viewport_pos(&mut portal, Point::new(0.0, 80.0)));
+            assert_eq!(
+                Portal::horizontal_scrollbar_mut(&mut portal)
+                    .widget
+                    .cursor_progress(),
+                0.0
+            );
+            let progress = Portal::vertical_scrollbar_mut(&mut portal)
+                .widget
+                .cursor_progress();
+            assert!(progress > 0.0 && progress < 1.0);
+        });
+        let bottom_id = harness.get_widget(bottom).id();
+        harness.scroll_into_view(bottom_id);
+        harness.edit_root_widget(|mut portal| {
+            assert_eq!(
+                Portal::horizontal_scrollbar_mut(&mut portal)
+                    .widget
+                    .cursor_progress(),
+                0.0
+            );
+            assert_eq!(
+                Portal::vertical_scrollbar_mut(&mut portal)
+                    .widget
+                    .cursor_progress(),
+                1.0
+            );
+        });
+        let top_id = harness.get_widget(top).id();
+        harness.scroll_into_view(top_id);
+        harness.edit_root_widget(|mut portal| {
+            assert_eq!(
+                Portal::horizontal_scrollbar_mut(&mut portal)
+                    .widget
+                    .cursor_progress(),
+                0.0
+            );
+            assert_eq!(
+                Portal::vertical_scrollbar_mut(&mut portal)
+                    .widget
+                    .cursor_progress(),
+                0.0
+            );
+        });
     }
 
     // Helper function for panning tests

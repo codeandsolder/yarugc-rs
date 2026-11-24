@@ -47,6 +47,7 @@ impl<W: Widget> WidgetTag<W> {
     /// Creates a new unique tag.
     ///
     /// Calling this method twice will return two different tags.
+    #[must_use = "Use the allocated widget tag."]
     pub fn unique() -> Self {
         static TAG_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
         let id = TAG_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -82,10 +83,10 @@ impl<W: Widget + ?Sized> Display for WidgetTag<W> {
 
 impl Display for WidgetTagInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if !self.name.is_empty() {
-            write!(f, "#{}", self.name)
-        } else {
+        if self.name.is_empty() {
             write!(f, "#{}", self.id)
+        } else {
+            write!(f, "#{}", self.name)
         }
     }
 }

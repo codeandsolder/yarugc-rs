@@ -97,6 +97,7 @@ pub struct WidgetId(pub(crate) NonZeroU64);
 
 impl WidgetId {
     /// A serialized representation of the `WidgetId` for debugging purposes.
+    #[must_use = "Use the tracing field value."]
     pub fn trace(self) -> DisplayValue<Self> {
         tracing::field::display(self)
     }
@@ -715,6 +716,7 @@ impl WidgetId {
     }
 
     /// Returns the integer value of the `WidgetId`.
+    #[must_use = "Use the numeric widget identifier."]
     pub fn to_raw(self) -> u64 {
         self.0.into()
     }

@@ -310,7 +310,9 @@ impl Widget for TextInput {
 
         ctx.derive_baselines(&self.text);
 
-        let text_is_empty = ctx.get_raw(&mut self.text).0.is_empty();
+        let text_is_empty = ctx
+            .get_child(&self.text)
+            .is_some_and(|text| text.is_empty());
         ctx.set_stashed(&mut self.placeholder, !text_is_empty);
         if text_is_empty {
             ctx.run_layout(&mut self.placeholder, size);

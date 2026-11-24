@@ -10,8 +10,7 @@ use tree_arena::ArenaMut;
 
 use crate::app::{RenderRoot, RenderRootState, VisualLayer, VisualLayerKind, VisualLayerPlan};
 use crate::core::{
-    DefaultProperties, PaintCtx, PaintLayerMode, PropertiesRef, PropertyArena, WidgetArenaNode,
-    WidgetId,
+    PaintCtx, PaintLayerMode, PropertiesRef, PropertyArena, WidgetArenaNode, WidgetId,
 };
 use crate::imaging::record::{Clip, Geometry, Scene};
 use crate::imaging::{PaintSink, Painter};
@@ -35,7 +34,7 @@ impl LayerCollector {
         }
     }
 
-    fn scene_mut(&mut self) -> &mut Scene {
+    const fn scene_mut(&mut self) -> &mut Scene {
         &mut self.current_scene
     }
 
@@ -67,75 +66,109 @@ impl LayerCollector {
     }
 }
 
+/// Re-record only invalidated phases, including their layer declarations.
+fn record_widget(
+    global_state: &mut RenderRootState,
+    property_arena: &PropertyArena,
+    scene_cache: &mut HashMap<WidgetId, (Scene, Scene, Scene)>,
+    node: ArenaMut<'_, WidgetArenaNode>,
+) {
+    let state = &mut node.item.state;
+    let cache_missing = !scene_cache.contains_key(&state.id);
+    if state.is_stashed
+        || !(cache_missing
+            || state.request_pre_paint
+            || state.request_paint
+            || state.request_post_paint)
+    {
+        return;
+    }
+
+    let widget = &mut *node.item.widget;
+    if global_state.trace.paint {
+        trace!(
+            "Painting widget '{}' {}",
+            widget.short_type_name(),
+            state.id
+        );
+    }
+    let props = PropertiesRef {
+        local: &node.item.properties,
+        default_map: property_arena
+            .default_properties
+            .for_widget(widget.type_id()),
+        stack: property_arena.get(state.property_stack_id, widget.type_id()),
+        class_set: &node.item.class_set,
+    };
+    let (pre, content, post) = scene_cache.entry(state.id).or_default();
+    let phases = [
+        (
+            cache_missing || state.request_pre_paint,
+            pre,
+            PaintPhase::Pre,
+        ),
+        (
+            cache_missing || state.request_paint,
+            content,
+            PaintPhase::Content,
+        ),
+        (
+            cache_missing || state.request_post_paint,
+            post,
+            PaintPhase::Post,
+        ),
+    ];
+    let mut ctx = PaintCtx {
+        global_state,
+        widget_state: state,
+        children: node.children,
+        layer_mode: None,
+    };
+    for (requested, scene, phase) in phases {
+        if requested {
+            scene.clear();
+            let sink: &mut dyn PaintSink = scene;
+            let mut painter = Painter::new(sink);
+            match phase {
+                PaintPhase::Pre => widget.pre_paint(&mut ctx, &props, &mut painter),
+                PaintPhase::Content => widget.paint(&mut ctx, &props, &mut painter),
+                PaintPhase::Post => widget.post_paint(&mut ctx, &props, &mut painter),
+            }
+            ctx.widget_state.paint_layer_modes[phase as usize] = ctx.layer_mode.take();
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PaintPhase {
+    Pre,
+    Content,
+    Post,
+}
+
 // --- MARK: PAINT WIDGET
 fn paint_widget(
     global_state: &mut RenderRootState,
-    default_properties: &DefaultProperties,
     property_arena: &PropertyArena,
     layer_collector: &mut LayerCollector,
     scene_cache: &mut HashMap<WidgetId, (Scene, Scene, Scene)>,
     window_to_layer_transform: &Affine,
     node: ArenaMut<'_, WidgetArenaNode>,
 ) {
-    let mut children = node.children;
+    let mut node = node;
+    let _span = enter_span_if(global_state.trace.paint, &node.item.state);
+    record_widget(
+        global_state,
+        property_arena,
+        scene_cache,
+        node.reborrow_mut(),
+    );
+    let children = node.children;
     let widget = &mut *node.item.widget;
     let state = &mut node.item.state;
-    let properties = &mut node.item.properties;
-    let class_set = &node.item.class_set;
     let id = state.id;
-
-    let trace = global_state.trace.paint;
-    let _span = enter_span_if(trace, state);
-
-    // Note: At this point we could short-circuit if is_stashed is true,
-    // but we deliberately avoid doing that to avoid creating zombie flags.
-    // (See WidgetState doc.)
+    // Still visit stashed subtrees to clear pending flags.
     let is_stashed = state.is_stashed;
-
-    // TODO - Handle damage regions
-    // https://github.com/linebender/xilem/issues/789
-
-    state.paint_layer_mode = PaintLayerMode::Inline;
-    if (state.request_pre_paint || state.request_paint || state.request_post_paint) && !is_stashed {
-        if trace {
-            trace!("Painting widget '{}' {}", widget.short_type_name(), id);
-        }
-
-        let stack = property_arena.get(state.property_stack_id, widget.type_id());
-        let mut ctx = PaintCtx {
-            global_state,
-            widget_state: state,
-            children: children.reborrow_mut(),
-        };
-        let props = PropertiesRef {
-            local: properties,
-            default_map: default_properties.for_widget(widget.type_id()),
-            stack,
-            class_set,
-        };
-
-        // TODO - Reserve scene
-        // https://github.com/linebender/xilem/issues/524
-        let (pre_scene, scene, post_scene) = scene_cache.entry(id).or_default();
-        if ctx.widget_state.request_pre_paint {
-            pre_scene.clear();
-            let sink_dyn: &mut dyn PaintSink = pre_scene;
-            let mut painter = Painter::new(sink_dyn);
-            widget.pre_paint(&mut ctx, &props, &mut painter);
-        }
-        if ctx.widget_state.request_paint {
-            scene.clear();
-            let sink_dyn: &mut dyn PaintSink = scene;
-            let mut painter = Painter::new(sink_dyn);
-            widget.paint(&mut ctx, &props, &mut painter);
-        }
-        if ctx.widget_state.request_post_paint {
-            post_scene.clear();
-            let sink_dyn: &mut dyn PaintSink = post_scene;
-            let mut painter = Painter::new(sink_dyn);
-            widget.post_paint(&mut ctx, &props, &mut painter);
-        }
-    }
 
     state.request_pre_paint = false;
     state.request_paint = false;
@@ -145,7 +178,12 @@ fn paint_widget(
     let paint_layer_mode = if is_stashed {
         PaintLayerMode::Inline
     } else {
-        state.paint_layer_mode
+        state
+            .paint_layer_modes
+            .iter()
+            .rev()
+            .find_map(|mode| *mode)
+            .unwrap_or_default()
     };
 
     if matches!(
@@ -202,7 +240,6 @@ fn paint_widget(
         // - We still want to reset needs_paint and request_paint flags.
         paint_widget(
             global_state,
-            default_properties,
             property_arena,
             layer_collector,
             scene_cache,
@@ -266,7 +303,10 @@ fn paint_widget(
     }
 
     if paint_as_external {
-        layer_collector.push_external_layer(id, state.border_box());
+        layer_collector.push_external_layer(
+            id,
+            border_box_to_layer_transform.transform_rect_bbox(state.border_box()),
+        );
     }
 
     if matches!(
@@ -353,7 +393,6 @@ fn paint_layer(
 
     paint_widget(
         &mut root.global_state,
-        &root.property_arena.default_properties,
         &root.property_arena,
         layer_collector,
         scene_cache,

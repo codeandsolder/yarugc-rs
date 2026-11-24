@@ -48,6 +48,7 @@ pub trait Sanitize {
     ///
     /// See the specific implementation docs for more details.
     #[track_caller]
+    #[must_use = "Use the sanitized value."]
     fn sanitize(self, name: &str) -> Self;
 }
 
@@ -87,20 +88,17 @@ impl Sanitize for Option<f64> {
     /// Panics if the value is non-finite or negative and debug assertions are enabled.
     #[track_caller]
     fn sanitize(self, name: &str) -> Self {
-        match self {
-            Some(val) => {
-                if !val.is_finite() {
-                    debug_panic!("{name} must be finite. Received: {val}");
-                    None
-                } else if val < 0. {
-                    debug_panic!("{name} must be non-negative. Received: {val}");
-                    None
-                } else {
-                    Some(val)
-                }
+        self.filter(|val| {
+            if !val.is_finite() {
+                debug_panic!("{name} must be finite. Received: {val}");
+                false
+            } else if *val < 0.0 {
+                debug_panic!("{name} must be non-negative. Received: {val}");
+                false
+            } else {
+                true
             }
-            None => None,
-        }
+        })
     }
 }
 
@@ -109,7 +107,8 @@ impl Sanitize for Option<f64> {
 pub(crate) type AnyMap = anymap3::Map<dyn anymap3::CloneAny + Send + Sync>;
 
 /// Convert a 2d rectangle from Parley to one used for drawing in Vello and other maths.
-pub fn bounding_box_to_rect(bb: parley::BoundingBox) -> kurbo::Rect {
+#[must_use = "Use the converted rectangle."]
+pub const fn bounding_box_to_rect(bb: parley::BoundingBox) -> kurbo::Rect {
     kurbo::Rect {
         x0: bb.x0,
         y0: bb.y0,
@@ -153,6 +152,7 @@ static DEBUG_COLOR: &[Color] = &[
 ///
 /// The same color is always returned given the same id, usually the id of a widget.
 /// When painting a widget, [`PaintCtx::debug_color`][crate::core::PaintCtx::debug_color] is typically used instead.
+#[must_use = "Use the debug color."]
 pub fn get_debug_color(id: u64) -> Color {
     let color_num = id as usize % DEBUG_COLOR.len();
     DEBUG_COLOR[color_num]

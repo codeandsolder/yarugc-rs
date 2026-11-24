@@ -203,8 +203,8 @@ pub(crate) struct WidgetState {
     pub(crate) request_post_paint: bool,
     /// A painting method must be called on this widget or a descendant
     pub(crate) needs_paint: bool,
-    /// How this widget subtree should be represented in the current paint pass.
-    pub(crate) paint_layer_mode: PaintLayerMode,
+    /// Layer declarations cached alongside pre-paint, paint, and post-paint.
+    pub(crate) paint_layer_modes: [Option<PaintLayerMode>; 3],
 
     /// The `accessibility` method must be called on this widget
     pub(crate) request_accessibility: bool,
@@ -325,7 +325,7 @@ impl WidgetState {
             request_paint: true,
             request_post_paint: true,
             needs_paint: true,
-            paint_layer_mode: PaintLayerMode::Inline,
+            paint_layer_modes: [None; 3],
             request_accessibility: true,
             needs_accessibility: true,
             request_anim: true,
@@ -480,7 +480,7 @@ impl WidgetState {
         // Note: this returns sensible values for a widget that is translated and/or rescaled.
         // Other transformations like rotation may produce weird IME areas.
         self.window_transform
-            .transform_rect_bbox(self.ime_area.unwrap_or(self.border_box()))
+            .transform_rect_bbox(self.ime_area.unwrap_or_else(|| self.border_box()))
     }
 
     /// Returns the result of intersecting the widget's clip path (if any) with the given rect.
@@ -489,16 +489,14 @@ impl WidgetState {
     ///
     /// Returns `None` if the given rect is clipped out.
     pub(crate) fn clip_child(&self, child_rect: Rect) -> Option<Rect> {
-        if let Some(clip_path) = self.clip_path {
+        self.clip_path.map_or(Some(child_rect), |clip_path| {
             let clip_path_global = self.window_transform.transform_rect_bbox(clip_path);
             if clip_path_global.overlaps(child_rect) {
                 Some(clip_path_global.intersect(child_rect))
             } else {
                 None
             }
-        } else {
-            Some(child_rect)
-        }
+        })
     }
 
     pub(crate) const fn needs_rewrite_passes(&self) -> bool {

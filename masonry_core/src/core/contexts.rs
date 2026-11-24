@@ -150,6 +150,7 @@ pub struct ComposeCtx<'a> {
 
 /// A context passed to [`Widget::paint`] method.
 pub struct PaintCtx<'a> {
+    pub(crate) layer_mode: Option<PaintLayerMode>,
     pub(crate) global_state: &'a mut RenderRootState,
     pub(crate) widget_state: &'a mut WidgetState,
     pub(crate) children: ArenaMutList<'a, WidgetArenaNode>,
@@ -1829,26 +1830,14 @@ impl_context_method!(
             self.global_state.mutate_callbacks.push(callback);
         }
 
-        /// Returns direct reference to the stored child, and a context handle for that child.
-        pub fn get_raw<Child: Widget + FromDynWidget + ?Sized>(
-            &mut self,
-            child: &mut WidgetPod<Child>,
-        ) -> (&Child, RawCtx<'_>) {
-            let node_mut = self
-                .children
-                .item_mut(child.id())
-                .expect("get_mut: child not found");
-            let child_ctx = RawCtx {
-                global_state: self.global_state,
-                parent_widget_state: self.widget_state,
-                widget_state: &mut node_mut.item.state,
-                children: node_mut.children,
-                property_arena: self.property_arena,
-            };
-
-            let widget = Child::from_dyn(&*node_mut.item.widget).unwrap();
-
-            (widget, child_ctx)
+        /// Returns a shared typed reference to a registered child, if present.
+        /// This does not borrow the child's mutable state or propagate pass flags.
+        #[must_use = "Inspect the child if it exists."]
+        pub fn get_child<Child: Widget + FromDynWidget + ?Sized>(
+            &self,
+            child: &WidgetPod<Child>,
+        ) -> Option<&Child> {
+            Child::from_dyn(&*self.children.item(child.id())?.item.widget)
         }
 
         /// Returns direct mutable reference to the stored child, and a context handle for that child.
@@ -1866,23 +1855,18 @@ impl_context_method!(
         /// See [pass documentation](crate::doc::pass_system) for the pass order.
         pub fn get_raw_mut<Child: Widget + FromDynWidget + AllowRawMut + ?Sized>(
             &mut self,
-            child: &mut WidgetPod<Child>,
-        ) -> (&mut Child, RawCtx<'_>) {
-            let node_mut = self
-                .children
-                .item_mut(child.id())
-                .expect("get_mut: child not found");
-            let child_ctx = RawCtx {
+            child: &WidgetPod<Child>,
+        ) -> Option<(&mut Child, RawCtx<'_>)> {
+            let node = self.children.item_mut(child.id())?;
+            let widget = Child::from_dyn_mut(&mut *node.item.widget)?;
+            let ctx = RawCtx {
                 global_state: self.global_state,
                 parent_widget_state: self.widget_state,
-                widget_state: &mut node_mut.item.state,
-                children: node_mut.children,
+                widget_state: &mut node.item.state,
+                children: node.children,
                 property_arena: self.property_arena,
             };
-
-            let widget = Child::from_dyn_mut(&mut *node_mut.item.widget).unwrap();
-
-            (widget, child_ctx)
+            Some((widget, ctx))
         }
 
         /// Submits an action, which indicates that this widget requires something be handled
@@ -2220,11 +2204,11 @@ impl Drop for RawCtx<'_> {
 impl PaintCtx<'_> {
     /// Controls how this widget subtree is recorded in the current paint pass.
     ///
-    /// This is reset to [`PaintLayerMode::Inline`] at the start of each paint
-    /// pass for the widget. Widgets that want isolated scene layers should set
-    /// this during `pre_paint`, `paint`, or `post_paint` each time they paint.
+    /// Each paint phase caches its most recent declaration until it is run again.
+    /// If multiple phases declare a mode, the last in painter order wins.
+    /// Without a declaration the subtree is inline.
     pub const fn set_paint_layer_mode(&mut self, mode: PaintLayerMode) {
-        self.widget_state.paint_layer_mode = mode;
+        self.layer_mode = Some(mode);
     }
 
     /// Whether debug paint is enabled.

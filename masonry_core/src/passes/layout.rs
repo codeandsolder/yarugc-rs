@@ -10,11 +10,14 @@
 use dpi::LogicalSize;
 use tracing::{info_span, trace};
 use tree_arena::ArenaMut;
+#[cfg(debug_assertions)]
+use tree_arena::ArenaMutList;
 
 use crate::app::{RenderRoot, RenderRootSignal, RenderRootState, WindowSizePolicy};
+#[cfg(debug_assertions)]
+use crate::core::ChildrenIds;
 use crate::core::{
-    ChildrenIds, LayoutCtx, MeasureCtx, PropertiesRef, PropertyArena, Widget, WidgetArenaNode,
-    WidgetState,
+    LayoutCtx, MeasureCtx, PropertiesRef, PropertyArena, Widget, WidgetArenaNode, WidgetState,
 };
 use crate::kurbo::{Axis, Insets, Point, Size};
 use crate::layout::{LayoutSize, LenDef, LenReq, Length, MeasurementInputs, SizeDef};
@@ -85,7 +88,7 @@ fn resolve_len_def(
         // If the cache did have the result, we verify that it matches.
         if let Some(cached_result) = cached_result {
             if cached_result != result {
-                panic!(
+                debug_panic!(
                     "Widget '{}' {} measurement for {inputs:?} returned {result} \
                     but cache already had {cached_result}. Widget::measure needs \
                     to always return the same result for the same inputs. If some other data \
@@ -377,21 +380,8 @@ pub(crate) fn run_layout_on(
         );
     }
 
-    // Again, this block reads `is_explicitly_stashed` instead of `is_stashed` because the latter
-    // may be outdated if layout code has called `set_stashed`.
-    let mut children_ids = ChildrenIds::new();
-    if cfg!(debug_assertions) {
-        children_ids = widget.children_ids();
-
-        // We forcefully set request_layout to true for all children.
-        // This is used below to check that widget.layout(..) visited all of them.
-        for child_id in widget.children_ids() {
-            let child_state = &mut children.item_mut(child_id).unwrap().item.state;
-            if !child_state.is_explicitly_stashed {
-                child_state.request_layout = true;
-            }
-        }
-    }
+    #[cfg(debug_assertions)]
+    let children_ids = mark_layout_children(widget, id, children.reborrow_mut());
 
     state.paint_box_insets = Insets::ZERO;
 
@@ -448,47 +438,71 @@ pub(crate) fn run_layout_on(
     state.is_expecting_place_child_call = true;
 
     #[cfg(debug_assertions)]
-    {
-        let name = widget.short_type_name();
-        for child_id in widget.children_ids() {
-            let child_state = &mut children.item_mut(child_id).unwrap().item.state;
+    validate_layout_children(widget, state, children, &children_ids);
+}
 
-            if child_state.is_explicitly_stashed {
-                // Above, we forcefully set `request_layout` for unstashed children, but children
-                // may have become stashed in the meantime. Unset the flag for them.
-                child_state.request_layout = false;
-                continue;
-            }
-
-            if child_state.request_layout {
-                debug_panic!(
-                    "Error in '{}' {}: LayoutCtx::run_layout() was not called with child widget '{}' {}.",
-                    name,
-                    id,
-                    child_state.widget_name,
-                    child_state.id,
-                );
-            }
-
-            if child_state.is_expecting_place_child_call {
-                debug_panic!(
-                    "Error in '{}' {}: LayoutCtx::place_child() was not called with child widget '{}' {}.",
-                    name,
-                    id,
-                    child_state.widget_name,
-                    child_state.id,
-                );
-            }
-        }
-
-        let new_children_ids = widget.children_ids();
-        if children_ids != new_children_ids && !state.children_changed {
+/// Capture the declaration and mark every participating child before layout.
+#[cfg(debug_assertions)]
+fn mark_layout_children(
+    widget: &dyn Widget,
+    id: crate::core::WidgetId,
+    mut children: ArenaMutList<'_, WidgetArenaNode>,
+) -> ChildrenIds {
+    let ids = widget.children_ids();
+    for &child_id in &ids {
+        let Some(child) = children.item_mut(child_id) else {
             debug_panic!(
-                "Error in '{}' {}: children changed during layout pass",
-                name,
-                id,
+                "Error in '{}' {id}: child {child_id} is not registered",
+                widget.short_type_name()
+            );
+            continue;
+        };
+        let state = &mut child.item.state;
+        if !state.is_explicitly_stashed {
+            state.request_layout = true;
+        }
+    }
+    ids
+}
+
+/// Validate that layout visited and placed all non-stashed children.
+#[cfg(debug_assertions)]
+fn validate_layout_children(
+    widget: &dyn Widget,
+    state: &WidgetState,
+    mut children: ArenaMutList<'_, WidgetArenaNode>,
+    old_ids: &ChildrenIds,
+) {
+    let name = widget.short_type_name();
+    let id = state.id;
+    let ids = widget.children_ids();
+    for &child_id in &ids {
+        let Some(child) = children.item_mut(child_id) else {
+            debug_panic!("Error in '{name}' {id}: child {child_id} is not registered");
+            continue;
+        };
+        let child_state = &mut child.item.state;
+        if child_state.is_explicitly_stashed {
+            child_state.request_layout = false;
+            continue;
+        }
+        if child_state.request_layout {
+            debug_panic!(
+                "Error in '{name}' {id}: LayoutCtx::run_layout() was not called with child widget '{}' {}.",
+                child_state.widget_name,
+                child_state.id,
             );
         }
+        if child_state.is_expecting_place_child_call {
+            debug_panic!(
+                "Error in '{name}' {id}: LayoutCtx::place_child() was not called with child widget '{}' {}.",
+                child_state.widget_name,
+                child_state.id,
+            );
+        }
+    }
+    if *old_ids != ids && !state.children_changed {
+        debug_panic!("Error in '{name}' {id}: children changed during layout pass");
     }
 }
 

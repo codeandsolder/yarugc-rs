@@ -27,7 +27,8 @@ pub enum WindowEvent {
 }
 
 /// A text-related event.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use = "Dispatch the constructed text event."]
 pub enum TextEvent {
     /// A keyboard event.
     Keyboard(KeyboardEvent),
@@ -56,7 +57,7 @@ pub struct AccessEvent {
 }
 
 /// The light/dark mode of the window.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WindowTheme {
     /// Light mode.
     Light,
@@ -189,7 +190,7 @@ impl TextEvent {
     /// Constructor for [`Ime::Preedit`] events.
     ///
     /// This is mostly useful for testing.
-    pub fn preedit(text: String) -> Self {
+    pub const fn preedit(text: String) -> Self {
         Self::Ime(Ime::Preedit(text, None))
     }
 
@@ -201,6 +202,7 @@ impl TextEvent {
     ///
     /// Returns None if the selected text is not a substring of the preedit.
     /// The cursor positions are UTF-8 byte offsets, with an exclusive end.
+    #[must_use = "Handle a missing selection and dispatch the event."]
     pub fn preedit_with_cursor(text: String, selected: &str) -> Option<Self> {
         let offset = text.find(selected)?;
         let span = (offset, offset + selected.len());
@@ -208,7 +210,8 @@ impl TextEvent {
     }
 
     /// Short name of the event, for debug logging.
-    pub fn short_name(&self) -> &'static str {
+    #[must_use = "Use the event name for logging."]
+    pub const fn short_name(&self) -> &'static str {
         match self {
             Self::Keyboard(KeyboardEvent { repeat: true, .. }) => "Keyboard(repeat)",
             Self::Keyboard(..) => "Keyboard",
@@ -227,7 +230,8 @@ impl AccessEvent {
     /// Short name of the event, for debug logging.
     ///
     /// Returns the enum variant name.
-    pub fn short_name(&self) -> &'static str {
+    #[must_use = "Use the event name for logging."]
+    pub const fn short_name(&self) -> &'static str {
         match self.action {
             accesskit::Action::Click => "Click",
             accesskit::Action::Focus => "Focus",
@@ -261,7 +265,8 @@ impl Update {
     /// Short name of the event, for debug logging.
     ///
     /// Returns the enum variant name.
-    pub fn short_name(&self) -> &str {
+    #[must_use = "Use the event name for logging."]
+    pub const fn short_name(&self) -> &str {
         match self {
             Self::WidgetAdded => "WidgetAdded",
             Self::DisabledChanged(false) => "DisabledChanged(false)",
@@ -288,8 +293,9 @@ impl Update {
 
 impl Handled {
     /// Has the event been handled yet?
-    pub fn is_handled(self) -> bool {
-        self == Self::Yes
+    #[must_use = "Check whether the event was handled."]
+    pub const fn is_handled(self) -> bool {
+        matches!(self, Self::Yes)
     }
 }
 

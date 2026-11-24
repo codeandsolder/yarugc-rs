@@ -183,7 +183,9 @@ impl Widget for CollapsePanel {
         };
 
         // Collapsed = !Disclosed
-        let is_collapsed = !ctx.get_raw(&mut self.disclosure_button).0.is_disclosed();
+        let is_collapsed = ctx
+            .get_child(&self.disclosure_button)
+            .is_none_or(|button| !button.is_disclosed());
 
         let child_length = if !is_collapsed {
             let child_cross_space = match cross {
@@ -264,7 +266,9 @@ impl Widget for CollapsePanel {
         ctx.place_child(&mut self.header_label, label_origin);
 
         // Collapsed = !Disclosed
-        let is_collapsed = !ctx.get_raw(&mut self.disclosure_button).0.is_disclosed();
+        let is_collapsed = ctx
+            .get_child(&self.disclosure_button)
+            .is_none_or(|button| !button.is_disclosed());
 
         // Only render child if it's not collapsed.
         ctx.set_stashed(&mut self.child, is_collapsed);
