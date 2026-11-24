@@ -78,6 +78,20 @@ impl ApplicationHandler<MasonryUserEvent> for ExternalApp {
         self.masonry_state
             .handle_user_event(event_loop, event, self.app_driver.as_mut());
     }
+    fn device_event(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        // Handle Escape directly in the external event loop.
+        if let winit::event::DeviceEvent::Key(key) = event
+            && key.state == ElementState::Pressed
+            && key.physical_key == PhysicalKey::Code(KeyCode::Escape)
+        {
+            event_loop.exit();
+        }
+    }
 }
 
 fn main() -> Result<(), EventLoopError> {
