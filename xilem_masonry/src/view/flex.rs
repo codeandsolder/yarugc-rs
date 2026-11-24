@@ -307,30 +307,7 @@ impl<'w, 's> FlexSplice<'w, 's> {
     }
 }
 
-impl ViewElement for FlexElement {
-    type Mut<'w> = FlexElementMut<'w>;
-}
-
-impl SuperElement<Self, ViewCtx> for FlexElement {
-    fn upcast(_ctx: &mut ViewCtx, child: Self) -> Self {
-        child
-    }
-
-    fn with_downcast_val<R>(
-        mut this: Mut<'_, Self>,
-        f: impl FnOnce(Mut<'_, Self>) -> R,
-    ) -> (Self::Mut<'_>, Option<R>) {
-        let r = {
-            let parent = this.parent.reborrow_mut();
-            let reborrow = FlexElementMut {
-                idx: this.idx,
-                parent,
-            };
-            f(reborrow)
-        };
-        (this, Some(r))
-    }
-}
+impl_indexed_element!(FlexElement, FlexElementMut);
 
 impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for FlexElement {
     fn upcast(_: &mut ViewCtx, child: Pod<W>) -> Self {

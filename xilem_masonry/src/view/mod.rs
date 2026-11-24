@@ -3,6 +3,33 @@
 
 //! Views for the widgets which are built-in to Masonry. These are the primitives your Xilem app's view tree will generally be constructed from.
 
+// Container elements all carry the same mutable parent/index pair.
+// A self-downcast is just a shorter reborrow of that pair.
+macro_rules! impl_indexed_element {
+    ($element:ident, $handle:ident) => {
+        impl ViewElement for $element {
+            type Mut<'w> = $handle<'w>;
+        }
+
+        impl SuperElement<Self, ViewCtx> for $element {
+            fn upcast(_ctx: &mut ViewCtx, child: Self) -> Self {
+                child
+            }
+
+            fn with_downcast_val<R>(
+                mut this: Mut<'_, Self>,
+                f: impl FnOnce(Mut<'_, Self>) -> R,
+            ) -> (Self::Mut<'_>, Option<R>) {
+                let result = f($handle {
+                    idx: this.idx,
+                    parent: this.parent.reborrow_mut(),
+                });
+                (this, Some(result))
+            }
+        }
+    };
+}
+
 mod badge;
 mod badged;
 mod button;

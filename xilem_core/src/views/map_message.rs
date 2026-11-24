@@ -4,7 +4,7 @@
 use core::fmt::Debug;
 use core::marker::PhantomData;
 
-use crate::{MessageCtx, MessageResult, Mut, View, ViewMarker, ViewPathTracker};
+use crate::{Environment, MessageCtx, MessageResult, Mut, View, ViewMarker, ViewPathTracker};
 
 type ViewSignature<State, ParentAction, ChildAction, Context> =
     fn() -> (State, ParentAction, ChildAction, Context);
@@ -15,6 +15,7 @@ pub trait MessageMapper<State, ChildAction, ParentAction> {
     fn map(
         &self,
         state: &mut State,
+        environment: &mut Environment,
         result: MessageResult<ChildAction>,
     ) -> MessageResult<ParentAction>;
 }
@@ -26,6 +27,7 @@ where
     fn map(
         &self,
         state: &mut State,
+        _environment: &mut Environment,
         result: MessageResult<ChildAction>,
     ) -> MessageResult<ParentAction> {
         self(state, result)
@@ -44,6 +46,7 @@ where
     fn map(
         &self,
         state: &mut State,
+        _environment: &mut Environment,
         result: MessageResult<ChildAction>,
     ) -> MessageResult<ParentAction> {
         result.map(|action| (self.0)(state, action))
@@ -55,9 +58,9 @@ where
 /// This view maps a child [`View<State,ChildAction,_>`] to [`View<State,ParentAction,_>`], whilst allowing the kind of [`MessageResult`] to be changed.
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct MapMessage<V, State, ParentAction, ChildAction, Context, F> {
-    map_fn: F,
-    child: V,
-    phantom: PhantomData<ViewSignature<State, ParentAction, ChildAction, Context>>,
+    pub(crate) map_fn: F,
+    pub(crate) child: V,
+    pub(crate) phantom: PhantomData<ViewSignature<State, ParentAction, ChildAction, Context>>,
 }
 
 impl<V, State, ParentAction, ChildAction, Context, F> Debug
@@ -66,7 +69,9 @@ where
     V: Debug,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("MapAction")
+        f.debug_struct("MapMessage")
+            .field("child_action", &core::any::type_name::<ChildAction>())
+            .field("parent_action", &core::any::type_name::<ParentAction>())
             .field("child", &self.child)
             .finish_non_exhaustive()
     }
@@ -193,6 +198,7 @@ where
         app_state: &mut State,
     ) -> MessageResult<ParentAction> {
         let child_result = self.child.message(view_state, message, element, app_state);
-        self.map_fn.map(app_state, child_result)
+        self.map_fn
+            .map(app_state, &mut message.environment, child_result)
     }
 }

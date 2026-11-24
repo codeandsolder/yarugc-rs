@@ -181,31 +181,7 @@ where
 }
 
 // Used to become a reference form for editing. It's provided to rebuild and teardown.
-impl ViewElement for IndexedStackElement {
-    type Mut<'w> = IndexedStackElementMut<'w>;
-}
-
-// Used to allow the item to be used as a generic item in ViewSequence.
-impl SuperElement<Self, ViewCtx> for IndexedStackElement {
-    fn upcast(_ctx: &mut ViewCtx, child: Self) -> Self {
-        child
-    }
-
-    fn with_downcast_val<R>(
-        mut this: Mut<'_, Self>,
-        f: impl FnOnce(Mut<'_, Self>) -> R,
-    ) -> (Self::Mut<'_>, Option<R>) {
-        let r = {
-            let parent = this.parent.reborrow_mut();
-            let reborrow = IndexedStackElementMut {
-                idx: this.idx,
-                parent,
-            };
-            f(reborrow)
-        };
-        (this, Some(r))
-    }
-}
+impl_indexed_element!(IndexedStackElement, IndexedStackElementMut);
 
 impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for IndexedStackElement {
     fn upcast(_: &mut ViewCtx, child: Pod<W>) -> Self {

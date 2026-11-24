@@ -271,30 +271,7 @@ impl ZStackElement {
     }
 }
 
-impl ViewElement for ZStackElement {
-    type Mut<'a> = ZStackElementMut<'a>;
-}
-
-impl SuperElement<Self, ViewCtx> for ZStackElement {
-    fn upcast(_ctx: &mut ViewCtx, child: Self) -> Self {
-        child
-    }
-
-    fn with_downcast_val<R>(
-        mut this: Mut<'_, Self>,
-        f: impl FnOnce(Mut<'_, Self>) -> R,
-    ) -> (Self::Mut<'_>, Option<R>) {
-        let r = {
-            let parent = this.parent.reborrow_mut();
-            let reborrow = ZStackElementMut {
-                idx: this.idx,
-                parent,
-            };
-            f(reborrow)
-        };
-        (this, Some(r))
-    }
-}
+impl_indexed_element!(ZStackElement, ZStackElementMut);
 
 impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for ZStackElement {
     fn upcast(_: &mut ViewCtx, child: Pod<W>) -> Self {

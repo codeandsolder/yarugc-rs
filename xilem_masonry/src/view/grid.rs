@@ -279,31 +279,7 @@ where
 }
 
 // Used to become a reference form for editing. It's provided to rebuild and teardown.
-impl ViewElement for GridElement {
-    type Mut<'w> = GridElementMut<'w>;
-}
-
-// Used to allow the item to be used as a generic item in ViewSequence.
-impl SuperElement<Self, ViewCtx> for GridElement {
-    fn upcast(_ctx: &mut ViewCtx, child: Self) -> Self {
-        child
-    }
-
-    fn with_downcast_val<R>(
-        mut this: Mut<'_, Self>,
-        f: impl FnOnce(Mut<'_, Self>) -> R,
-    ) -> (Self::Mut<'_>, Option<R>) {
-        let r = {
-            let parent = this.parent.reborrow_mut();
-            let reborrow = GridElementMut {
-                idx: this.idx,
-                parent,
-            };
-            f(reborrow)
-        };
-        (this, Some(r))
-    }
-}
+impl_indexed_element!(GridElement, GridElementMut);
 
 impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for GridElement {
     fn upcast(_: &mut ViewCtx, child: Pod<W>) -> Self {

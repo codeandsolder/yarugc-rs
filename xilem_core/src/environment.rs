@@ -336,16 +336,36 @@ where
     }
 }
 
-type ActionSignature<State, ChildAction, Context, Res, Action> =
-    fn(State, ChildAction, Context, Res) -> Action;
-
-/// The view type for [`on_action_with_context`].
+/// Adapts a resource-dependent action callback to the shared message mapper.
 #[derive(Debug)]
-#[must_use = "View values do nothing unless provided to Xilem."]
-pub struct OnActionWithContext<State, Action, Context, OnAction, Res, ChildView, ChildAction> {
-    child: ChildView,
-    on_action: OnAction,
-    phantom: PhantomData<ActionSignature<State, ChildAction, Context, Res, Action>>,
+pub struct ResourceActionMapper<F, Res> {
+    callback: F,
+    resource: PhantomData<fn() -> Res>,
+}
+
+impl<State, ChildAction, Action, F, Res: Resource> crate::MessageMapper<State, ChildAction, Action>
+    for ResourceActionMapper<F, Res>
+where
+    F: Fn(&mut State, &mut Res, ChildAction) -> Action,
+{
+    fn map(
+        &self,
+        state: &mut State,
+        environment: &mut Environment,
+        result: MessageResult<ChildAction>,
+    ) -> MessageResult<Action> {
+        match result {
+            MessageResult::Action(action) => {
+                let Some(resource) = environment.get_mut::<Res>() else {
+                    return MessageResult::Stale;
+                };
+                MessageResult::Action((self.callback)(state, resource, action))
+            }
+            MessageResult::RequestRebuild => MessageResult::RequestRebuild,
+            MessageResult::Nop => MessageResult::Nop,
+            MessageResult::Stale => MessageResult::Stale,
+        }
+    }
 }
 
 /// Operates on a resource when a child returns an action.
@@ -355,82 +375,30 @@ pub struct OnActionWithContext<State, Action, Context, OnAction, Res, ChildView,
 pub fn on_action_with_context<State, Action, Context, OnAction, Res, ChildView, ChildAction>(
     on_action: OnAction,
     child: ChildView,
-) -> OnActionWithContext<State, Action, Context, OnAction, Res, ChildView, ChildAction>
+) -> crate::MapMessage<
+    ChildView,
+    State,
+    Action,
+    ChildAction,
+    Context,
+    ResourceActionMapper<OnAction, Res>,
+>
 where
     State: 'static,
-    Context: ViewPathTracker,
-    OnActionWithContext<State, Action, Context, OnAction, Res, ChildView, ChildAction>:
-        View<State, Action, Context>,
-    OnAction: Fn(&mut State, &mut Res, ChildAction) -> Action,
-{
-    OnActionWithContext {
-        child,
-        on_action,
-        phantom: PhantomData,
-    }
-}
-
-impl<State, Action, Context, OnAction, Res, ChildView, ChildAction> ViewMarker
-    for OnActionWithContext<State, Action, Context, OnAction, Res, ChildView, ChildAction>
-{
-}
-
-impl<State, Action, Context, OnAction, Res, ChildView, ChildAction> View<State, Action, Context>
-    for OnActionWithContext<State, Action, Context, OnAction, Res, ChildView, ChildAction>
-where
-    State: 'static,
-    Context: ViewPathTracker,
-    Res: Resource,
-    Self: 'static,
+    Action: 'static,
+    ChildAction: 'static,
+    Context: ViewPathTracker + 'static,
     ChildView: View<State, ChildAction, Context>,
-    OnAction: Fn(&mut State, &mut Res, ChildAction) -> Action,
+    Res: Resource,
+    OnAction: Fn(&mut State, &mut Res, ChildAction) -> Action + 'static,
 {
-    type Element = ChildView::Element;
-    type ViewState = ChildView::ViewState;
-
-    fn build(&self, ctx: &mut Context, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        self.child.build(ctx, app_state)
-    }
-
-    fn rebuild(
-        &self,
-        prev: &Self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut Context,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) {
-        self.child
-            .rebuild(&prev.child, view_state, ctx, element, app_state);
-    }
-
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut Context,
-        element: Mut<'_, Self::Element>,
-    ) {
-        self.child.teardown(view_state, ctx, element);
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        match self.child.message(view_state, message, element, app_state) {
-            MessageResult::Action(action) => {
-                let Some(resource) = message.environment.get_mut::<Res>() else {
-                    return MessageResult::Stale;
-                };
-                MessageResult::Action((self.on_action)(app_state, resource, action))
-            }
-            MessageResult::RequestRebuild => MessageResult::RequestRebuild,
-            MessageResult::Nop => MessageResult::Nop,
-            MessageResult::Stale => MessageResult::Stale,
-        }
+    crate::MapMessage {
+        child,
+        map_fn: ResourceActionMapper {
+            callback: on_action,
+            resource: PhantomData,
+        },
+        phantom: PhantomData,
     }
 }
 

@@ -67,7 +67,7 @@ mod views;
 pub use self::element::{AnyElement, Mut, NoElement, SuperElement, ViewElement};
 pub use self::element_splice::{AppendVec, ElementSplice, NoElements};
 pub use self::environment::{
-    Environment, OnActionWithContext, Provides, Rebuild, Resource, WithContext,
+    Environment, Provides, Rebuild, Resource, ResourceActionMapper, WithContext,
     on_action_with_context, provides, with_context,
 };
 pub use self::message::{DynMessage, MessageResult, SendMessage};
