@@ -5,6 +5,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use std::{sync::Arc, time::Instant};
+#[path = "support/compute.rs"]
+mod compute;
 #[path = "support/opaque.rs"]
 mod opaque;
 
@@ -637,4 +639,15 @@ fn opaque_glyph_cells() {
     let (device, queue) = benchmark_device();
     let compositor = Compositor::new(&device, FORMAT);
     opaque::run(&device, &queue, &compositor);
+}
+
+#[test]
+#[ignore = "requires timestamp-capable GPU; use release mode"]
+fn compute_glyph_cells() {
+    let _guard = GPU_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (device, queue) = benchmark_device();
+    let compositor = Compositor::new(&device, FORMAT);
+    compute::run(&device, &queue, &compositor);
 }

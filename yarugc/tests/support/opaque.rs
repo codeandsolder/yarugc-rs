@@ -14,7 +14,11 @@ const TILE_H: u32 = 32;
 const ATLAS_W: u32 = 256;
 const BG: [[u8; 3]; 2] = [[16, 24, 32], [24, 32, 40]];
 
-fn glyph_atlas(device: &Device, queue: &Queue, compositor: &Compositor) -> (Surface, Surface) {
+pub(super) fn glyph_atlas(
+    device: &Device,
+    queue: &Queue,
+    compositor: &Compositor,
+) -> (Surface, Surface) {
     // Use Glyphon, not a synthetic pattern or a new font rasterizer.
     let mut fs = font_system();
     let buffers: Vec<_> = GLYPHS
@@ -225,7 +229,7 @@ impl Pipelines {
     }
 }
 
-fn glyph_ids(frame: u32, changed: usize) -> Vec<u32> {
+pub(super) fn glyph_ids(frame: u32, changed: usize) -> Vec<u32> {
     (0..COUNT)
         .flat_map(|i| {
             let s = &strings(i)[selected(frame, changed, i) % 2];
@@ -276,7 +280,7 @@ fn full(pass: &mut RenderPass<'_>, pipeline: &wgpu::RenderPipeline, binding: &wg
     pass.draw(0..3, 0..1);
 }
 
-fn compare(a: &[u8], b: &[u8]) {
+pub(super) fn compare(a: &[u8], b: &[u8]) {
     assert_eq!(a.len(), b.len());
     let max = a.iter().zip(b).map(|(x, y)| x.abs_diff(*y)).max().unwrap();
     assert!(max <= 2, "opaque and transparent output differ by {max}");
