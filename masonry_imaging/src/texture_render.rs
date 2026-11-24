@@ -198,7 +198,15 @@ mod imp {
             Self
         }
 
-        pub(super) fn render_to_texture(
+        #[expect(
+            clippy::unused_self,
+            reason = "The disabled backend has no renderer state to read."
+        )]
+        #[expect(
+            clippy::needless_pass_by_ref_mut,
+            reason = "The disabled backend shares the mutable rendering operation with GPU backends."
+        )]
+        pub(super) const fn render_to_texture(
             &mut self,
             _: super::RenderTarget<'_>,
             _: PreparedFrame<'_>,

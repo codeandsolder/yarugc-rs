@@ -158,7 +158,7 @@ pub mod image_render {
         /// # Errors
         ///
         /// Always returns an error because no supported backend was selected.
-        pub fn new_headless_renderer() -> Result<Renderer, Error> {
+        pub const fn new_headless_renderer() -> Result<Renderer, Error> {
             Err(Error)
         }
 
