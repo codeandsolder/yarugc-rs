@@ -6,10 +6,10 @@ use std::assert_matches;
 use accesskit::{ActionRequest, TreeId};
 
 use crate::core::keyboard::{Key, NamedKey};
-use crate::core::pointer::{PointerButton, PointerEvent, PointerInfo, PointerType};
+use crate::core::pointer::{PointerEvent, PointerInfo, PointerType};
 use crate::core::{
-    AccessEvent, NewWidget, PointerButtonEvent, PointerId, PointerState, PointerUpdate, TextEvent,
-    Update, Widget, WidgetId, WidgetTag,
+    AccessEvent, NewWidget, PointerId, PointerState, PointerUpdate, TextEvent, Update, Widget,
+    WidgetTag,
 };
 use crate::dpi::PhysicalPosition;
 use crate::kurbo::Point;
@@ -18,7 +18,7 @@ use crate::testing::{
     ModularWidget, Record, TestHarness, TestWidgetExt, assert_any, assert_debug_panics, assert_none,
 };
 use crate::theme::test_property_set;
-use crate::widgets::{Button, ButtonPress, Flex, SizedBox, TextArea};
+use crate::widgets::{Button, Flex, SizedBox, TextArea};
 
 // POINTER EVENTS
 
@@ -316,8 +316,6 @@ fn pointer_move(pos: impl Into<Point>, id: u64) -> PointerEvent {
     })
 }
 
-#[track_caller]
-#[track_caller]
 // TODO - Implement multi-pointer hover
 #[test]
 #[ignore]
