@@ -1,3 +1,9 @@
+# YARUGC — Yet Another Rust GUI Crate
+
+A Masonry fork for engine-owned, retained GPU interfaces. The host owns the device, render loop and presentation; windows retain their rasterized content and independently updated GPU layers. See [the YARUGC crate](yarugc/) for the implementation and integration contract.
+
+The original Xilem/Masonry documentation and license follow.
+
 <div align="center">
 
 # Xilem
