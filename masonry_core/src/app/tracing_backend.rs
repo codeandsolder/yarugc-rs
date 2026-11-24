@@ -33,18 +33,20 @@ use tracing_subscriber::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
 /// Get the tracing subscriber we wish to set-up for a non-web platform with the given `default_level`.
 ///
-/// Returns the subscriber, and the error in case of a (recoverable) error.
+/// Returns the subscriber and any recoverable configuration errors.
 fn default_tracing_subscriber_native(
     default_level: LevelFilter,
-) -> (impl Subscriber, Option<Box<dyn Error>>) {
+) -> (impl Subscriber, Vec<Box<dyn Error>>) {
     // Use EnvFilter to allow the user to override the log level without recompiling.
     let env_filter_builder = EnvFilter::builder()
         .with_default_directive(default_level.into())
         .with_env_var("RUST_LOG");
-    let err = env_filter_builder
+    let mut errors: Vec<Box<dyn Error>> = env_filter_builder
         .from_env()
         .err()
-        .map(|err| format!("failed to parse RUST_LOG environment variable: {err:#}").into());
+        .map(|err| format!("failed to parse RUST_LOG environment variable: {err:#}").into())
+        .into_iter()
+        .collect();
     let env_filter = env_filter_builder.from_env_lossy();
 
     // This format is more concise than even the 'Compact' default:
@@ -68,34 +70,36 @@ fn default_tracing_subscriber_native(
         // TODO - Replace with a more targeted subscriber.
         // See https://github.com/linebender/xilem/issues/1556
 
-        let id = std::time::SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-        let tmp_path = std::env::temp_dir().join(format!("masonry-{id:016}-dense.log"));
-        // If modifying, also update the module level docs
-        let log_file_layer = tracing_subscriber::fmt::layer()
-            .with_timer(timer)
-            .with_writer(File::create(&tmp_path).unwrap())
-            // TODO - For some reason, `.with_ansi(false)` still leaves some italics in the output.
-            .with_ansi(false);
-        // Note that this layer does not use the provided filter, and instead logs all events.
-
-        #[expect(
-            clippy::print_stderr,
-            reason = "Report the debug log path before the tracing subscriber is installed"
-        )]
-        {
-            // We print this message to stderr (rather than through `tracing`), because:
-            // 1) Tracing hasn't been set up yet
-            // 2) The tracing logs could have been configured to eat this message, and we think this is still important to have visible.
-            // 3) This message is only sent in debug mode, so won't be exposed to end-users.
-            eprintln!("---");
-            eprintln!("Writing full logs to {}", tmp_path.display());
-            eprintln!("---");
+        let open_log = || -> Result<_, Box<dyn Error>> {
+            let id = std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)?
+                .as_nanos();
+            let pid = std::process::id();
+            let path = std::env::temp_dir().join(format!("masonry-{pid}-{id:032x}-dense.log"));
+            let file = File::create_new(&path)?;
+            Ok((path, file))
+        };
+        match open_log() {
+            Ok((path, file)) => {
+                #[expect(
+                    clippy::print_stderr,
+                    reason = "Report the debug log path before the tracing subscriber is installed"
+                )]
+                {
+                    eprintln!("Writing full logs to {}", path.display());
+                }
+                Some(
+                    tracing_subscriber::fmt::layer()
+                        .with_timer(timer)
+                        .with_writer(file)
+                        .with_ansi(false),
+                )
+            }
+            Err(error) => {
+                errors.push(format!("failed to open debug log: {error}").into());
+                None
+            }
         }
-
-        Some(log_file_layer)
     } else {
         None
     };
@@ -114,38 +118,39 @@ fn default_tracing_subscriber_native(
     #[cfg(feature = "tracy")]
     let registry = registry.with(tracing_tracy::TracyLayer::default());
 
-    (registry, err)
+    (registry, errors)
 }
 
 #[cfg(target_arch = "wasm32")]
 /// Initialise tracing for the web with the given `max_level`.
 fn default_tracing_subscriber_wasm(
     max_level: LevelFilter,
-) -> (impl Subscriber, Option<Box<dyn Error>>) {
+) -> (impl Subscriber, Vec<Box<dyn Error>>) {
     // Note - tracing-wasm might not work in headless Node.js. Probably doesn't matter anyway,
     // because this is a GUI framework, so wasm targets will virtually always be browsers.
 
     // Ignored if the panic hook is already set
     console_error_panic_hook::set_once();
 
-    let config = tracing_wasm::WASMLayerConfigBuilder::new()
-        .set_max_level(
-            max_level
-                .into_level()
-                .expect("for max_level to be > tracing::LevelFilter::OFF"),
-        )
-        .build();
-
+    let layer = max_level.into_level().map(|level| {
+        let config = tracing_wasm::WASMLayerConfigBuilder::new()
+            .set_max_level(level)
+            .build();
+        tracing_wasm::WASMLayer::new(config)
+    });
     (
-        tracing_subscriber::Registry::default().with(tracing_wasm::WASMLayer::new(config)),
-        None,
+        tracing_subscriber::Registry::default().with(layer),
+        Vec::new(),
     )
 }
 
 /// Constructs a default tracing subscriber with a given `max_level` filter.
+///
+/// Recoverable configuration errors are returned alongside the subscriber.
+#[must_use = "Install or inspect the constructed tracing subscriber."]
 pub fn default_tracing_subscriber(
     max_level: LevelFilter,
-) -> (impl Subscriber, Option<Box<dyn Error>>) {
+) -> (impl Subscriber, Vec<Box<dyn Error>>) {
     #[cfg(not(target_arch = "wasm32"))]
     {
         default_tracing_subscriber_native(max_level)
@@ -180,47 +185,38 @@ fn verify_subscriber_has_not_been_set() -> Result<(), TracingSubscriberHasBeenSe
     Ok(())
 }
 
-/// Initialise tracing with a default subscriber for a unit test.
-/// This ignores most messages to limit noise (but will still log all messages to a file).
-pub fn try_init_test_tracing() -> Result<(), TracingSubscriberHasBeenSetError> {
-    // For unit tests we want to suppress most messages.
-    let default_level = LevelFilter::WARN;
-
+fn install_default_tracing(level: LevelFilter) -> Result<(), TracingSubscriberHasBeenSetError> {
     verify_subscriber_has_not_been_set()?;
-
-    let (subscriber, err) = default_tracing_subscriber(default_level);
-
-    // We may ignore potential errors here because we already checked that no subscriber has been set.
-    let _ = tracing::subscriber::set_global_default(subscriber);
-    if let Some(err) = err {
-        tracing::error!(err, "Logging init had recoverable error");
+    let (subscriber, errors) = default_tracing_subscriber(level);
+    tracing::subscriber::set_global_default(subscriber)
+        .map_err(|_| TracingSubscriberHasBeenSetError)?;
+    for error in errors {
+        tracing::error!("Initialising logging encountered recoverable error: {error}");
     }
-
     Ok(())
 }
 
+/// Initialise tracing with a default subscriber for a unit test.
+///
+/// # Errors
+///
+/// Returns an error if a global subscriber has already been installed.
+pub fn try_init_test_tracing() -> Result<(), TracingSubscriberHasBeenSetError> {
+    install_default_tracing(LevelFilter::WARN)
+}
+
 /// Initialise tracing with a default subscriber for an end-user application.
+///
+/// # Errors
+///
+/// Returns an error if a global subscriber has already been installed.
 pub fn try_init_tracing() -> Result<(), TracingSubscriberHasBeenSetError> {
-    // Default level is DEBUG in --dev, INFO in --release, unless a level is passed.
-    // DEBUG should print a few logs per low-density event.
-    // INFO should only print logs for noteworthy things.
     let default_level = if cfg!(debug_assertions) {
         LevelFilter::DEBUG
     } else {
         LevelFilter::INFO
     };
-
-    verify_subscriber_has_not_been_set()?;
-
-    let (subscriber, err) = default_tracing_subscriber(default_level);
-
-    // We may ignore potential errors here because we already checked that no subscriber has been set.
-    let _ = tracing::subscriber::set_global_default(subscriber);
-    if let Some(err) = err {
-        tracing::error!("Initialising logging encountered recoverable error: {err}");
-    }
-
-    Ok(())
+    install_default_tracing(default_level)
 }
 
 #[cfg(test)]

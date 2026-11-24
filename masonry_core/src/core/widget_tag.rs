@@ -37,6 +37,7 @@ impl<W: Widget> WidgetTag<W> {
     /// Users should avoid name collisions when adding widgets with named tags.
     ///
     /// This method can be called in const contexts (e.g. to initialize a static).
+    #[must_use = "Use the named widget tag."]
     pub const fn named(name: &'static str) -> Self {
         Self {
             inner: WidgetTagInner { id: 0, name },

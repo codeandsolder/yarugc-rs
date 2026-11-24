@@ -12,7 +12,7 @@ use crate::util::Duration;
 // --- MARK: TYPES
 
 /// A global event.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WindowEvent {
     /// The window's DPI factor changed.
     Rescale(f64),

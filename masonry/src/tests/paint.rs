@@ -249,6 +249,49 @@ fn isolated_scene_layers_update_the_plan_without_changing_rendering() {
 }
 
 #[test]
+fn isolated_scenes_preserve_inherited_clips() {
+    fn clipped(isolate: bool) -> NewWidget<impl Widget> {
+        NewWidget::new(
+            ModularWidget::new_parent(make_layer_split_tree(isolate))
+                .layout_fn(|child, ctx, _props, size| {
+                    ctx.run_layout(child, size);
+                    ctx.place_child(child, Point::ORIGIN);
+                    ctx.set_clip_path(crate::kurbo::Rect::new(5.0, 5.0, 30.0, 15.0));
+                })
+                .post_paint_fn(|_, _, _, scene| {
+                    scene
+                        .fill(crate::kurbo::Rect::new(32.0, 0.0, 40.0, 5.0), GREEN)
+                        .draw();
+                }),
+        )
+    }
+
+    let mut root = create_render_root(clipped(true));
+    let (plan, _) = root.redraw();
+    for layer in &plan.layers {
+        if let crate::app::VisualLayerKind::Scene(scene) = &layer.kind {
+            let mut depth = 0;
+            for command in scene.commands() {
+                use crate::imaging::record::Command;
+                match command {
+                    Command::PushClip(_) => depth += 1,
+                    Command::PopClip => {
+                        assert!(depth > 0, "clip underflow in retained scene");
+                        depth -= 1;
+                    }
+                    _ => {}
+                }
+            }
+            assert_eq!(depth, 0, "unclosed clip in retained scene");
+        }
+    }
+
+    let mut inline = TestHarness::create_with_size(test_property_set(), clipped(false), (40, 20));
+    let mut isolated = TestHarness::create_with_size(test_property_set(), clipped(true), (40, 20));
+    assert_eq!(inline.render(), isolated.render());
+}
+
+#[test]
 fn external_placeholders_appear_in_painter_order() {
     let mut root = create_render_root(make_external_placeholder_tree());
     let (visual_layers, _) = root.redraw();

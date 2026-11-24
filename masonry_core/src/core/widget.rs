@@ -680,7 +680,7 @@ pub fn find_widget_under_pointer<'c>(
     if !ctx.border_box().contains(local_pos) {
         return None;
     }
-    Some(WidgetRef { widget, ctx })
+    Some(WidgetRef { ctx, widget })
 }
 
 /// Marker trait for widgets whose parents can get a raw mutable reference to them.

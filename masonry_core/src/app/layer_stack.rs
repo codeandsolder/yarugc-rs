@@ -148,7 +148,7 @@ impl Widget for LayerStack {
     type Action = NoAction;
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        for layer in self.layers.iter_mut() {
+        for layer in &mut self.layers {
             ctx.register_child(&mut layer.root);
         }
     }

@@ -76,5 +76,4 @@ use anymore::AnyDebug;
 pub type ErasedAction = Box<dyn AnyDebug + Send>;
 
 /// Empty type to be used as the `Widget::Action` associated type for widgets which don't emit actions.
-#[derive(Debug)]
-pub enum NoAction {}
+pub type NoAction = std::convert::Infallible;

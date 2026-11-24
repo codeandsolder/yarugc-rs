@@ -80,7 +80,7 @@ impl<W: Widget + ?Sized> std::fmt::Debug for NewWidget<W> {
 
 // TODO - Remove this and merge it into NewWidget?
 /// The options a new widget will be created with.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone, Copy)]
 pub struct WidgetOptions {
     /// Local transform used during the mapping of this widget's border-box coordinate space
     /// to the parent's border-box coordinate space.

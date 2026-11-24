@@ -223,7 +223,7 @@ impl PointerStatus {
         }
         for (target, value) in [(previous, false), (next, true)] {
             run_single_update_pass(root, target, |widget, ctx, props| {
-                let state = &mut ctx.widget_state;
+                let state = &mut *ctx.widget_state;
                 let (pseudo, event) = match self {
                     Self::Active => {
                         state.is_active = value;
@@ -341,7 +341,7 @@ fn register_children(
         let children_ids = widget.children_ids();
         for child_id in ctx.registered_ids {
             if !children_ids.contains(&child_id) {
-                panic!(
+                debug_panic!(
                     "Error in '{}' {}: method register_children() called \
                     RegisterCtx::register_child() on child {}, which isn't \
                     in the list returned by children_ids()",
@@ -356,7 +356,7 @@ fn register_children(
     #[cfg(debug_assertions)]
     for child_id in widget.children_ids() {
         if !children.has(child_id) {
-            panic!(
+            debug_panic!(
                 "Error in '{}' {}: method register_children() did not call \
                 RegisterCtx::register_child() on child {} returned by children_ids()",
                 widget.short_type_name(),
@@ -756,7 +756,7 @@ pub(crate) fn run_update_focus_pass(root: &mut RenderRoot) {
         }
         if prev_focused == root.global_state.next_focused_widget {
             tracing::warn!(
-                id = prev_focused.map(|id| id.trace()),
+                id = prev_focused.map(WidgetId::trace),
                 "request_focus called whilst handling Ime::Disabled"
             );
             root.global_state.emit_signal(RenderRootSignal::StartIme);
@@ -900,13 +900,11 @@ pub(crate) fn run_update_pointer_pass(root: &mut RenderRoot) {
     PointerStatus::Active.update(root, prev_active_widget, next_active_widget);
 
     // -- UPDATE HOVERED --
-    let mut next_hovered_widget = if let Some(pos) = pointer_pos {
+    let mut next_hovered_widget = pointer_pos.and_then(|pos| {
         root.get_widget(root.root_id())
             .and_then(|widget| widget.find_widget_under_pointer(pos))
             .map(|widget| widget.id())
-    } else {
-        None
-    };
+    });
     // If the pointer is captured, it can either hover its capture target or nothing.
     if let Some(capture_target) = root.global_state.pointer_capture_target
         && next_hovered_widget != Some(capture_target)

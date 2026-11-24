@@ -175,13 +175,15 @@ pub(crate) struct RenderRootState {
     pub(crate) debug_paint: bool,
 }
 
+type DeferredMutation = Box<dyn FnOnce(WidgetMut<'_, dyn Widget>)>;
+
 pub(crate) struct MutateCallback {
     pub(crate) id: WidgetId,
-    pub(crate) callback: Box<dyn FnOnce(WidgetMut<'_, dyn Widget>)>,
+    pub(crate) callback: DeferredMutation,
 }
 
 /// Defines how a window's size is determined.
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum WindowSizePolicy {
     /// Measure the content to determine the window size.
     ///
@@ -423,8 +425,6 @@ impl RenderRoot {
     /// and calls [`Widget::property_changed`] for every property previously
     /// resolved by each widget.
     pub fn set_default_properties(&mut self, default_properties: Arc<DefaultProperties>) {
-        self.property_arena.default_properties = default_properties;
-
         // Mark the whole tree for the update-properties pass: `needs_update_props`
         // so the pass descends to every node, `request_update_props` to enter the
         // cache-eviction branch, and `invalidated` so every cached entry re-fires
@@ -443,6 +443,7 @@ impl RenderRoot {
                 invalidate_props_all_in(node);
             });
         }
+        self.property_arena.default_properties = default_properties;
         if let Some(root_node) = self.widget_arena.nodes.find_mut(self.root_id()) {
             invalidate_props_all_in(root_node);
         }
@@ -487,7 +488,6 @@ impl RenderRoot {
             WindowEvent::Rescale(scale_factor) => {
                 self.global_state.scale_factor = scale_factor;
                 self.request_render_all();
-                Handled::Yes
             }
             WindowEvent::Resize(size) => {
                 self.global_state.size = size;
@@ -496,13 +496,10 @@ impl RenderRoot {
                     state.set_needs_layout(true);
                 }
                 self.run_rewrite_passes();
-                Handled::Yes
             }
             WindowEvent::AnimFrame(duration) => {
-                run_update_anim_pass(self, duration.as_nanos() as u64);
+                run_update_anim_pass(self, u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX));
                 self.run_rewrite_passes();
-
-                Handled::Yes
             }
             WindowEvent::EnableAccessTree => {
                 self.global_state.access_tree_active = true;
@@ -511,13 +508,12 @@ impl RenderRoot {
                 self.request_access_all();
                 self.global_state
                     .emit_signal(RenderRootSignal::RequestRedraw);
-                Handled::Yes
             }
             WindowEvent::DisableAccessTree => {
                 self.global_state.access_tree_active = false;
-                Handled::Yes
             }
         }
+        Handled::Yes
     }
 
     // --- MARK: PUB FUNCTIONS

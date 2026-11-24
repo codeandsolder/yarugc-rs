@@ -82,9 +82,25 @@ pub mod doc;
 #[macro_use]
 pub mod util;
 
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Explicit internal visibility is required by the workspace unreachable_pub lint; do not expose implementation details."
+)]
 mod passes;
 
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Explicit internal visibility is required by the workspace unreachable_pub lint; do not expose implementation details."
+)]
 pub mod app;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Explicit internal visibility is required by the workspace unreachable_pub lint; do not expose implementation details."
+)]
 pub mod core;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Explicit internal visibility is required by the workspace unreachable_pub lint; do not expose implementation details."
+)]
 pub mod layout;
 pub mod properties;

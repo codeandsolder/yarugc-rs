@@ -179,7 +179,7 @@ pub(crate) fn resolve_length(
         let cross = axis.cross();
         dims.dim(cross)
             .resolve(context_size.length(cross))
-            .and_then(|cross_len_def| cross_len_def.fixed())
+            .and_then(LenDef::fixed)
     });
 
     // Measure
@@ -587,7 +587,7 @@ pub(crate) fn run_layout_pass(root: &mut RenderRoot) {
     );
     place_widget(&mut root_node.item.state, Point::ORIGIN);
 
-    if let WindowSizePolicy::Content = root.global_state.size_policy {
+    if root.global_state.size_policy == WindowSizePolicy::Content {
         // We use the aligned border-box size, which means that transforms won't affect window size.
         let size = root_node.item.state.border_box().size();
         let new_size =

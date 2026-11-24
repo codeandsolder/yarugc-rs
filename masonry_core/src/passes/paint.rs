@@ -12,13 +12,14 @@ use crate::app::{RenderRoot, RenderRootState, VisualLayer, VisualLayerKind, Visu
 use crate::core::{
     PaintCtx, PaintLayerMode, PropertiesRef, PropertyArena, WidgetArenaNode, WidgetId,
 };
-use crate::imaging::record::{Clip, Geometry, Scene};
+use crate::imaging::record::{Clip, Command, Geometry, Scene};
 use crate::imaging::{PaintSink, Painter};
 use crate::passes::{enter_span_if, recurse_on_children};
 use crate::util::get_debug_color;
 
 struct LayerCollector {
     current_scene: Scene,
+    active_clips: Vec<Clip>,
     layers: Vec<VisualLayer>,
     current_owner_id: WidgetId,
     transform: Affine,
@@ -28,6 +29,7 @@ impl LayerCollector {
     fn new(root_id: WidgetId, transform: Affine) -> Self {
         Self {
             current_scene: Scene::new(),
+            active_clips: Vec::new(),
             layers: Vec::new(),
             current_owner_id: root_id,
             transform,
@@ -38,18 +40,42 @@ impl LayerCollector {
         &mut self.current_scene
     }
 
-    fn finish_current_layer(&mut self, allow_empty: bool) {
-        let empty_scene = Scene::new();
-        if !allow_empty && self.current_scene == empty_scene {
-            return;
-        }
+    fn push_clip(&mut self, clip: Clip) {
+        self.current_scene.push_clip(clip.clone());
+        self.active_clips.push(clip);
+    }
 
-        let scene = std::mem::replace(&mut self.current_scene, empty_scene);
-        self.layers.push(VisualLayer {
-            kind: VisualLayerKind::Scene(scene),
-            transform: self.transform,
-            widget_id: self.current_owner_id,
-        });
+    fn pop_clip(&mut self) {
+        if self.active_clips.pop().is_some() {
+            self.current_scene.pop_clip();
+        }
+    }
+
+    fn finish_current_layer(&mut self, allow_empty: bool) {
+        // A clip stack may span several retained scenes. Each scene must be
+        // independently replayable; close inherited clips before publishing it.
+        // Do not publish layers containing only clip-stack bookkeeping.
+        let has_content = self
+            .current_scene
+            .commands()
+            .iter()
+            .any(|command| !matches!(command, Command::PushClip(_) | Command::PopClip));
+        if allow_empty || has_content {
+            for _ in &self.active_clips {
+                self.current_scene.pop_clip();
+            }
+            self.layers.push(VisualLayer {
+                kind: VisualLayerKind::Scene(std::mem::take(&mut self.current_scene)),
+                transform: self.transform,
+                widget_id: self.current_owner_id,
+            });
+        } else {
+            self.current_scene.clear();
+        }
+        // The next scene starts under the same inherited clips.
+        for clip in &self.active_clips {
+            self.current_scene.push_clip(clip.clone());
+        }
     }
 
     fn push_external_layer(&mut self, widget_id: WidgetId, bounds: kurbo::Rect) {
@@ -219,7 +245,7 @@ fn paint_widget(
 
         if let Some(clip) = state.clip_path {
             // The clip path is stored in border-box space, so need to use that transform.
-            layer_collector.scene_mut().push_clip(Clip::Fill {
+            layer_collector.push_clip(Clip::Fill {
                 transform: border_box_to_layer_transform,
                 shape: Geometry::Rect(clip),
                 fill_rule: Fill::NonZero,
@@ -251,34 +277,15 @@ fn paint_widget(
 
     if !is_stashed && !paint_as_external {
         if global_state.debug_paint {
-            // Draw the global axis aligned bounding rect of the widget
-            const BORDER_WIDTH: f64 = 1.0;
-            let color = get_debug_color(id.to_raw());
-            let rect = state.bounding_box.inset(BORDER_WIDTH / -2.0);
-            let border_style = Stroke::new(BORDER_WIDTH);
-            let mut painter = Painter::new(layer_collector.scene_mut());
-            painter.stroke(rect, &border_style, color).draw();
-
-            // Draw the widget's explicit baselines
-            let mut draw_baseline = |baseline| {
-                let border_box = state.border_box();
-                let line = Line::new((border_box.x0, baseline), (border_box.x1, baseline));
-                let baseline_style = Stroke::new(1.0).with_dashes(0., [4.0, 4.0]);
-                painter
-                    .stroke(line, &baseline_style, color)
-                    .transform(border_box_to_layer_transform)
-                    .draw();
-            };
-            if !state.first_baseline.is_nan() {
-                draw_baseline(state.first_baseline);
-            }
-            if !state.last_baseline.is_nan() && state.last_baseline != state.first_baseline {
-                draw_baseline(state.last_baseline);
-            }
+            paint_debug_geometry(
+                layer_collector.scene_mut(),
+                state,
+                border_box_to_layer_transform,
+            );
         }
 
         if has_clip {
-            layer_collector.scene_mut().pop_clip();
+            layer_collector.pop_clip();
         }
 
         let Some((_, _, post_scene)) = &mut scene_cache.get(&id) else {
@@ -317,6 +324,39 @@ fn paint_widget(
     }
 
     layer_collector.current_owner_id = previous_owner_id;
+}
+
+fn paint_debug_geometry(
+    scene: &mut Scene,
+    state: &crate::core::WidgetState,
+    border_box_to_layer_transform: Affine,
+) {
+    const BORDER_WIDTH: f64 = 1.0;
+    let color = get_debug_color(state.id.to_raw());
+    let rect = state.bounding_box.inset(BORDER_WIDTH / -2.0);
+    let border_style = Stroke::new(BORDER_WIDTH);
+    let mut painter = Painter::new(scene);
+    painter.stroke(rect, &border_style, color).draw();
+
+    let mut draw_baseline = |baseline| {
+        let border_box = state.border_box();
+        let line = Line::new((border_box.x0, baseline), (border_box.x1, baseline));
+        let baseline_style = Stroke::new(1.0).with_dashes(0., [4.0, 4.0]);
+        painter
+            .stroke(line, &baseline_style, color)
+            .transform(border_box_to_layer_transform)
+            .draw();
+    };
+    if state.first_baseline.is_finite() {
+        draw_baseline(state.first_baseline);
+    }
+    // Equal baselines describe the same line, including signed zero.
+    if state.last_baseline.is_finite()
+        && (!state.first_baseline.is_finite()
+            || (state.last_baseline - state.first_baseline).abs() > 0.0)
+    {
+        draw_baseline(state.last_baseline);
+    }
 }
 
 // --- MARK: ROOT

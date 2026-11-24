@@ -1034,13 +1034,14 @@ impl LayoutCtx<'_> {
     ///
     /// Add these insets to the content-box to get the border-box,
     /// and subtract these insets from the border-box to get the content-box.
+    #[must_use = "Use the insets to convert between coordinate spaces."]
     pub const fn border_box_insets(&self) -> Insets {
         self.widget_state.border_box_insets
     }
 
     /// Returns whether this widget needs to call [`LayoutCtx::run_layout`].
     #[must_use = "Check whether layout must be run."]
-    pub fn needs_layout(&self) -> bool {
+    pub const fn needs_layout(&self) -> bool {
         self.widget_state.needs_layout()
     }
 
@@ -1162,12 +1163,12 @@ impl ComposeCtx<'_> {
             );
             return;
         }
-        if let Some(child) = self.get_child_state_mut(child) {
-            if translation != child.scroll_translation {
-                child.scroll_translation = translation;
-                child.transform_changed = true;
-                child.needs_compose = true;
-            }
+        if let Some(child) = self.get_child_state_mut(child)
+            && translation != child.scroll_translation
+        {
+            child.scroll_translation = translation;
+            child.transform_changed = true;
+            child.needs_compose = true;
         }
     }
 }
@@ -1259,7 +1260,7 @@ impl_context_method!(
         /// Add this [`Vec2`] to translate from content-box to border-box,
         /// and subtract this [`Vec2`] to translate from border-box to content-box.
         #[must_use = "Use the content-to-border translation."]
-        pub fn border_box_translation(&self) -> Vec2 {
+        pub const fn border_box_translation(&self) -> Vec2 {
             self.widget_state.border_box_translation()
         }
 
@@ -1658,6 +1659,7 @@ impl_context_method!(
             }
 
             self.children_changed();
+            drop(child);
         }
 
         /// Sets the disabled state for this widget.
@@ -1752,7 +1754,7 @@ impl_context_method!(
 
         /// Queues a typed callback for the given child widget.
         ///
-        /// The same ordering and target validation as [Self::mutate_later] apply.
+        /// The same ordering and target validation as [`Self::mutate_later`] apply.
         pub fn mutate_child_later<W: Widget + FromDynWidget + ?Sized>(
             &mut self,
             child: &WidgetPod<W>,

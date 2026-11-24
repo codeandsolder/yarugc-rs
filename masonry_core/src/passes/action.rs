@@ -81,7 +81,7 @@ pub(crate) fn run_action_pass(root: &mut RenderRoot) {
             );
             continue;
         }
-        if let Handled::No = handle_action(root, &action, source) {
+        if handle_action(root, &action, source) == Handled::No {
             root.global_state
                 .emit_signal(RenderRootSignal::Action(action, source));
         }
