@@ -249,13 +249,16 @@ impl VerticalStack {
     }
 
     pub fn remove_child(this: &mut WidgetMut<'_, Self>, n: usize) {
-        this.widget.children.remove(n);
-        this.ctx.children_changed();
+        if n < this.widget.children.len() {
+            let child = this.widget.children.remove(n);
+            this.ctx.remove_child(child);
+        }
     }
 
     pub fn clear_children(this: &mut WidgetMut<'_, Self>) {
-        this.widget.children.clear();
-        this.ctx.children_changed();
+        for child in this.widget.children.drain(..) {
+            this.ctx.remove_child(child);
+        }
     }
 }
 ```
