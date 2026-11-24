@@ -155,8 +155,8 @@ fn mem_swap() {
     // undefined behavior.
 
     // The node_p1 handle we've thus created still has the value 'a',
-    // but now has the id '4' and access to the children of node Q4.
-    assert_eq!(node_p1.id(), 4_u64);
+    // and keeps its own id while gaining access to the children of node Q4.
+    assert_eq!(node_p1.id(), 1_u64);
     assert_eq!(node_p1.item, &'a');
     assert_eq!(node_p1.children.item(2_u64).unwrap().item, &'g',);
 }
@@ -203,7 +203,7 @@ fn reparent_node_simple() {
     );
     // A simple scenario where the to-be-reparented node has
     // no children and the new parent also has no children.
-    arena.reparent(3_u64, 2_u64);
+    arena.reparent(3_u64, 2_u64).expect("valid reparenting");
 
     #[rustfmt::skip]
     assert_eq!(to_nodes(&arena), vec![
@@ -235,7 +235,7 @@ fn reparent_node_with_children() {
             ]),
         ]),
     );
-    arena.reparent(1_u64, 2_u64);
+    arena.reparent(1_u64, 2_u64).expect("valid reparenting");
 
     #[rustfmt::skip]
     assert_eq!(to_nodes(&arena), vec![
@@ -268,7 +268,7 @@ fn reparent_node_to_great_grandparent() {
             ]),
         ]),
     );
-    arena.reparent(3_u64, 0_u64);
+    arena.reparent(3_u64, 0_u64).expect("valid reparenting");
 
     #[rustfmt::skip]
     assert_eq!(to_nodes(&arena), vec![
@@ -291,7 +291,7 @@ fn reparent_node_to_parent() {
             Node(1, '1', vec![]),
         ]),
     );
-    arena.reparent(1_u64, 0_u64);
+    arena.reparent(1_u64, 0_u64).expect("valid reparenting");
 
     #[rustfmt::skip]
     assert_eq!(to_nodes(&arena), vec![
@@ -314,7 +314,7 @@ fn reparent_between_roots() {
     );
     add_tree(&mut arena, Node(1, '1', vec![]));
 
-    arena.reparent(2_u64, 1_u64);
+    arena.reparent(2_u64, 1_u64).expect("valid reparenting");
 
     #[rustfmt::skip]
     assert_eq!(to_nodes(&arena), vec![
@@ -326,32 +326,43 @@ fn reparent_between_roots() {
 }
 
 #[test]
-#[should_panic(expected = "no node found for child id #1")]
 fn reparent_child_not_found() {
     let mut arena = TreeArena::new();
     add_tree(&mut arena, Node(0, '0', vec![]));
-    arena.reparent(1_u64, 0_u64);
+    assert_eq!(
+        arena.reparent(1_u64, 0_u64),
+        Err(ReparentError::MissingChild(1))
+    );
+    assert_eq!(to_nodes(&arena), vec![Node(0, '0', vec![])]);
 }
 
 #[test]
-#[should_panic(expected = "no node found for new_parent id #2")]
 fn reparent_new_parent_not_found() {
     let mut arena = TreeArena::new();
     add_tree(&mut arena, Node(0, '0', vec![Node(1, '1', vec![])]));
-    arena.reparent(1_u64, 2_u64);
+    assert_eq!(
+        arena.reparent(1_u64, 2_u64),
+        Err(ReparentError::MissingParent(2))
+    );
+    assert_eq!(
+        to_nodes(&arena),
+        vec![Node(0, '0', vec![Node(1, '1', vec![])])]
+    );
 }
 
 #[test]
-#[should_panic(expected = "expected child to be different from new_parent but both have id #0")]
 fn reparent_child_equals_new_parent() {
     let mut arena = TreeArena::<()>::new();
-    arena.reparent(0_u64, 0_u64);
+    assert_eq!(
+        arena.reparent(0_u64, 0_u64),
+        Err(ReparentError::Cycle {
+            child: 0,
+            new_parent: 0
+        })
+    );
 }
 
 #[test]
-#[should_panic(
-    expected = "cannot reparent because new_parent #2 is a child of the to-be-reparented node #0"
-)]
 fn reparent_cycle() {
     let mut arena = TreeArena::new();
     #[rustfmt::skip]
@@ -363,7 +374,15 @@ fn reparent_cycle() {
             ]),
         ]),
     );
-    arena.reparent(0_u64, 2_u64);
+    let before = to_nodes(&arena);
+    assert_eq!(
+        arena.reparent(0_u64, 2_u64),
+        Err(ReparentError::Cycle {
+            child: 0,
+            new_parent: 2
+        })
+    );
+    assert_eq!(to_nodes(&arena), before);
 }
 
 #[test]
@@ -372,7 +391,7 @@ fn reparent_root_into_other_root() {
     add_tree(&mut arena, Node(0, '0', vec![]));
     add_tree(&mut arena, Node(1, '1', vec![]));
     // Move root 0 under root 1.
-    arena.reparent(0_u64, 1_u64);
+    arena.reparent(0_u64, 1_u64).expect("valid reparenting");
     #[rustfmt::skip]
     assert_eq!(to_nodes(&arena), vec![
         Node(1, '1', vec![
@@ -393,7 +412,7 @@ fn reparent_root_into_non_root() {
     );
     add_tree(&mut arena, Node(20, 'C', vec![])); // another root
     // Move root 20 under node 11 (non-root).
-    arena.reparent(20_u64, 11_u64);
+    arena.reparent(20_u64, 11_u64).expect("valid reparenting");
     #[rustfmt::skip]
     assert_eq!(to_nodes(&arena), vec![
         Node(10, 'A', vec![
@@ -442,4 +461,95 @@ fn sorted(iter: impl IntoIterator<Item = u64>) -> Vec<u64> {
     let mut ids = Vec::from_iter(iter);
     ids.sort();
     ids
+}
+
+#[test]
+fn reparent_all_pairs_preserves_forest() {
+    // Includes separate roots, siblings, ancestors, and deep descendants.
+    let initial = [None, Some(0), Some(0), Some(1), Some(3), None, Some(5)];
+    for child in 0..initial.len() {
+        for new_parent in 0..initial.len() {
+            let mut arena = TreeArena::new();
+            for (id, parent) in initial.iter().copied().enumerate() {
+                if let Some(parent) = parent {
+                    arena
+                        .find_mut(parent as u64)
+                        .unwrap()
+                        .children
+                        .insert(id as u64, id);
+                } else {
+                    arena.roots_mut().insert(id as u64, id);
+                }
+            }
+            let mut expected = initial;
+            let mut current = Some(new_parent);
+            let mut cycle = false;
+            while let Some(id) = current {
+                if id == child {
+                    cycle = true;
+                    break;
+                }
+                current = initial[id];
+            }
+            let result = arena.reparent(child as u64, new_parent as u64);
+            if cycle {
+                assert_eq!(
+                    result,
+                    Err(ReparentError::Cycle {
+                        child: child as u64,
+                        new_parent: new_parent as u64
+                    })
+                );
+            } else {
+                assert_eq!(result, Ok(()));
+                expected[child] = Some(new_parent);
+            }
+            assert_eq!(arena.len(), expected.len());
+            let roots = sorted(arena.root_ids());
+            assert_eq!(
+                roots,
+                expected
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(id, parent)| parent.is_none().then_some(id as u64))
+                    .collect::<Vec<_>>()
+            );
+            for (id, parent) in expected.iter().copied().enumerate() {
+                let node = arena.find(id as u64).unwrap();
+                assert_eq!(node.id(), id as u64);
+                assert_eq!(*node.item, id);
+                assert_eq!(node.parent_id, parent.map(|parent| parent as u64));
+                let children = sorted(node.child_ids());
+                assert_eq!(
+                    children,
+                    expected
+                        .iter()
+                        .enumerate()
+                        .filter_map(
+                            |(candidate, parent)| (*parent == Some(id)).then_some(candidate as u64)
+                        )
+                        .collect::<Vec<_>>()
+                );
+                let mut path = vec![id as u64];
+                let mut ancestor = parent;
+                while let Some(parent) = ancestor {
+                    path.push(parent as u64);
+                    ancestor = expected[parent];
+                }
+                assert_eq!(arena.get_id_path(id as u64), path);
+                for candidate in 0..expected.len() {
+                    let mut current = expected[candidate];
+                    let mut descendant = false;
+                    while let Some(parent) = current {
+                        if parent == id {
+                            descendant = true;
+                            break;
+                        }
+                        current = expected[parent];
+                    }
+                    assert_eq!(node.children.find(candidate as u64).is_some(), descendant);
+                }
+            }
+        }
+    }
 }

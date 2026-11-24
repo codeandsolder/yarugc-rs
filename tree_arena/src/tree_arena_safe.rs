@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 
 use hashbrown::HashMap;
 
-use crate::NodeId;
+use crate::{NodeId, ReparentError, parent_path, validate_reparent};
 
 #[derive(Debug)]
 struct TreeNode<T> {
@@ -37,6 +37,7 @@ pub struct TreeArena<T> {
 /// You can iterate over its children to get access to child `ArenaRef` handles.
 #[derive(Debug)]
 pub struct ArenaRef<'arena, T> {
+    id: NodeId,
     /// The parent of this node
     pub parent_id: Option<NodeId>,
     /// The payload of the node
@@ -69,6 +70,7 @@ pub struct ArenaRefList<'arena, T> {
 /// You can iterate over its children to get access to child `ArenaMut` handles.
 #[derive(Debug)]
 pub struct ArenaMut<'arena, T> {
+    id: NodeId,
     /// The parent of the node
     pub parent_id: Option<NodeId>,
     /// The payload of the node
@@ -125,6 +127,7 @@ impl<T> Default for TreeArena<T> {
 
 impl<T> TreeArena<T> {
     /// Creates an empty tree.
+    #[must_use = "The newly created arena must be retained to store nodes."]
     pub fn new() -> Self {
         Self {
             roots: HashMap::new(),
@@ -133,17 +136,20 @@ impl<T> TreeArena<T> {
     }
 
     /// Returns the number of items in the arena.
+    #[must_use = "Returns the number of stored nodes."]
     pub fn len(&self) -> usize {
         self.parents_map.len()
     }
 
     /// Returns `true` if the arena is empty.
+    #[must_use = "Reports whether the arena contains any nodes."]
     pub fn is_empty(&self) -> bool {
         self.parents_map.is_empty()
     }
 
     /// Returns a handle giving access to the roots of the tree.
-    pub fn roots(&self) -> ArenaRefList<'_, T> {
+    #[must_use = "Use the returned handle to inspect the roots."]
+    pub const fn roots(&self) -> ArenaRefList<'_, T> {
         ArenaRefList {
             parent_id: None,
             children: &self.roots,
@@ -157,7 +163,7 @@ impl<T> TreeArena<T> {
     ///
     /// Using [`insert`](ArenaMutList::insert) on this handle
     /// will add a new root to the tree.
-    pub fn roots_mut(&mut self) -> ArenaMutList<'_, T> {
+    pub const fn roots_mut(&mut self) -> ArenaMutList<'_, T> {
         ArenaMutList {
             parent_id: None,
             children: &mut self.roots,
@@ -209,67 +215,109 @@ impl<T> TreeArena<T> {
         parents_map.get_id_path(id.into(), None)
     }
 
-    /// Moves the given child (along with all its children) to the new parent.
+    /// Moves the given child and its entire subtree to the new parent.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the parent is actually a child of the to-be-reparented node, or
-    /// if either node id cannot be found, or
-    /// if both given ids are equal.
-    pub fn reparent(&mut self, child: impl Into<NodeId>, new_parent: impl Into<NodeId>) {
-        let child_id = child.into();
-        let new_parent_id = new_parent.into();
-
-        assert_ne!(
-            child_id, new_parent_id,
-            "expected child to be different from new_parent but both have id #{child_id}"
-        );
-        assert!(
-            !self.get_id_path(new_parent_id).contains(&child_id),
-            "cannot reparent because new_parent #{new_parent_id} is a child of the to-be-reparented node #{child_id}"
-        );
-
-        // Ensure new parent exists.
-        let _ = self
-            .find(new_parent_id)
-            .unwrap_or_else(|| panic!("no node found for new_parent id #{new_parent_id}"));
-
-        // Detach the child from its current location (root or non-root).
-        let was_root = self.roots.contains_key(&child_id);
-        let child_node = if was_root {
-            self.roots
-                .remove(&child_id)
-                .unwrap_or_else(|| panic!("no node found for child id #{child_id}"))
-        } else {
-            let old_parent_id = self
-                .parents_map
-                .get(&child_id)
-                .unwrap_or_else(|| panic!("no node found for child id #{child_id}"))
-                .unwrap();
-            self.find_mut(old_parent_id)
-                .unwrap()
-                .children
-                .children
-                .remove(&child_id)
-                .unwrap()
-        };
-
-        self.parents_map.insert(child_id, Some(new_parent_id));
-        self.find_mut(new_parent_id)
-            .unwrap_or_else(|| panic!("no node found for new_parent id #{new_parent_id}"))
-            .children
-            .children
-            .insert(child_id, child_node);
+    /// Returns an error if either node is missing or the move would create a cycle.
+    /// Invalid requests leave the arena unchanged.
+    pub fn reparent(
+        &mut self,
+        child: impl Into<NodeId>,
+        new_parent: impl Into<NodeId>,
+    ) -> Result<(), ReparentError> {
+        let child = child.into();
+        let new_parent = new_parent.into();
+        let old_parent = validate_reparent(&self.parents_map, child, new_parent)?;
+        if old_parent == Some(new_parent) {
+            return Ok(());
+        }
+        let source_path = parent_path(&self.parents_map, child, None);
+        let destination_path = parent_path(&self.parents_map, new_parent, None);
+        let parent = self
+            .parents_map
+            .get_mut(&child)
+            .ok_or(ReparentError::InvalidTopology)?;
+        TreeNode::move_subtree(&mut self.roots, &source_path, &destination_path)
+            .ok_or(ReparentError::InvalidTopology)?;
+        *parent = Some(new_parent);
+        Ok(())
     }
 }
 
 impl<T> TreeNode<T> {
-    fn arena_ref<'arena>(
+    // Both paths are ordered from the destination/source up to the root. Descend
+    // the common branch once, then borrow distinct branches if possible.
+    fn move_subtree(
+        children: &mut HashMap<NodeId, Self>,
+        source: &[NodeId],
+        destination: &[NodeId],
+    ) -> Option<()> {
+        let (&source_id, source_rest) = source.split_last()?;
+        let Some((&destination_id, destination_rest)) = destination.split_last() else {
+            let node = Self::detach(children, source)?;
+            children.insert(node.id, node);
+            return Some(());
+        };
+        if source_id == destination_id {
+            return Self::move_subtree(
+                &mut children.get_mut(&source_id)?.children,
+                source_rest,
+                destination_rest,
+            );
+        }
+        if source_rest.is_empty() {
+            // Removing a root of this submap requires exclusive access to the
+            // submap itself. Restore it if the destination path is invalid.
+            let node = children.remove(&source_id)?;
+            if let Some(target) = Self::children_at_path(children, destination) {
+                target.insert(source_id, node);
+            } else {
+                children.insert(source_id, node);
+                return None;
+            }
+        } else {
+            let [Some(source_root), Some(destination_root)] =
+                children.get_disjoint_mut([&source_id, &destination_id])
+            else {
+                return None;
+            };
+            let target = Self::children_at_path(&mut destination_root.children, destination_rest)?;
+            let node = Self::detach(&mut source_root.children, source_rest)?;
+            target.insert(node.id, node);
+        }
+        Some(())
+    }
+
+    fn children_at_path<'a>(
+        mut children: &'a mut HashMap<NodeId, Self>,
+        path: &[NodeId],
+    ) -> Option<&'a mut HashMap<NodeId, Self>> {
+        for id in path.iter().rev() {
+            children = &mut children.get_mut(id)?.children;
+        }
+        Some(children)
+    }
+
+    fn detach(children: &mut HashMap<NodeId, Self>, path: &[NodeId]) -> Option<Self> {
+        let (id, parent_path) = path.split_first()?;
+        Self::children_at_path(children, parent_path)?.remove(id)
+    }
+
+    fn remove_parent_links(&self, parents: &mut HashMap<NodeId, Option<NodeId>>) {
+        for child in self.children.values() {
+            child.remove_parent_links(parents);
+        }
+        parents.remove(&self.id);
+    }
+
+    const fn arena_ref<'arena>(
         &'arena self,
         parent_id: Option<NodeId>,
         parents_map: &'arena HashMap<NodeId, Option<NodeId>>,
     ) -> ArenaRef<'arena, T> {
         ArenaRef {
+            id: self.id,
             parent_id,
             item: &self.item,
             children: ArenaRefList {
@@ -280,12 +328,13 @@ impl<T> TreeNode<T> {
         }
     }
 
-    fn arena_mut<'arena>(
+    const fn arena_mut<'arena>(
         &'arena mut self,
         parent_id: Option<NodeId>,
         parents_map: &'arena mut HashMap<NodeId, Option<NodeId>>,
     ) -> ArenaMut<'arena, T> {
         ArenaMut {
+            id: self.id,
             parent_id,
             item: &mut self.item,
             children: ArenaMutList {
@@ -299,13 +348,13 @@ impl<T> TreeNode<T> {
 
 impl<T> ArenaRef<'_, T> {
     /// Id of the item this handle is associated with.
-    pub fn id(&self) -> NodeId {
-        self.children
-            .parent_id
-            .expect("ArenaRefList always has a parent_id when it's a member of ArenaRef")
+    #[must_use = "Identifies the node associated with this handle."]
+    pub const fn id(&self) -> NodeId {
+        self.id
     }
 
     /// An iterator visiting all child ids in arbitrary order.
+    #[must_use = "Iterate the returned child identifiers."]
     pub fn child_ids(&self) -> impl IntoIterator<Item = NodeId> {
         self.children.children.keys().copied()
     }
@@ -342,11 +391,9 @@ impl<'arena, T> ArenaRefList<'arena, T> {
     fn find_inner(self, id: NodeId) -> Option<ArenaRef<'arena, T>> {
         let parent_id = self.parents_map.parents_map.get(&id)?;
 
-        let id_path = if let Some(parent_id) = parent_id {
-            self.parents_map.get_id_path(*parent_id, self.parent_id)
-        } else {
-            Vec::new()
-        };
+        let id_path = parent_id.map_or_else(Vec::new, |parent_id| {
+            self.parents_map.get_id_path(parent_id, self.parent_id)
+        });
 
         let mut id_path = id_path.as_slice();
         let mut node_children = self.children;
@@ -362,15 +409,16 @@ impl<'arena, T> ArenaRefList<'arena, T> {
 
 impl<T> ArenaMut<'_, T> {
     /// Id of the item this handle is associated with.
-    pub fn id(&self) -> NodeId {
-        self.children
-            .parent_id
-            .expect("ArenaMut always has a parent_id when it's a member of ArenaMut")
+    #[must_use = "Identifies the node associated with this handle."]
+    pub const fn id(&self) -> NodeId {
+        self.id
     }
 
     /// Returns a shared reference equivalent to this one.
-    pub fn reborrow(&mut self) -> ArenaRef<'_, T> {
+    #[must_use = "Use the returned shared handle to inspect the node."]
+    pub const fn reborrow(&self) -> ArenaRef<'_, T> {
         ArenaRef {
+            id: self.id,
             parent_id: self.parent_id,
             item: self.item,
             children: self.children.reborrow(),
@@ -380,8 +428,9 @@ impl<T> ArenaMut<'_, T> {
     /// Returns a mutable reference equivalent to this one.
     ///
     /// This is sometimes useful to work with the borrow checker.
-    pub fn reborrow_mut(&mut self) -> ArenaMut<'_, T> {
+    pub const fn reborrow_mut(&mut self) -> ArenaMut<'_, T> {
         ArenaMut {
+            id: self.id,
             parent_id: self.parent_id,
             item: self.item,
             children: self.children.reborrow_mut(),
@@ -458,18 +507,14 @@ impl<'arena, T> ArenaMutList<'arena, T> {
             .parents_map
             .insert(child_id, self.parent_id);
 
-        self.children.insert(
-            child_id,
-            TreeNode {
+        self.children
+            .entry(child_id)
+            .insert(TreeNode {
                 id: child_id,
                 item: value,
                 children: HashMap::new(),
-            },
-        );
-
-        self.children
-            .get_mut(&child_id)
-            .unwrap()
+            })
+            .into_mut()
             .arena_mut(self.parent_id, self.parents_map.parents_map)
     }
 
@@ -483,28 +528,19 @@ impl<'arena, T> ArenaMutList<'arena, T> {
     /// Else, returns the removed item.
     ///
     /// This will also silently remove any recursive grandchildren of this item.
-    #[must_use]
+    #[must_use = "Use the returned value if the removed node payload is needed."]
     pub fn remove(&mut self, child_id: impl Into<NodeId>) -> Option<T> {
         let child_id = child_id.into();
         let child = self.children.remove(&child_id)?;
 
-        fn remove_children_from_map<I>(
-            node: &TreeNode<I>,
-            parents_map: &mut HashMap<NodeId, Option<NodeId>>,
-        ) {
-            for child in &node.children {
-                remove_children_from_map(child.1, parents_map);
-            }
-            parents_map.remove(&node.id);
-        }
-
-        remove_children_from_map(&child, self.parents_map.parents_map);
+        child.remove_parent_links(self.parents_map.parents_map);
 
         Some(child.item)
     }
 
     /// Returns a shared handle equivalent to this one.
-    pub fn reborrow(&self) -> ArenaRefList<'_, T> {
+    #[must_use = "Use the returned shared handle to inspect the arena."]
+    pub const fn reborrow(&self) -> ArenaRefList<'_, T> {
         ArenaRefList {
             parent_id: self.parent_id,
             children: &*self.children,
@@ -515,7 +551,7 @@ impl<'arena, T> ArenaMutList<'arena, T> {
     /// Returns a mutable handle equivalent to this one.
     ///
     /// This is sometimes useful to work with the borrow checker.
-    pub fn reborrow_mut(&mut self) -> ArenaMutList<'_, T> {
+    pub const fn reborrow_mut(&mut self) -> ArenaMutList<'_, T> {
         ArenaMutList {
             parent_id: self.parent_id,
             children: &mut *self.children,
@@ -552,11 +588,9 @@ impl<'arena, T> ArenaMutList<'arena, T> {
     fn find_mut_inner(self, id: NodeId) -> Option<ArenaMut<'arena, T>> {
         let parent_id = self.parents_map.parents_map.get(&id)?;
 
-        let id_path = if let Some(parent_id) = parent_id {
-            self.parents_map.get_id_path(*parent_id, self.parent_id)
-        } else {
-            Vec::new()
-        };
+        let id_path = parent_id.map_or_else(Vec::new, |parent_id| {
+            self.parents_map.get_id_path(parent_id, self.parent_id)
+        });
 
         let mut id_path = id_path.as_slice();
         let mut node_children: &'arena mut _ = &mut *self.children;
@@ -569,13 +603,15 @@ impl<'arena, T> ArenaMutList<'arena, T> {
         Some(node.arena_mut(*parent_id, &mut *self.parents_map.parents_map))
     }
 
-    /// No-op. Added for parity with unsafe implementation.
+    /// Forces reallocation of the child map to exercise outstanding ancestor borrows.
     ///
     /// This is an unstable API which can only be used in tests of the `tree_arena` crate itself,
     /// and may change in any release.
     #[doc(hidden)]
     pub fn realloc_inner_storage(&mut self) {
-        core::hint::black_box(());
+        let capacity = core::hint::black_box(self.children.capacity());
+        self.children.reserve(capacity.saturating_add(32));
+        self.children.shrink_to_fit();
     }
 }
 
@@ -589,35 +625,13 @@ impl ArenaMapRef<'_> {
     ///
     /// If there is no path from `start_id` to id, returns an empty vector.
     fn get_id_path(self, id: NodeId, start_id: Option<NodeId>) -> Vec<NodeId> {
-        let mut path = Vec::new();
-
-        if !self.parents_map.contains_key(&id) {
-            return path;
-        }
-
-        let mut current_id = Some(id);
-        while let Some(current) = current_id {
-            path.push(current);
-            current_id = *self
-                .parents_map
-                .get(&current)
-                .expect("All ids in the tree should have a parent in the parent map");
-            if current_id == start_id {
-                break;
-            }
-        }
-
-        if current_id != start_id {
-            path.clear();
-        }
-
-        path
+        parent_path(self.parents_map, id, start_id)
     }
 }
 
 impl ArenaMapMut<'_> {
     /// Returns a shared handle equivalent to this one.
-    fn reborrow(&self) -> ArenaMapRef<'_> {
+    const fn reborrow(&self) -> ArenaMapRef<'_> {
         ArenaMapRef {
             parents_map: self.parents_map,
         }
@@ -626,7 +640,7 @@ impl ArenaMapMut<'_> {
     /// Returns a mutable handle equivalent to this one.
     ///
     /// This is sometimes useful to work with the borrow checker.
-    fn reborrow_mut(&mut self) -> ArenaMapMut<'_> {
+    const fn reborrow_mut(&mut self) -> ArenaMapMut<'_> {
         ArenaMapMut {
             parents_map: self.parents_map,
         }
