@@ -5,7 +5,7 @@ use std::sync::mpsc;
 
 use masonry_testing::{ModularWidget, TestHarness};
 
-use crate::core::{NewWidget, WidgetTag};
+use crate::core::{NewWidget, Widget, WidgetTag};
 use crate::theme::test_property_set;
 use crate::widgets::SizedBox;
 
@@ -49,7 +49,7 @@ fn cancel_mutate() {
     let mut harness = TestHarness::create(test_property_set(), parent);
     harness.edit_widget(parent_tag, move |mut parent| {
         {
-            let mut child = SizedBox::child_mut(&mut parent).unwrap();
+            let mut child = SizedBox::child_mut::<dyn Widget>(&mut parent).unwrap();
 
             child.ctx.mutate_self_later(move |_| {
                 panic!("This function should never get called");
@@ -104,4 +104,46 @@ fn absent_or_mismatched_mutation_targets_do_not_run_callbacks() {
             .edit_widget(id, |_: WidgetMut<'_, SizedBox>| panic!("removed widget"))
             .is_none()
     );
+}
+
+#[test]
+fn typed_child_lookup_respects_registration_and_collection_slots() {
+    use crate::core::CollectionWidget;
+    use crate::layout::AsUnit;
+    use crate::widgets::{Flex, Label};
+
+    let label_tag = WidgetTag::named("old-label");
+    let new_tag = WidgetTag::named("new-label");
+    let parent = Flex::row()
+        .with_fixed(NewWidget::new(Label::new("old")).with_tag(label_tag))
+        .with_fixed_spacer(10.px())
+        .prepare();
+    let mut harness = TestHarness::create(test_property_set(), parent);
+    let old_id = harness.get_widget(label_tag).id();
+
+    harness.edit_root_widget(|mut parent| {
+        let root_id = parent.id();
+        assert_eq!(Flex::get_mut::<Label>(&mut parent, 0).unwrap().id(), old_id);
+        assert!(Flex::get_mut::<SizedBox>(&mut parent, 0).is_none());
+        assert!(Flex::get_mut::<dyn Widget>(&mut parent, 1).is_none());
+        assert!(Flex::get_mut::<dyn Widget>(&mut parent, usize::MAX).is_none());
+        assert!(parent.ctx.get_mut::<Flex>(root_id).is_none());
+
+        let replacement = NewWidget::new(Label::new("new")).with_tag(new_tag);
+        let new_id = replacement.id();
+        Flex::set(&mut parent, 0, replacement, 0.0);
+        assert!(parent.ctx.get_mut::<Label>(old_id).is_none());
+        assert!(parent.ctx.get_mut::<Label>(new_id).is_none());
+        assert!(Flex::get_mut::<Label>(&mut parent, 0).is_none());
+    });
+
+    let new_id = harness.get_widget(new_tag).id();
+    harness.edit_root_widget(|mut parent| {
+        assert_eq!(Flex::get_mut::<Label>(&mut parent, 0).unwrap().id(), new_id);
+        assert_eq!(
+            parent.ctx.get_mut::<dyn Widget>(new_id).unwrap().id(),
+            new_id
+        );
+        assert!(parent.ctx.get_mut::<Label>(old_id).is_none());
+    });
 }

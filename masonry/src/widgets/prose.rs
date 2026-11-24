@@ -89,8 +89,10 @@ impl Prose {
     /// Returns the underlying text area.
     ///
     /// Used to modify most properties of the text.
-    pub fn text_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, TextArea<false>> {
-        this.ctx.get_mut(&mut this.widget.text)
+    pub fn text_mut<'t>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> Option<WidgetMut<'t, TextArea<false>>> {
+        this.ctx.get_mut(this.widget.text.id())
     }
 
     /// Whether to clip the text to the available space.
@@ -157,21 +159,27 @@ impl Widget for Prose {
             ctx.mutate_self_later(|mut input| {
                 let mut input = input.downcast::<Self>();
                 let color = *input.get_prop::<CaretColor>();
-                let mut text_area = Self::text_mut(&mut input);
+                let Some(mut text_area) = Self::text_mut(&mut input) else {
+                    return;
+                };
                 text_area.insert_prop(color);
             });
         } else if property_type == TypeId::of::<ContentColor>() {
             ctx.mutate_self_later(|mut input| {
                 let mut input = input.downcast::<Self>();
                 let color = *input.get_prop::<ContentColor>();
-                let mut text_area = Self::text_mut(&mut input);
+                let Some(mut text_area) = Self::text_mut(&mut input) else {
+                    return;
+                };
                 text_area.insert_prop(color);
             });
         } else if property_type == TypeId::of::<SelectionColor>() {
             ctx.mutate_self_later(|mut input| {
                 let mut input = input.downcast::<Self>();
                 let color = *input.get_prop::<SelectionColor>();
-                let mut text_area = Self::text_mut(&mut input);
+                let Some(mut text_area) = Self::text_mut(&mut input) else {
+                    return;
+                };
                 text_area.insert_prop(color);
             });
         }
@@ -184,19 +192,25 @@ impl Widget for Prose {
                 ctx.mutate_self_later(|mut input| {
                     let mut input = input.downcast::<Self>();
                     let color = *input.get_prop::<CaretColor>();
-                    let mut text_area = Self::text_mut(&mut input);
+                    let Some(mut text_area) = Self::text_mut(&mut input) else {
+                        return;
+                    };
                     text_area.insert_prop(color);
                 });
                 ctx.mutate_self_later(|mut input| {
                     let mut input = input.downcast::<Self>();
                     let color = *input.get_prop::<ContentColor>();
-                    let mut text_area = Self::text_mut(&mut input);
+                    let Some(mut text_area) = Self::text_mut(&mut input) else {
+                        return;
+                    };
                     text_area.insert_prop(color);
                 });
                 ctx.mutate_self_later(|mut input| {
                     let mut input = input.downcast::<Self>();
                     let color = *input.get_prop::<SelectionColor>();
-                    let mut text_area = Self::text_mut(&mut input);
+                    let Some(mut text_area) = Self::text_mut(&mut input) else {
+                        return;
+                    };
                     text_area.insert_prop(color);
                 });
             }
@@ -343,7 +357,7 @@ mod tests {
 
         let mut text_area_id = None;
         harness.edit_root_widget(|mut prose| {
-            let mut prose = Prose::text_mut(&mut prose);
+            let mut prose = Prose::text_mut(&mut prose).unwrap();
             text_area_id = Some(prose.ctx.widget_id());
 
             TextArea::select_text(&mut prose, "contents");
@@ -382,7 +396,7 @@ mod tests {
             harness.edit_root_widget(|mut prose| {
                 prose.insert_prop(ContentColor::new(ACCENT_COLOR));
                 TextArea::reset_text(
-                    &mut Prose::text_mut(&mut prose),
+                    &mut Prose::text_mut(&mut prose).unwrap(),
                     "The quick brown fox jumps over the lazy dog",
                 );
             });

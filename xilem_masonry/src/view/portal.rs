@@ -112,7 +112,9 @@ where
             widgets::Portal::set_content_must_fill(&mut element, self.must_fill);
         }
 
-        let child_element = widgets::Portal::child_mut(&mut element);
+        let Some(child_element) = widgets::Portal::child_mut(&mut element) else {
+            return;
+        };
         self.child
             .rebuild(&prev.child, view_state, ctx, child_element, app_state);
     }
@@ -123,7 +125,9 @@ where
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
-        let child_element = widgets::Portal::child_mut(&mut element);
+        let Some(child_element) = widgets::Portal::child_mut(&mut element) else {
+            return;
+        };
         self.child.teardown(view_state, ctx, child_element);
     }
 
@@ -134,7 +138,9 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let child_element = widgets::Portal::child_mut(&mut element);
+        let Some(child_element) = widgets::Portal::child_mut(&mut element) else {
+            return MessageResult::Stale;
+        };
         self.child
             .message(view_state, message, child_element, app_state)
     }

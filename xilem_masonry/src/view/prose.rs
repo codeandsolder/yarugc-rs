@@ -123,7 +123,9 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for Prose<Sta
         mut element: Mut<'_, Self::Element>,
         _: &mut State,
     ) {
-        let mut text_area = widgets::Prose::text_mut(&mut element);
+        let Some(mut text_area) = widgets::Prose::text_mut(&mut element) else {
+            return;
+        };
 
         // TODO - Replace this with properties on the Prose view
         if self.text_color != prev.text_color {

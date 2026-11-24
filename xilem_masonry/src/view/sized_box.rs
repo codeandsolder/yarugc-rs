@@ -104,10 +104,11 @@ where
             widgets::SizedBox::set_raw_height(&mut element, self.height);
         }
         {
-            let mut child = widgets::SizedBox::child_mut(&mut element)
-                .expect("We only create SizedBox with a child");
+            let Some(typed_child) = widgets::SizedBox::child_mut(&mut element) else {
+                return;
+            };
             self.inner
-                .rebuild(&prev.inner, view_state, ctx, child.downcast(), app_state);
+                .rebuild(&prev.inner, view_state, ctx, typed_child, app_state);
         }
     }
 
@@ -117,9 +118,10 @@ where
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
-        let mut child = widgets::SizedBox::child_mut(&mut element)
-            .expect("We only create SizedBox with a child");
-        self.inner.teardown(view_state, ctx, child.downcast());
+        let Some(typed_child) = widgets::SizedBox::child_mut(&mut element) else {
+            return;
+        };
+        self.inner.teardown(view_state, ctx, typed_child);
     }
 
     fn message(
@@ -129,9 +131,10 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let mut child = widgets::SizedBox::child_mut(&mut element)
-            .expect("We only create SizedBox with a child");
+        let Some(typed_child) = widgets::SizedBox::child_mut(&mut element) else {
+            return MessageResult::Stale;
+        };
         self.inner
-            .message(view_state, message, child.downcast(), app_state)
+            .message(view_state, message, typed_child, app_state)
     }
 }

@@ -6,8 +6,8 @@ use include_doc_path::include_doc_path;
 use tracing::trace_span;
 
 use crate::core::{
-    AccessCtx, ChildrenIds, CollectionWidget, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
-    PropertiesRef, RegisterCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ChildrenIds, CollectionWidget, FromDynWidget, LayoutCtx, MeasureCtx, NewWidget,
+    NoAction, PaintCtx, PropertiesRef, RegisterCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Rect, Size};
@@ -116,14 +116,13 @@ impl CollectionWidget<ChildAlignment> for ZStack {
         self.children.is_empty()
     }
 
-    /// Returns a mutable reference to the child widget at the given index.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `idx` is out of bounds.
-    fn get_mut<'t>(this: &'t mut WidgetMut<'_, Self>, idx: usize) -> WidgetMut<'t, dyn Widget> {
-        let child = &mut this.widget.children[idx].widget;
-        this.ctx.get_mut(child)
+    /// Returns a mutable handle if the index contains a registered child widget.
+    fn get_mut<'t, W: Widget + FromDynWidget + ?Sized>(
+        this: &'t mut WidgetMut<'_, Self>,
+        idx: usize,
+    ) -> Option<WidgetMut<'t, W>> {
+        let child = &this.widget.children.get(idx)?.widget;
+        this.ctx.get_mut(child.id())
     }
 
     /// Appends a child widget to the collection.

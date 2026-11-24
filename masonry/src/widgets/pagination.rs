@@ -226,8 +226,9 @@ impl Pagination {
                 button.page_idx = page_idx;
                 let new_text = format!("{}", page_idx + 1);
                 ctx.mutate_child_later(&mut button.widget, move |mut button| {
-                    let mut btn_child = Button::child_mut(&mut button);
-                    let mut btn_label = btn_child.downcast::<Label>();
+                    let Some(mut btn_label) = Button::child_mut::<Label>(&mut button) else {
+                        return;
+                    };
                     Label::set_text(&mut btn_label, new_text);
                 });
             }

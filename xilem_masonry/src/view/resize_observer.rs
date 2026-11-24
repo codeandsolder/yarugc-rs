@@ -117,12 +117,15 @@ where
         app_state: &mut State,
     ) {
         ctx.with_id(RESIZE_OBSERVER_CONTENT_VIEW_ID, |ctx| {
+            let Some(child_element) = widgets::ResizeObserver::child_mut(&mut element) else {
+                return;
+            };
             View::<State, Action, _>::rebuild(
                 &self.inner,
                 &prev.inner,
                 view_state,
                 ctx,
-                widgets::ResizeObserver::child_mut(&mut element).downcast(),
+                child_element,
                 app_state,
             );
         });
@@ -135,12 +138,10 @@ where
         mut element: Mut<'_, Self::Element>,
     ) {
         ctx.with_id(RESIZE_OBSERVER_CONTENT_VIEW_ID, |ctx| {
-            View::<State, Action, _>::teardown(
-                &self.inner,
-                view_state,
-                ctx,
-                widgets::ResizeObserver::child_mut(&mut element).downcast(),
-            );
+            let Some(child_element) = widgets::ResizeObserver::child_mut(&mut element) else {
+                return;
+            };
+            View::<State, Action, _>::teardown(&self.inner, view_state, ctx, child_element);
         });
         ctx.teardown_action_source(element);
     }
@@ -153,12 +154,13 @@ where
         app_state: &mut State,
     ) -> MessageResult<Action> {
         match message.take_first() {
-            Some(RESIZE_OBSERVER_CONTENT_VIEW_ID) => self.inner.message(
-                view_state,
-                message,
-                widgets::ResizeObserver::child_mut(&mut element).downcast(),
-                app_state,
-            ),
+            Some(RESIZE_OBSERVER_CONTENT_VIEW_ID) => {
+                let Some(child_element) = widgets::ResizeObserver::child_mut(&mut element) else {
+                    return MessageResult::Stale;
+                };
+                self.inner
+                    .message(view_state, message, child_element, app_state)
+            }
             None => match message.take_message::<LayoutChanged>() {
                 Some(_) => MessageResult::Action((self.on_resize)(
                     app_state,

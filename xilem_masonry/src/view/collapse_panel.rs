@@ -88,22 +88,28 @@ where
             widgets::CollapsePanel::set_collapsed(&mut element, self.collapsed);
         }
         ctx.with_id(COLLAPSE_PANEL_HEADER_VIEW_ID, |ctx| {
+            let Some(child_element) = widgets::CollapsePanel::header_label_mut(&mut element) else {
+                return;
+            };
             View::<State, (), _>::rebuild(
                 &self.header,
                 &prev.header,
                 &mut (),
                 ctx,
-                widgets::CollapsePanel::header_label_mut(&mut element).downcast(),
+                child_element,
                 app_state,
             );
         });
         ctx.with_id(COLLAPSE_PANEL_CONTENT_VIEW_ID, |ctx| {
+            let Some(child_element) = widgets::CollapsePanel::child_mut(&mut element) else {
+                return;
+            };
             View::<State, Action, _>::rebuild(
                 &self.child,
                 &prev.child,
                 state,
                 ctx,
-                widgets::CollapsePanel::child_mut(&mut element).downcast(),
+                child_element,
                 app_state,
             );
         });
@@ -116,20 +122,16 @@ where
         mut element: Mut<'_, Self::Element>,
     ) {
         ctx.with_id(COLLAPSE_PANEL_HEADER_VIEW_ID, |ctx| {
-            View::<State, (), _>::teardown(
-                &self.header,
-                &mut (),
-                ctx,
-                widgets::CollapsePanel::header_label_mut(&mut element).downcast(),
-            );
+            let Some(child_element) = widgets::CollapsePanel::header_label_mut(&mut element) else {
+                return;
+            };
+            View::<State, (), _>::teardown(&self.header, &mut (), ctx, child_element);
         });
         ctx.with_id(COLLAPSE_PANEL_CONTENT_VIEW_ID, |ctx| {
-            View::<State, Action, _>::teardown(
-                &self.child,
-                view_state,
-                ctx,
-                widgets::CollapsePanel::child_mut(&mut element).downcast(),
-            );
+            let Some(child_element) = widgets::CollapsePanel::child_mut(&mut element) else {
+                return;
+            };
+            View::<State, Action, _>::teardown(&self.child, view_state, ctx, child_element);
         });
     }
 
@@ -141,18 +143,21 @@ where
         app_state: &mut State,
     ) -> MessageResult<Action> {
         match message.take_first() {
-            Some(COLLAPSE_PANEL_HEADER_VIEW_ID) => self.header.message(
-                &mut (),
-                message,
-                widgets::CollapsePanel::header_label_mut(&mut element).downcast(),
-                app_state,
-            ),
-            Some(COLLAPSE_PANEL_CONTENT_VIEW_ID) => self.child.message(
-                view_state,
-                message,
-                widgets::CollapsePanel::child_mut(&mut element).downcast(),
-                app_state,
-            ),
+            Some(COLLAPSE_PANEL_HEADER_VIEW_ID) => {
+                let Some(child_element) = widgets::CollapsePanel::header_label_mut(&mut element)
+                else {
+                    return MessageResult::Stale;
+                };
+                self.header
+                    .message(&mut (), message, child_element, app_state)
+            }
+            Some(COLLAPSE_PANEL_CONTENT_VIEW_ID) => {
+                let Some(child_element) = widgets::CollapsePanel::child_mut(&mut element) else {
+                    return MessageResult::Stale;
+                };
+                self.child
+                    .message(view_state, message, child_element, app_state)
+            }
             None => {
                 tracing::error!(
                     ?message,

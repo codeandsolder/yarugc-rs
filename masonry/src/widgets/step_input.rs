@@ -1285,7 +1285,9 @@ impl<T: Steppable> Widget for StepInput<T> {
                 let Some(label) = this.widget.label.as_mut() else {
                     return;
                 };
-                let mut label = this.ctx.get_mut(label);
+                let Some(mut label) = this.ctx.get_mut::<Label>(label.id()) else {
+                    return;
+                };
                 label.insert_prop(prop);
             });
         }

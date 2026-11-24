@@ -170,13 +170,15 @@ impl VariableLabel {
 // --- MARK: WIDGETMUT
 impl VariableLabel {
     /// Returns the underlying label for this widget.
-    pub fn label_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, Label> {
-        this.ctx.get_mut(&mut this.widget.label)
+    pub fn label_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, Label>> {
+        this.ctx.get_mut(this.widget.label.id())
     }
 
     /// Sets the text of this label.
     pub fn set_text(this: &mut WidgetMut<'_, Self>, new_text: impl Into<ArcStr>) {
-        Label::set_text(&mut Self::label_mut(this), new_text);
+        if let Some(mut child) = Self::label_mut(this) {
+            Label::set_text(&mut child, new_text);
+        }
     }
 
     /// Sets the weight which this font will target.

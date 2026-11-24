@@ -55,51 +55,51 @@ macro_rules! teardown_variant {
         $ctx.with_id(ViewId::new($state.generation), |ctx| {
             match ($view, &mut $state.inner_state) {
                 (OneOf::A(view), OneOf::A(state)) => {
-                    $context::with_downcast_a(&mut $element, |element| {
+                    let _ = $context::with_downcast_a(&mut $element, |element| {
                         view.teardown(state, ctx, element);
                     });
                 }
                 (OneOf::B(view), OneOf::B(state)) => {
-                    $context::with_downcast_b(&mut $element, |element| {
+                    let _ = $context::with_downcast_b(&mut $element, |element| {
                         view.teardown(state, ctx, element);
                     });
                 }
                 (OneOf::C(view), OneOf::C(state)) => {
-                    $context::with_downcast_c(&mut $element, |element| {
+                    let _ = $context::with_downcast_c(&mut $element, |element| {
                         view.teardown(state, ctx, element);
                     });
                 }
                 (OneOf::D(view), OneOf::D(state)) => {
-                    $context::with_downcast_d(&mut $element, |element| {
+                    let _ = $context::with_downcast_d(&mut $element, |element| {
                         view.teardown(state, ctx, element);
                     });
                 }
                 (OneOf::E(view), OneOf::E(state)) => {
-                    $context::with_downcast_e(&mut $element, |element| {
+                    let _ = $context::with_downcast_e(&mut $element, |element| {
                         view.teardown(state, ctx, element);
                     });
                 }
                 (OneOf::F(view), OneOf::F(state)) => {
-                    $context::with_downcast_f(&mut $element, |element| {
+                    let _ = $context::with_downcast_f(&mut $element, |element| {
                         view.teardown(state, ctx, element);
                     });
                 }
                 (OneOf::G(view), OneOf::G(state)) => {
-                    $context::with_downcast_g(&mut $element, |element| {
+                    let _ = $context::with_downcast_g(&mut $element, |element| {
                         view.teardown(state, ctx, element);
                     });
                 }
                 (OneOf::H(view), OneOf::H(state)) => {
-                    $context::with_downcast_h(&mut $element, |element| {
+                    let _ = $context::with_downcast_h(&mut $element, |element| {
                         view.teardown(state, ctx, element);
                     });
                 }
                 (OneOf::I(view), OneOf::I(state)) => {
-                    $context::with_downcast_i(&mut $element, |element| {
+                    let _ = $context::with_downcast_i(&mut $element, |element| {
                         view.teardown(state, ctx, element);
                     });
                 }
-                _ => unreachable!("OneOf view and state variants must match"),
+                _ => tracing::error!("OneOf view and state variants do not match during teardown"),
             }
         });
     };
@@ -234,67 +234,67 @@ pub trait OneOfCtx<
     type OneOfElement: ViewElement;
 
     /// Casts the view element `elem` to the `OneOf::A` variant.
-    /// `f` needs to be invoked with that inner `ViewElement`
+    /// Invokes `f` only if the inner element exists and matches this variant.
     fn with_downcast_a<R>(
         elem: &mut Mut<'_, Self::OneOfElement>,
         f: impl FnOnce(Mut<'_, A>) -> R,
-    ) -> R;
+    ) -> Option<R>;
 
     /// Casts the view element `elem` to the `OneOf::B` variant.
-    /// `f` needs to be invoked with that inner `ViewElement`
+    /// Invokes `f` only if the inner element exists and matches this variant.
     fn with_downcast_b<R>(
         elem: &mut Mut<'_, Self::OneOfElement>,
         f: impl FnOnce(Mut<'_, B>) -> R,
-    ) -> R;
+    ) -> Option<R>;
 
     /// Casts the view element `elem` to the `OneOf::C` variant.
-    /// `f` needs to be invoked with that inner `ViewElement`
+    /// Invokes `f` only if the inner element exists and matches this variant.
     fn with_downcast_c<R>(
         elem: &mut Mut<'_, Self::OneOfElement>,
         f: impl FnOnce(Mut<'_, C>) -> R,
-    ) -> R;
+    ) -> Option<R>;
 
     /// Casts the view element `elem` to the `OneOf::D` variant.
-    /// `f` needs to be invoked with that inner `ViewElement`
+    /// Invokes `f` only if the inner element exists and matches this variant.
     fn with_downcast_d<R>(
         elem: &mut Mut<'_, Self::OneOfElement>,
         f: impl FnOnce(Mut<'_, D>) -> R,
-    ) -> R;
+    ) -> Option<R>;
 
     /// Casts the view element `elem` to the `OneOf::E` variant.
-    /// `f` needs to be invoked with that inner `ViewElement`
+    /// Invokes `f` only if the inner element exists and matches this variant.
     fn with_downcast_e<R>(
         elem: &mut Mut<'_, Self::OneOfElement>,
         f: impl FnOnce(Mut<'_, E>) -> R,
-    ) -> R;
+    ) -> Option<R>;
 
     /// Casts the view element `elem` to the `OneOf::F` variant.
-    /// `f` needs to be invoked with that inner `ViewElement`
+    /// Invokes `f` only if the inner element exists and matches this variant.
     fn with_downcast_f<R>(
         elem: &mut Mut<'_, Self::OneOfElement>,
         f: impl FnOnce(Mut<'_, F>) -> R,
-    ) -> R;
+    ) -> Option<R>;
 
     /// Casts the view element `elem` to the `OneOf::G` variant.
-    /// `f` needs to be invoked with that inner `ViewElement`
+    /// Invokes `f` only if the inner element exists and matches this variant.
     fn with_downcast_g<R>(
         elem: &mut Mut<'_, Self::OneOfElement>,
         f: impl FnOnce(Mut<'_, G>) -> R,
-    ) -> R;
+    ) -> Option<R>;
 
     /// Casts the view element `elem` to the `OneOf::H` variant.
-    /// `f` needs to be invoked with that inner `ViewElement`
+    /// Invokes `f` only if the inner element exists and matches this variant.
     fn with_downcast_h<R>(
         elem: &mut Mut<'_, Self::OneOfElement>,
         f: impl FnOnce(Mut<'_, H>) -> R,
-    ) -> R;
+    ) -> Option<R>;
 
     /// Casts the view element `elem` to the `OneOf::I` variant.
-    /// `f` needs to be invoked with that inner `ViewElement`
+    /// Invokes `f` only if the inner element exists and matches this variant.
     fn with_downcast_i<R>(
         elem: &mut Mut<'_, Self::OneOfElement>,
         f: impl FnOnce(Mut<'_, I>) -> R,
-    ) -> R;
+    ) -> Option<R>;
 
     /// Creates the wrapping element, this is used in `View::build` to wrap the inner view element variant
     fn upcast_one_of_element(
@@ -382,76 +382,112 @@ where
         // If both elements are of the same type, do a simple rebuild
         match (self, prev, &mut view_state.inner_state) {
             (Self::A(this), Self::A(prev), OneOf::A(state)) => {
-                ctx.with_id(id, |ctx| {
-                    Context::with_downcast_a(&mut element, |element| {
-                        this.rebuild(prev, state, ctx, element, app_state);
-                    });
-                });
-                return;
+                if ctx
+                    .with_id(id, |ctx| {
+                        Context::with_downcast_a(&mut element, |element| {
+                            this.rebuild(prev, state, ctx, element, app_state);
+                        })
+                    })
+                    .is_some()
+                {
+                    return;
+                }
             }
             (Self::B(this), Self::B(prev), OneOf::B(state)) => {
-                ctx.with_id(id, |ctx| {
-                    Context::with_downcast_b(&mut element, |element| {
-                        this.rebuild(prev, state, ctx, element, app_state);
-                    });
-                });
-                return;
+                if ctx
+                    .with_id(id, |ctx| {
+                        Context::with_downcast_b(&mut element, |element| {
+                            this.rebuild(prev, state, ctx, element, app_state);
+                        })
+                    })
+                    .is_some()
+                {
+                    return;
+                }
             }
             (Self::C(this), Self::C(prev), OneOf::C(state)) => {
-                ctx.with_id(id, |ctx| {
-                    Context::with_downcast_c(&mut element, |element| {
-                        this.rebuild(prev, state, ctx, element, app_state);
-                    });
-                });
-                return;
+                if ctx
+                    .with_id(id, |ctx| {
+                        Context::with_downcast_c(&mut element, |element| {
+                            this.rebuild(prev, state, ctx, element, app_state);
+                        })
+                    })
+                    .is_some()
+                {
+                    return;
+                }
             }
             (Self::D(this), Self::D(prev), OneOf::D(state)) => {
-                ctx.with_id(id, |ctx| {
-                    Context::with_downcast_d(&mut element, |element| {
-                        this.rebuild(prev, state, ctx, element, app_state);
-                    });
-                });
-                return;
+                if ctx
+                    .with_id(id, |ctx| {
+                        Context::with_downcast_d(&mut element, |element| {
+                            this.rebuild(prev, state, ctx, element, app_state);
+                        })
+                    })
+                    .is_some()
+                {
+                    return;
+                }
             }
             (Self::E(this), Self::E(prev), OneOf::E(state)) => {
-                ctx.with_id(id, |ctx| {
-                    Context::with_downcast_e(&mut element, |element| {
-                        this.rebuild(prev, state, ctx, element, app_state);
-                    });
-                });
-                return;
+                if ctx
+                    .with_id(id, |ctx| {
+                        Context::with_downcast_e(&mut element, |element| {
+                            this.rebuild(prev, state, ctx, element, app_state);
+                        })
+                    })
+                    .is_some()
+                {
+                    return;
+                }
             }
             (Self::F(this), Self::F(prev), OneOf::F(state)) => {
-                ctx.with_id(id, |ctx| {
-                    Context::with_downcast_f(&mut element, |element| {
-                        this.rebuild(prev, state, ctx, element, app_state);
-                    });
-                });
-                return;
+                if ctx
+                    .with_id(id, |ctx| {
+                        Context::with_downcast_f(&mut element, |element| {
+                            this.rebuild(prev, state, ctx, element, app_state);
+                        })
+                    })
+                    .is_some()
+                {
+                    return;
+                }
             }
             (Self::G(this), Self::G(prev), OneOf::G(state)) => {
-                ctx.with_id(id, |ctx| {
-                    Context::with_downcast_g(&mut element, |element| {
-                        this.rebuild(prev, state, ctx, element, app_state);
-                    });
-                });
-                return;
+                if ctx
+                    .with_id(id, |ctx| {
+                        Context::with_downcast_g(&mut element, |element| {
+                            this.rebuild(prev, state, ctx, element, app_state);
+                        })
+                    })
+                    .is_some()
+                {
+                    return;
+                }
             }
             (Self::H(this), Self::H(prev), OneOf::H(state)) => {
-                ctx.with_id(id, |ctx| {
-                    Context::with_downcast_h(&mut element, |element| {
-                        this.rebuild(prev, state, ctx, element, app_state);
-                    });
-                });
-                return;
+                if ctx
+                    .with_id(id, |ctx| {
+                        Context::with_downcast_h(&mut element, |element| {
+                            this.rebuild(prev, state, ctx, element, app_state);
+                        })
+                    })
+                    .is_some()
+                {
+                    return;
+                }
             }
             (Self::I(this), Self::I(prev), OneOf::I(state)) => {
-                ctx.with_id(id, |ctx| {
-                    Context::with_downcast_i(&mut element, |element| {
-                        this.rebuild(prev, state, ctx, element, app_state);
-                    });
-                });
-                return;
+                if ctx
+                    .with_id(id, |ctx| {
+                        Context::with_downcast_i(&mut element, |element| {
+                            this.rebuild(prev, state, ctx, element, app_state);
+                        })
+                    })
+                    .is_some()
+                {
+                    return;
+                }
             }
             _ => (),
         }
@@ -497,32 +533,41 @@ where
         match (self, &mut view_state.inner_state) {
             (Self::A(v), OneOf::A(state)) => Context::with_downcast_a(&mut element, |element| {
                 v.message(state, message, element, app_state)
-            }),
+            })
+            .unwrap_or(MessageResult::Stale),
             (Self::B(v), OneOf::B(state)) => Context::with_downcast_b(&mut element, |element| {
                 v.message(state, message, element, app_state)
-            }),
+            })
+            .unwrap_or(MessageResult::Stale),
             (Self::C(v), OneOf::C(state)) => Context::with_downcast_c(&mut element, |element| {
                 v.message(state, message, element, app_state)
-            }),
+            })
+            .unwrap_or(MessageResult::Stale),
             (Self::D(v), OneOf::D(state)) => Context::with_downcast_d(&mut element, |element| {
                 v.message(state, message, element, app_state)
-            }),
+            })
+            .unwrap_or(MessageResult::Stale),
             (Self::E(v), OneOf::E(state)) => Context::with_downcast_e(&mut element, |element| {
                 v.message(state, message, element, app_state)
-            }),
+            })
+            .unwrap_or(MessageResult::Stale),
             (Self::F(v), OneOf::F(state)) => Context::with_downcast_f(&mut element, |element| {
                 v.message(state, message, element, app_state)
-            }),
+            })
+            .unwrap_or(MessageResult::Stale),
             (Self::G(v), OneOf::G(state)) => Context::with_downcast_g(&mut element, |element| {
                 v.message(state, message, element, app_state)
-            }),
+            })
+            .unwrap_or(MessageResult::Stale),
             (Self::H(v), OneOf::H(state)) => Context::with_downcast_h(&mut element, |element| {
                 v.message(state, message, element, app_state)
-            }),
+            })
+            .unwrap_or(MessageResult::Stale),
             (Self::I(v), OneOf::I(state)) => Context::with_downcast_i(&mut element, |element| {
                 v.message(state, message, element, app_state)
-            }),
-            _ => unreachable!(),
+            })
+            .unwrap_or(MessageResult::Stale),
+            _ => MessageResult::Stale,
         }
     }
 }

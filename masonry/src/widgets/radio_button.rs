@@ -79,12 +79,14 @@ impl RadioButton {
     ///
     /// We enforce this to be an `ArcStr` to make the allocation explicit.
     pub fn set_text(this: &mut WidgetMut<'_, Self>, new_text: ArcStr) {
-        Label::set_text(&mut Self::label_mut(this), new_text);
+        if let Some(mut child) = Self::label_mut(this) {
+            Label::set_text(&mut child, new_text);
+        }
     }
 
     /// Get a mutable reference to the label.
-    pub fn label_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, Label> {
-        this.ctx.get_mut(&mut this.widget.label)
+    pub fn label_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, Label>> {
+        this.ctx.get_mut(this.widget.label.id())
     }
 }
 
@@ -432,8 +434,7 @@ mod tests {
         assert_render_snapshot!(harness, "radio_button_hello_checked");
 
         harness.edit_root_widget(|mut group| {
-            let mut radio = RadioGroup::child_mut(&mut group);
-            let mut radio = radio.downcast();
+            let mut radio = RadioGroup::child_mut::<RadioButton>(&mut group).unwrap();
             RadioButton::set_checked(&mut radio, false);
         });
 
@@ -487,15 +488,14 @@ mod tests {
                 TestHarness::create_with_size(default_property_set(), group, (50, 50));
 
             harness.edit_root_widget(|mut group| {
-                let mut radio = RadioGroup::child_mut(&mut group);
-                let mut radio = radio.downcast();
+                let mut radio = RadioGroup::child_mut::<RadioButton>(&mut group).unwrap();
                 RadioButton::set_checked(&mut radio, true);
                 RadioButton::set_text(
                     &mut radio,
                     ArcStr::from("The quick brown fox jumps over the lazy dog"),
                 );
 
-                let mut label = RadioButton::label_mut(&mut radio);
+                let mut label = RadioButton::label_mut(&mut radio).unwrap();
                 label.insert_prop(ContentColor::new(ACCENT_COLOR));
                 Label::insert_style(&mut label, StyleProperty::FontSize(20.0));
             });

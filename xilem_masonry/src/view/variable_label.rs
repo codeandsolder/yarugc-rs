@@ -101,12 +101,15 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for VariableLabel {
         app_state: &mut State,
     ) {
         ctx.with_id(ViewId::new(0), |ctx| {
+            let Some(child_element) = widgets::VariableLabel::label_mut(&mut element) else {
+                return;
+            };
             View::<State, Action, _>::rebuild(
                 &self.label,
                 &prev.label,
                 &mut (),
                 ctx,
-                widgets::VariableLabel::label_mut(&mut element),
+                child_element,
                 app_state,
             );
         });
@@ -127,12 +130,10 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for VariableLabel {
         mut element: Mut<'_, Self::Element>,
     ) {
         ctx.with_id(ViewId::new(0), |ctx| {
-            View::<State, Action, _>::teardown(
-                &self.label,
-                &mut (),
-                ctx,
-                widgets::VariableLabel::label_mut(&mut element),
-            );
+            let Some(child_element) = widgets::VariableLabel::label_mut(&mut element) else {
+                return;
+            };
+            View::<State, Action, _>::teardown(&self.label, &mut (), ctx, child_element);
         });
     }
 
@@ -146,13 +147,10 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for VariableLabel {
         if let Some(first) = message.take_first() {
             assert_eq!(first.routing_id(), 0);
 
-            View::<(), _, _>::message(
-                &self.label,
-                &mut (),
-                message,
-                widgets::VariableLabel::label_mut(&mut element),
-                &mut (),
-            )
+            let Some(child_element) = widgets::VariableLabel::label_mut(&mut element) else {
+                return MessageResult::Stale;
+            };
+            View::<(), _, _>::message(&self.label, &mut (), message, child_element, &mut ())
         } else {
             tracing::error!(
                 ?message,

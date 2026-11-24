@@ -252,7 +252,9 @@ where
         }
 
         ctx.with_id(CHILD1_VIEW_ID, |ctx| {
-            let child1_element = widgets::Split::child1_mut(&mut element);
+            let Some(child1_element) = widgets::Split::child1_mut(&mut element) else {
+                return;
+            };
             self.child1.rebuild(
                 &prev.child1,
                 &mut view_state.0,
@@ -263,7 +265,9 @@ where
         });
 
         ctx.with_id(CHILD2_VIEW_ID, |ctx| {
-            let child2_element = widgets::Split::child2_mut(&mut element);
+            let Some(child2_element) = widgets::Split::child2_mut(&mut element) else {
+                return;
+            };
             self.child2.rebuild(
                 &prev.child2,
                 &mut view_state.1,
@@ -280,11 +284,12 @@ where
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
-        let child1_element = widgets::Split::child1_mut(&mut element);
-        self.child1.teardown(&mut view_state.0, ctx, child1_element);
-
-        let child2_element = widgets::Split::child2_mut(&mut element);
-        self.child2.teardown(&mut view_state.1, ctx, child2_element);
+        if let Some(child) = widgets::Split::child1_mut(&mut element) {
+            self.child1.teardown(&mut view_state.0, ctx, child);
+        }
+        if let Some(child) = widgets::Split::child2_mut(&mut element) {
+            self.child2.teardown(&mut view_state.1, ctx, child);
+        }
     }
 
     fn message(
@@ -296,12 +301,16 @@ where
     ) -> MessageResult<Action> {
         match message.take_first() {
             Some(CHILD1_VIEW_ID) => {
-                let child1_element = widgets::Split::child1_mut(&mut element);
+                let Some(child1_element) = widgets::Split::child1_mut(&mut element) else {
+                    return MessageResult::Stale;
+                };
                 self.child1
                     .message(&mut view_state.0, message, child1_element, app_state)
             }
             Some(CHILD2_VIEW_ID) => {
-                let child2_element = widgets::Split::child2_mut(&mut element);
+                let Some(child2_element) = widgets::Split::child2_mut(&mut element) else {
+                    return MessageResult::Stale;
+                };
                 self.child2
                     .message(&mut view_state.1, message, child2_element, app_state)
             }

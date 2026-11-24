@@ -4,8 +4,8 @@
 use std::any::TypeId;
 
 use crate::core::{
-    AccessCtx, ArcStr, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
-    PropertiesRef, RegisterCtx, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    AccessCtx, ArcStr, ChildrenIds, FromDynWidget, LayoutCtx, MeasureCtx, NewWidget, NoAction,
+    PaintCtx, PropertiesRef, RegisterCtx, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Line, Point, Size, Stroke};
@@ -87,7 +87,9 @@ impl CollapsePanel {
 
     /// Set whether or not the panel is collapsed.
     pub fn set_collapsed(this: &mut WidgetMut<'_, Self>, collapsed: bool) {
-        DisclosureButton::set_disclosed(&mut Self::disclosure_button_mut(this), !collapsed);
+        if let Some(mut child) = Self::disclosure_button_mut(this) {
+            DisclosureButton::set_disclosed(&mut child, !collapsed);
+        }
         this.ctx.request_layout();
     }
 
@@ -95,24 +97,28 @@ impl CollapsePanel {
     ///
     /// We enforce this to be an `ArcStr` to make the allocation explicit.
     pub fn set_text(this: &mut WidgetMut<'_, Self>, new_text: ArcStr) {
-        Label::set_text(&mut Self::header_label_mut(this), new_text);
+        if let Some(mut child) = Self::header_label_mut(this) {
+            Label::set_text(&mut child, new_text);
+        }
     }
 
     /// Get a mutable reference to the disclosure button.
     pub fn disclosure_button_mut<'t>(
         this: &'t mut WidgetMut<'_, Self>,
-    ) -> WidgetMut<'t, DisclosureButton> {
-        this.ctx.get_mut(&mut this.widget.disclosure_button)
+    ) -> Option<WidgetMut<'t, DisclosureButton>> {
+        this.ctx.get_mut(this.widget.disclosure_button.id())
     }
 
     /// Get a mutable reference to the label.
-    pub fn header_label_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, Label> {
-        this.ctx.get_mut(&mut this.widget.header_label)
+    pub fn header_label_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, Label>> {
+        this.ctx.get_mut(this.widget.header_label.id())
     }
 
     /// Get a mutable reference to the child.
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
-        this.ctx.get_mut(&mut this.widget.child)
+    pub fn child_mut<'t, W: Widget + FromDynWidget + ?Sized>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> Option<WidgetMut<'t, W>> {
+        this.ctx.get_mut(this.widget.child.id())
     }
 }
 

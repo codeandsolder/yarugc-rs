@@ -124,13 +124,15 @@ impl TextInput {
     /// Edits the underlying text area.
     ///
     /// Used to modify most properties of the text.
-    pub fn text_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, TextArea<true>> {
-        this.ctx.get_mut(&mut this.widget.text)
+    pub fn text_mut<'t>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> Option<WidgetMut<'t, TextArea<true>>> {
+        this.ctx.get_mut(this.widget.text.id())
     }
 
     /// Edits the child label representing the placeholder text.
-    pub fn placeholder_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, Label> {
-        this.ctx.get_mut(&mut this.widget.placeholder)
+    pub fn placeholder_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, Label>> {
+        this.ctx.get_mut(this.widget.placeholder.id())
     }
 
     /// The text that will be displayed when this input is empty.
@@ -139,8 +141,12 @@ impl TextInput {
     pub fn set_placeholder(this: &mut WidgetMut<'_, Self>, placeholder_text: impl Into<ArcStr>) {
         let placeholder_text = placeholder_text.into();
         this.widget.placeholder_text = placeholder_text.clone();
-        Label::set_text(&mut Self::placeholder_mut(this), placeholder_text.clone());
-        TextArea::set_placeholder(&mut Self::text_mut(this), placeholder_text);
+        if let Some(mut child) = Self::placeholder_mut(this) {
+            Label::set_text(&mut child, placeholder_text.clone());
+        }
+        if let Some(mut child) = Self::text_mut(this) {
+            TextArea::set_placeholder(&mut child, placeholder_text);
+        }
     }
 
     /// Whether to clip the text to the drawn boundaries.
@@ -157,8 +163,12 @@ impl TextInput {
     /// Sets the text alignment for both the input text and placeholder.
     pub fn set_text_alignment(this: &mut WidgetMut<'_, Self>, text_alignment: TextAlign) {
         this.widget.text_alignment = text_alignment;
-        TextArea::set_text_alignment(&mut Self::text_mut(this), text_alignment);
-        Label::set_text_alignment(&mut Self::placeholder_mut(this), text_alignment);
+        if let Some(mut child) = Self::text_mut(this) {
+            TextArea::set_text_alignment(&mut child, text_alignment);
+        }
+        if let Some(mut child) = Self::placeholder_mut(this) {
+            Label::set_text_alignment(&mut child, text_alignment);
+        }
     }
 }
 
@@ -218,21 +228,27 @@ impl Widget for TextInput {
             ctx.mutate_self_later(|mut input| {
                 let mut input = input.downcast::<Self>();
                 let color = *input.get_prop::<CaretColor>();
-                let mut text_area = Self::text_mut(&mut input);
+                let Some(mut text_area) = Self::text_mut(&mut input) else {
+                    return;
+                };
                 text_area.insert_prop(color);
             });
         } else if property_type == TypeId::of::<SelectionColor>() {
             ctx.mutate_self_later(|mut input| {
                 let mut input = input.downcast::<Self>();
                 let color = *input.get_prop::<SelectionColor>();
-                let mut text_area = Self::text_mut(&mut input);
+                let Some(mut text_area) = Self::text_mut(&mut input) else {
+                    return;
+                };
                 text_area.insert_prop(color);
             });
         } else if property_type == TypeId::of::<PlaceholderColor>() {
             ctx.mutate_self_later(|mut input| {
                 let mut input = input.downcast::<Self>();
                 let color = input.get_prop::<PlaceholderColor>().color;
-                let mut label = Self::placeholder_mut(&mut input);
+                let Some(mut label) = Self::placeholder_mut(&mut input) else {
+                    return;
+                };
                 label.insert_prop(ContentColor::new(color));
             });
         }
@@ -245,25 +261,33 @@ impl Widget for TextInput {
                 ctx.mutate_self_later(|mut input| {
                     let mut input = input.downcast::<Self>();
                     let color = *input.get_prop::<CaretColor>();
-                    let mut text_area = Self::text_mut(&mut input);
+                    let Some(mut text_area) = Self::text_mut(&mut input) else {
+                        return;
+                    };
                     text_area.insert_prop(color);
                 });
                 ctx.mutate_self_later(|mut input| {
                     let mut input = input.downcast::<Self>();
                     let color = *input.get_prop::<SelectionColor>();
-                    let mut text_area = Self::text_mut(&mut input);
+                    let Some(mut text_area) = Self::text_mut(&mut input) else {
+                        return;
+                    };
                     text_area.insert_prop(color);
                 });
                 ctx.mutate_self_later(|mut input| {
                     let mut input = input.downcast::<Self>();
                     let color = input.get_prop::<PlaceholderColor>().color;
-                    let mut label = Self::placeholder_mut(&mut input);
+                    let Some(mut label) = Self::placeholder_mut(&mut input) else {
+                        return;
+                    };
                     label.insert_prop(ContentColor::new(color));
                 });
                 ctx.mutate_self_later(|mut input| {
                     let mut input = input.downcast::<Self>();
                     let placeholder_text = input.widget.placeholder_text.clone();
-                    TextArea::set_placeholder(&mut Self::text_mut(&mut input), placeholder_text);
+                    if let Some(mut child) = Self::text_mut(&mut input) {
+                        TextArea::set_placeholder(&mut child, placeholder_text);
+                    }
                 });
             }
             // We check for `ChildFocusChanged` instead of `FocusChanged`
@@ -413,7 +437,7 @@ mod tests {
 
         let mut text_area_id = None;
         harness.edit_root_widget(|mut text_input| {
-            let mut text_input = TextInput::text_mut(&mut text_input);
+            let mut text_input = TextInput::text_mut(&mut text_input).unwrap();
             text_area_id = Some(text_input.ctx.widget_id());
 
             TextArea::select_text(&mut text_input, "contents");

@@ -76,12 +76,14 @@ impl Checkbox {
     ///
     /// We enforce this to be an `ArcStr` to make the allocation explicit.
     pub fn set_text(this: &mut WidgetMut<'_, Self>, new_text: ArcStr) {
-        Label::set_text(&mut Self::label_mut(this), new_text);
+        if let Some(mut child) = Self::label_mut(this) {
+            Label::set_text(&mut child, new_text);
+        }
     }
 
     /// Returns a mutable reference to the label.
-    pub fn label_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, Label> {
-        this.ctx.get_mut(&mut this.widget.label)
+    pub fn label_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, Label>> {
+        this.ctx.get_mut(this.widget.label.id())
     }
 }
 
@@ -465,7 +467,7 @@ mod tests {
                     ArcStr::from("The quick brown fox jumps over the lazy dog"),
                 );
 
-                let mut label = Checkbox::label_mut(&mut checkbox);
+                let mut label = Checkbox::label_mut(&mut checkbox).unwrap();
                 label.insert_prop(ContentColor::new(ACCENT_COLOR));
                 Label::insert_style(&mut label, StyleProperty::FontSize(20.0));
             });

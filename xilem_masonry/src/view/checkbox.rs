@@ -140,7 +140,9 @@ where
             widgets::Checkbox::set_checked(&mut element, self.checked);
         }
 
-        let mut label = widgets::Checkbox::label_mut(&mut element);
+        let Some(mut label) = widgets::Checkbox::label_mut(&mut element) else {
+            return;
+        };
         if prev.text_size != self.text_size {
             widgets::Label::insert_style(&mut label, StyleProperty::FontSize(self.text_size));
         }

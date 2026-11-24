@@ -8,8 +8,9 @@ use include_doc_path::include_doc_path;
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, ChildrenIds, CollectionWidget, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
-    PropertiesRef, RegisterCtx, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ChildrenIds, CollectionWidget, FromDynWidget, LayoutCtx, MeasureCtx, NewWidget,
+    NoAction, PaintCtx, PropertiesRef, RegisterCtx, UpdateCtx, UsesProperty, Widget, WidgetId,
+    WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Size};
@@ -422,19 +423,15 @@ impl CollectionWidget<FlexParams> for Flex {
         self.children.is_empty()
     }
 
-    /// Returns a mutable reference to the child widget at the given index.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `idx` is out of bounds.
-    ///
-    /// Panics if `idx` contains a spacer instead of a widget.
-    fn get_mut<'t>(this: &'t mut WidgetMut<'_, Self>, idx: usize) -> WidgetMut<'t, dyn Widget> {
-        let child = match &mut this.widget.children[idx] {
-            Child::Widget { widget, .. } => widget,
-            Child::Spacer { .. } => panic!("The provided Flex idx contains a spacer"),
+    /// Returns a mutable handle if the index contains a registered child widget.
+    fn get_mut<'t, W: Widget + FromDynWidget + ?Sized>(
+        this: &'t mut WidgetMut<'_, Self>,
+        idx: usize,
+    ) -> Option<WidgetMut<'t, W>> {
+        let Child::Widget { widget, .. } = this.widget.children.get(idx)? else {
+            return None;
         };
-        this.ctx.get_mut(child)
+        this.ctx.get_mut(widget.id())
     }
 
     /// Appends a child widget to the collection.
@@ -1996,7 +1993,7 @@ mod tests {
 
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (200, 150));
         harness.edit_root_widget(|mut flex| {
-            let mut child = Flex::get_mut(&mut flex, 1);
+            let mut child = Flex::get_mut::<dyn Widget>(&mut flex, 1).unwrap();
             assert_eq!(
                 child
                     .try_downcast::<Label>()

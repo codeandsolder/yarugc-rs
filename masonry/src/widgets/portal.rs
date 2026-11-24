@@ -310,22 +310,22 @@ impl<W: Widget + FromDynWidget + ?Sized> Portal<W> {
     }
 
     /// Returns mutable reference to the child widget.
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, W> {
-        this.ctx.get_mut(&mut this.widget.child)
+    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, W>> {
+        this.ctx.get_mut(this.widget.child.id())
     }
 
     /// Returns mutable reference to the horizontal scrollbar.
     pub fn horizontal_scrollbar_mut<'t>(
         this: &'t mut WidgetMut<'_, Self>,
-    ) -> WidgetMut<'t, ScrollBar> {
-        this.ctx.get_mut(&mut this.widget.scrollbar_horizontal)
+    ) -> Option<WidgetMut<'t, ScrollBar>> {
+        this.ctx.get_mut(this.widget.scrollbar_horizontal.id())
     }
 
     /// Returns mutable reference to the vertical scrollbar.
     pub fn vertical_scrollbar_mut<'t>(
         this: &'t mut WidgetMut<'_, Self>,
-    ) -> WidgetMut<'t, ScrollBar> {
-        this.ctx.get_mut(&mut this.widget.scrollbar_vertical)
+    ) -> Option<WidgetMut<'t, ScrollBar>> {
+        this.ctx.get_mut(this.widget.scrollbar_vertical.id())
     }
 
     /// Sets whether to constrain the child horizontally.
@@ -1101,11 +1101,13 @@ mod tests {
             assert!(Portal::set_viewport_pos(&mut portal, Point::new(0.0, 80.0)));
             assert_eq!(
                 Portal::horizontal_scrollbar_mut(&mut portal)
+                    .unwrap()
                     .widget
                     .cursor_progress(),
                 0.0
             );
             let progress = Portal::vertical_scrollbar_mut(&mut portal)
+                .unwrap()
                 .widget
                 .cursor_progress();
             assert!(progress > 0.0 && progress < 1.0);
@@ -1115,12 +1117,14 @@ mod tests {
         harness.edit_root_widget(|mut portal| {
             assert_eq!(
                 Portal::horizontal_scrollbar_mut(&mut portal)
+                    .unwrap()
                     .widget
                     .cursor_progress(),
                 0.0
             );
             assert_eq!(
                 Portal::vertical_scrollbar_mut(&mut portal)
+                    .unwrap()
                     .widget
                     .cursor_progress(),
                 1.0
@@ -1131,12 +1135,14 @@ mod tests {
         harness.edit_root_widget(|mut portal| {
             assert_eq!(
                 Portal::horizontal_scrollbar_mut(&mut portal)
+                    .unwrap()
                     .widget
                     .cursor_progress(),
                 0.0
             );
             assert_eq!(
                 Portal::vertical_scrollbar_mut(&mut portal)
+                    .unwrap()
                     .widget
                     .cursor_progress(),
                 0.0

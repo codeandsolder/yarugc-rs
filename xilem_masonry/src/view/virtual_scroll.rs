@@ -303,11 +303,13 @@ where
                         continue;
                     };
                     ctx.with_id(view_id_for_index(idx), |ctx| {
-                        child_state.view.teardown(
-                            &mut child_state.state,
-                            ctx,
-                            widgets::VirtualScroll::child_mut(&mut element, idx).downcast(),
-                        );
+                        if let Some(child_element) =
+                            widgets::VirtualScroll::child_mut(&mut element, idx)
+                        {
+                            child_state
+                                .view
+                                .teardown(&mut child_state.state, ctx, child_element);
+                        }
                         widgets::VirtualScroll::remove_child(&mut element, idx);
                     });
                 }
@@ -323,11 +325,16 @@ where
                     let next_child = (self.func)(app_state, idx);
                     // Rebuild this existing item
                     ctx.with_id(view_id_for_index(idx), |ctx| {
+                        let Some(child_element) =
+                            widgets::VirtualScroll::child_mut(&mut element, idx)
+                        else {
+                            return;
+                        };
                         next_child.rebuild(
                             &child.view,
                             &mut child.state,
                             ctx,
-                            widgets::VirtualScroll::child_mut(&mut element, idx).downcast(),
+                            child_element,
                             app_state,
                         );
                         child.view = next_child;
@@ -357,11 +364,15 @@ where
             for (&idx, child) in &mut view_state.children {
                 let next_child = (self.func)(app_state, idx);
                 ctx.with_id(view_id_for_index(idx), |ctx| {
+                    let Some(child_element) = widgets::VirtualScroll::child_mut(&mut element, idx)
+                    else {
+                        return;
+                    };
                     next_child.rebuild(
                         &child.view,
                         &mut child.state,
                         ctx,
-                        widgets::VirtualScroll::child_mut(&mut element, idx).downcast(),
+                        child_element,
                         app_state,
                     );
                     child.view = next_child;
@@ -383,11 +394,11 @@ where
     ) {
         for (&idx, child) in &mut view_state.children {
             ctx.with_id(view_id_for_index(idx), |ctx| {
-                child.view.teardown(
-                    &mut child.state,
-                    ctx,
-                    widgets::VirtualScroll::child_mut(&mut element, idx).downcast(),
-                );
+                let Some(child_element) = widgets::VirtualScroll::child_mut(&mut element, idx)
+                else {
+                    return;
+                };
+                child.view.teardown(&mut child.state, ctx, child_element);
             });
         }
         ctx.teardown_action_source(element);
@@ -407,12 +418,15 @@ where
             // We definitely don't want an O(n) storage of data for previous generations, but using a u64 generation
             // can never reasonably overflow (i.e. we should use two viewids here).
             if let Some(target) = target {
-                let result = target.view.message(
-                    &mut target.state,
-                    message,
-                    widgets::VirtualScroll::child_mut(&mut element, child_idx).downcast(),
-                    app_state,
-                );
+                let Some(child_element) =
+                    widgets::VirtualScroll::child_mut(&mut element, child_idx)
+                else {
+                    return MessageResult::Stale;
+                };
+                let result =
+                    target
+                        .view
+                        .message(&mut target.state, message, child_element, app_state);
                 return result;
             } else {
                 tracing::error!(

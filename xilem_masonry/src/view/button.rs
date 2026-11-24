@@ -198,12 +198,15 @@ where
             element.ctx.set_disabled(self.disabled);
         }
         ctx.with_id(BUTTON_CONTENT_VIEW_ID, |ctx| {
+            let Some(child_element) = widgets::Button::child_mut(&mut element) else {
+                return;
+            };
             View::<State, Action, _>::rebuild(
                 &self.child,
                 &prev.child,
                 state,
                 ctx,
-                widgets::Button::child_mut(&mut element).downcast(),
+                child_element,
                 app_state,
             );
         });
@@ -216,12 +219,10 @@ where
         mut element: Mut<'_, Self::Element>,
     ) {
         ctx.with_id(BUTTON_CONTENT_VIEW_ID, |ctx| {
-            View::<State, Action, _>::teardown(
-                &self.child,
-                view_state,
-                ctx,
-                widgets::Button::child_mut(&mut element).downcast(),
-            );
+            let Some(child_element) = widgets::Button::child_mut(&mut element) else {
+                return;
+            };
+            View::<State, Action, _>::teardown(&self.child, view_state, ctx, child_element);
         });
         ctx.teardown_action_source(element);
     }
@@ -234,12 +235,13 @@ where
         app_state: &mut State,
     ) -> MessageResult<Action> {
         match message.take_first() {
-            Some(BUTTON_CONTENT_VIEW_ID) => self.child.message(
-                view_state,
-                message,
-                widgets::Button::child_mut(&mut element).downcast(),
-                app_state,
-            ),
+            Some(BUTTON_CONTENT_VIEW_ID) => {
+                let Some(child_element) = widgets::Button::child_mut(&mut element) else {
+                    return MessageResult::Stale;
+                };
+                self.child
+                    .message(view_state, message, child_element, app_state)
+            }
             None => match message.take_message::<ButtonPress>() {
                 Some(press) => (self.callback)(app_state, press.button),
                 None => {

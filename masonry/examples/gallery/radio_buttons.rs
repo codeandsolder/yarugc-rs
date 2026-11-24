@@ -67,11 +67,10 @@ impl DemoPage for RadioButtonsDemo {
             return Handled::No;
         }
 
-        let Some(selected_text) = render_root.edit_widget(
+        let Some(Some(selected_text)) = render_root.edit_widget(
             widget_id,
             |mut button: masonry::core::WidgetMut<'_, RadioButton>| {
-                let label = RadioButton::label_mut(&mut button);
-                label.widget.text().clone()
+                RadioButton::label_mut(&mut button).map(|label| label.widget.text().clone())
             },
         ) else {
             return Handled::No;

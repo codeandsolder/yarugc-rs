@@ -87,8 +87,9 @@ impl ProgressBar {
         let progress_changed = this.widget.progress != progress;
         if progress_changed {
             this.widget.progress = progress;
-            let mut label = this.ctx.get_mut(&mut this.widget.label);
-            Label::set_text(&mut label, Self::value(progress));
+            if let Some(mut label) = this.ctx.get_mut(this.widget.label.id()) {
+                Label::set_text(&mut label, Self::value(progress));
+            }
         }
         this.ctx.request_layout();
         this.ctx.request_render();

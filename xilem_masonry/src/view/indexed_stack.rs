@@ -194,10 +194,7 @@ impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for Index
         mut this: Mut<'_, Self>,
         f: impl FnOnce(Mut<'_, Pod<W>>) -> R,
     ) -> (Mut<'_, Self>, Option<R>) {
-        let ret = {
-            let mut child = widgets::IndexedStack::get_mut(&mut this.parent, this.idx);
-            child.try_downcast().map(f)
-        };
+        let ret = { widgets::IndexedStack::get_mut(&mut this.parent, this.idx).map(f) };
 
         (this, ret)
     }

@@ -300,7 +300,9 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for TextInput
             widgets::TextInput::set_text_alignment(&mut element, self.text_alignment);
         }
 
-        let mut text_area = widgets::TextInput::text_mut(&mut element);
+        let Some(mut text_area) = widgets::TextInput::text_mut(&mut element) else {
+            return;
+        };
 
         // Unlike the other properties, we don't compare to the previous value;
         // instead, we compare directly to the element's text. This is to handle

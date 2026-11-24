@@ -93,12 +93,14 @@ impl Selector {
         this.widget.selected_option = selected_option;
 
         let option = this.widget.options[selected_option].clone();
-        Label::set_text(&mut Self::child_mut(this), option);
+        if let Some(mut child) = Self::child_mut(this) {
+            Label::set_text(&mut child, option);
+        }
     }
 
     /// Returns a mutable reference to the child label.
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, Label> {
-        this.ctx.get_mut(&mut this.widget.child)
+    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, Label>> {
+        this.ctx.get_mut(this.widget.child.id())
     }
 }
 
@@ -220,7 +222,9 @@ impl Widget for Selector {
                 let option = self.options[self.selected_option].clone();
                 ctx.mutate_self_later(move |mut selector| {
                     let mut selector = selector.downcast::<Self>();
-                    let mut label = Self::child_mut(&mut selector);
+                    let Some(mut label) = Self::child_mut(&mut selector) else {
+                        return;
+                    };
                     Label::set_text(&mut label, option);
                 });
             }
@@ -276,7 +280,7 @@ mod tests {
         );
 
         harness.edit_root_widget(|mut selector| {
-            let label = Selector::child_mut(&mut selector);
+            let label = Selector::child_mut(&mut selector).unwrap();
             assert_eq!(&**label.widget.text(), "White and gold");
         });
     }

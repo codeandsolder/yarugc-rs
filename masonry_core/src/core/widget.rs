@@ -762,12 +762,12 @@ pub trait CollectionWidget<Params>: Widget {
     /// Returns `true` if there are no children.
     fn is_empty(&self) -> bool;
 
-    /// Returns a mutable reference to the child widget at the given index.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `idx` is out of bounds.
-    fn get_mut<'t>(this: &'t mut WidgetMut<'_, Self>, idx: usize) -> WidgetMut<'t, dyn Widget>;
+    /// Returns a typed mutable handle if the index contains a registered child
+    /// of the requested type.
+    fn get_mut<'t, W: Widget + FromDynWidget + ?Sized>(
+        this: &'t mut WidgetMut<'_, Self>,
+        idx: usize,
+    ) -> Option<WidgetMut<'t, W>>;
 
     /// Appends a child widget to the collection.
     fn add(

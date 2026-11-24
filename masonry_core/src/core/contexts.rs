@@ -294,38 +294,21 @@ impl_context_method!(
 // --- MARK: WIDGET_MUT
 // Methods to get a child WidgetMut from a parent.
 impl MutateCtx<'_> {
-    /// Returns a [`WidgetMut`] to a child widget.
-    pub fn get_mut<'c, Child: Widget + FromDynWidget + ?Sized>(
-        &'c mut self,
-        child: &'c mut WidgetPod<Child>,
-    ) -> WidgetMut<'c, Child> {
-        let node_mut = self
-            .children
-            .item_mut(child.id())
-            .expect("get_mut: child not found");
-        let child_stack_id = node_mut.item.state.property_stack_id;
-        let child_type_id = (*node_mut.item.widget).type_id();
-        let child_stack = self.property_arena.get(child_stack_id, child_type_id);
-        let child_ctx = MutateCtx {
-            global_state: self.global_state,
-            parent_widget_state: Some(&mut self.widget_state),
-            widget_state: &mut node_mut.item.state,
-            properties: PropertiesMut {
-                local: &mut node_mut.item.properties,
-                default_map: self
-                    .property_arena
-                    .default_properties
-                    .for_widget(child_type_id),
-                stack: child_stack,
-                class_set: &node_mut.item.class_set,
-            },
-            children: node_mut.children,
-            property_arena: self.property_arena,
-        };
-        WidgetMut {
-            ctx: child_ctx,
-            widget: Child::from_dyn_mut(&mut *node_mut.item.widget).unwrap(),
-        }
+    /// Returns a typed mutable handle to a direct child by its identifier.
+    /// Returns None when the child is absent or of another widget type.
+    ///
+    /// A pod created or replaced during this edit may not be registered until
+    /// the next widget-tree pass. Such a pod cannot yet be mutated through a context.
+    pub fn get_mut<Child: Widget + FromDynWidget + ?Sized>(
+        &mut self,
+        child: WidgetId,
+    ) -> Option<WidgetMut<'_, Child>> {
+        WidgetMut::from_node(
+            self.children.item_mut(child)?,
+            self.global_state,
+            self.property_arena,
+            Some(self.widget_state),
+        )
     }
 
     pub(crate) fn reborrow_mut(&mut self) -> MutateCtx<'_> {

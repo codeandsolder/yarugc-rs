@@ -40,7 +40,9 @@ impl Driver {
     fn ui_update(&mut self, render_root: &mut RenderRoot, action: ErasedAction) {
         if action.is::<ButtonPress>() {
             let _ = render_root.edit_widget_with_tag(TEXT_INPUT_TAG, |mut text_input| {
-                let mut text_area = TextInput::text_mut(&mut text_input);
+                let Some(mut text_area) = TextInput::text_mut(&mut text_input) else {
+                    return;
+                };
                 TextArea::reset_text(&mut text_area, "");
             });
             let _ = render_root.edit_widget_with_tag(LIST_TAG, |mut list| {

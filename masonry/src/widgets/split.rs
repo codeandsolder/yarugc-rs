@@ -363,13 +363,13 @@ where
     }
 
     /// Returns a mutable reference to the first child widget.
-    pub fn child1_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, ChildA> {
-        this.ctx.get_mut(&mut this.widget.child1)
+    pub fn child1_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, ChildA>> {
+        this.ctx.get_mut(this.widget.child1.id())
     }
 
     /// Returns a mutable reference to the second child widget.
-    pub fn child2_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, ChildB> {
-        this.ctx.get_mut(&mut this.widget.child2)
+    pub fn child2_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, ChildB>> {
+        this.ctx.get_mut(this.widget.child2.id())
     }
 
     /// Sets the split axis.

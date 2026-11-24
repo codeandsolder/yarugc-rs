@@ -8,7 +8,7 @@
 
 use masonry_core::accesskit::{Node, Role};
 use masonry_core::core::{
-    AccessCtx, NewWidget, NoAction, PropertiesRef, Widget, WidgetMut, WidgetPod,
+    AccessCtx, FromDynWidget, NewWidget, NoAction, PropertiesRef, Widget, WidgetMut, WidgetPod,
 };
 use masonry_core::layout::UnitPoint;
 
@@ -28,8 +28,10 @@ impl WrapperWidget {
     }
 
     /// Returns mutable reference to the child widget.
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
-        this.ctx.get_mut(&mut this.widget.child)
+    pub fn child_mut<'t, W: Widget + FromDynWidget + ?Sized>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> Option<WidgetMut<'t, W>> {
+        this.ctx.get_mut(this.widget.child.id())
     }
 }
 

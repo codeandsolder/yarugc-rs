@@ -144,12 +144,15 @@ where
         }
 
         ctx.with_id(BADGED_CONTENT_VIEW_ID, |ctx| {
+            let Some(child_element) = widgets::Badged::content_mut(&mut element) else {
+                return;
+            };
             View::<State, Action, _>::rebuild(
                 &self.content,
                 &prev.content,
                 content,
                 ctx,
-                widgets::Badged::content_mut(&mut element).downcast(),
+                child_element,
                 app_state,
             );
         });
@@ -162,7 +165,7 @@ where
                 let badge_state = badge
                     .as_mut()
                     .expect("badge view state should exist when badge view exists");
-                let mut badge_el = widgets::Badged::badge_mut(&mut element)
+                let badge_el = widgets::Badged::badge_mut(&mut element)
                     .expect("badge widget should exist when badge view exists");
                 ctx.with_id(BADGED_BADGE_VIEW_ID, |ctx| {
                     View::<State, Action, _>::rebuild(
@@ -170,7 +173,7 @@ where
                         prev_badge_view,
                         badge_state,
                         ctx,
-                        badge_el.downcast(),
+                        badge_el,
                         app_state,
                     );
                 });
@@ -186,17 +189,16 @@ where
                 let prev_badge_state = badge
                     .as_mut()
                     .expect("badge view state should exist when previous badge view exists");
-                let mut badge_el = widgets::Badged::badge_mut(&mut element)
+                let badge_el = widgets::Badged::badge_mut(&mut element)
                     .expect("badge widget should exist when badge view exists");
                 ctx.with_id(BADGED_BADGE_VIEW_ID, |ctx| {
                     View::<State, Action, _>::teardown(
                         prev_badge_view,
                         prev_badge_state,
                         ctx,
-                        badge_el.downcast(),
+                        badge_el,
                     );
                 });
-                drop(badge_el);
                 widgets::Badged::clear_badge(&mut element);
                 *badge = None;
             }
@@ -210,24 +212,17 @@ where
         mut element: Mut<'_, Self::Element>,
     ) {
         ctx.with_id(BADGED_CONTENT_VIEW_ID, |ctx| {
-            View::<State, Action, _>::teardown(
-                &self.content,
-                content,
-                ctx,
-                widgets::Badged::content_mut(&mut element).downcast(),
-            );
+            let Some(child_element) = widgets::Badged::content_mut(&mut element) else {
+                return;
+            };
+            View::<State, Action, _>::teardown(&self.content, content, ctx, child_element);
         });
 
         if let (Some(badge_view), Some(badge_state)) = (&self.badge, badge.as_mut())
-            && let Some(mut badge_el) = widgets::Badged::badge_mut(&mut element)
+            && let Some(badge_el) = widgets::Badged::badge_mut(&mut element)
         {
             ctx.with_id(BADGED_BADGE_VIEW_ID, |ctx| {
-                View::<State, Action, _>::teardown(
-                    badge_view,
-                    badge_state,
-                    ctx,
-                    badge_el.downcast(),
-                );
+                View::<State, Action, _>::teardown(badge_view, badge_state, ctx, badge_el);
             });
         }
     }
@@ -240,12 +235,13 @@ where
         app_state: &mut State,
     ) -> MessageResult<Action> {
         match message.take_first() {
-            Some(BADGED_CONTENT_VIEW_ID) => self.content.message(
-                content,
-                message,
-                widgets::Badged::content_mut(&mut element).downcast(),
-                app_state,
-            ),
+            Some(BADGED_CONTENT_VIEW_ID) => {
+                let Some(child_element) = widgets::Badged::content_mut(&mut element) else {
+                    return MessageResult::Stale;
+                };
+                self.content
+                    .message(content, message, child_element, app_state)
+            }
             Some(BADGED_BADGE_VIEW_ID) => {
                 let Some(badge_view) = &self.badge else {
                     tracing::error!(
@@ -261,14 +257,14 @@ where
                     );
                     return MessageResult::Stale;
                 };
-                let Some(mut badge_el) = widgets::Badged::badge_mut(&mut element) else {
+                let Some(badge_el) = widgets::Badged::badge_mut(&mut element) else {
                     tracing::error!(
                         ?message,
                         "Message arrived for badge, but widget tree has no badge; this is a bug"
                     );
                     return MessageResult::Stale;
                 };
-                badge_view.message(badge_state, message, badge_el.downcast(), app_state)
+                badge_view.message(badge_state, message, badge_el, app_state)
             }
             None => {
                 tracing::error!(

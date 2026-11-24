@@ -29,8 +29,8 @@ impl SelectorItem {
 // --- MARK: WIDGETMUT
 impl SelectorItem {
     /// Returns a mutable reference to the child.
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, Label> {
-        this.ctx.get_mut(&mut this.widget.child)
+    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, Label>> {
+        this.ctx.get_mut(this.widget.child.id())
     }
 }
 

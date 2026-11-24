@@ -251,14 +251,15 @@ impl<State: 'static, Action: 'static, V: WidgetView<State, Action>> View<State, 
         match (&prev.content, &self.content) {
             (Some(prev_content), Some(content)) => {
                 ctx.with_id(DIVIDER_CONTENT_VIEW_ID, |ctx| {
+                    let Some(child_element) = widgets::Divider::content_mut(&mut element) else {
+                        return;
+                    };
                     View::<State, Action, _>::rebuild(
                         content,
                         prev_content,
                         view_state.as_mut().unwrap(),
                         ctx,
-                        widgets::Divider::content_mut(&mut element)
-                            .unwrap()
-                            .downcast(),
+                        child_element,
                         app_state,
                     );
                 });
@@ -286,13 +287,14 @@ impl<State: 'static, Action: 'static, V: WidgetView<State, Action>> View<State, 
     ) {
         if let Some(content) = &self.content {
             ctx.with_id(DIVIDER_CONTENT_VIEW_ID, |ctx| {
+                let Some(child_element) = widgets::Divider::content_mut(&mut element) else {
+                    return;
+                };
                 View::<State, Action, _>::teardown(
                     content,
                     view_state.as_mut().unwrap(),
                     ctx,
-                    widgets::Divider::content_mut(&mut element)
-                        .unwrap()
-                        .downcast(),
+                    child_element,
                 );
             });
         }
@@ -308,12 +310,13 @@ impl<State: 'static, Action: 'static, V: WidgetView<State, Action>> View<State, 
         match message.take_first() {
             Some(DIVIDER_CONTENT_VIEW_ID) => {
                 if let Some(content) = &self.content {
+                    let Some(child_element) = widgets::Divider::content_mut(&mut element) else {
+                        return MessageResult::Stale;
+                    };
                     content.message(
                         view_state.as_mut().unwrap(),
                         message,
-                        widgets::Divider::content_mut(&mut element)
-                            .unwrap()
-                            .downcast(),
+                        child_element,
                         app_state,
                     )
                 } else {

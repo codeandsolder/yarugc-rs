@@ -5,8 +5,8 @@ use accesskit::{Node, Role};
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesRef,
-    RegisterCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ChildrenIds, FromDynWidget, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
+    PropertiesRef, RegisterCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Point, Size};
@@ -74,8 +74,10 @@ impl Passthrough {
     }
 
     /// Returns a mutable reference to the hosted child.
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
-        this.ctx.get_mut(&mut this.widget.inner)
+    pub fn child_mut<'t, W: Widget + FromDynWidget + ?Sized>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> Option<WidgetMut<'t, W>> {
+        this.ctx.get_mut(this.widget.inner.id())
     }
 }
 
@@ -153,7 +155,7 @@ mod tests {
         assert_render_snapshot!(harness, "passthrough_initial_label_A");
 
         harness.edit_root_widget(|mut host| {
-            let mut child = Passthrough::child_mut(&mut host);
+            let mut child = Passthrough::child_mut::<dyn Widget>(&mut host).unwrap();
 
             // Test that child_mut returns a pointer to the child label
             let _ = child.downcast::<Label>();

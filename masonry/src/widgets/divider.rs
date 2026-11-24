@@ -10,9 +10,9 @@ use smallvec::SmallVec;
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, ArcStr, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
-    PropertiesMut, PropertiesRef, Property, RegisterCtx, Update, UpdateCtx, UsesProperty, Widget,
-    WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ArcStr, ChildrenIds, FromDynWidget, LayoutCtx, MeasureCtx, NewWidget, NoAction,
+    PaintCtx, PropertiesMut, PropertiesRef, Property, RegisterCtx, Update, UpdateCtx, UsesProperty,
+    Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Cap, Join, Line, Size, Stroke};
@@ -424,8 +424,13 @@ impl Divider {
     }
 
     /// Returns a mutable reference to the content widget.
-    pub fn content_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, dyn Widget>> {
-        this.widget.content.as_mut().map(|c| this.ctx.get_mut(c))
+    pub fn content_mut<'t, W: Widget + FromDynWidget + ?Sized>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> Option<WidgetMut<'t, W>> {
+        this.widget
+            .content
+            .as_ref()
+            .and_then(|c| this.ctx.get_mut(c.id()))
     }
 }
 

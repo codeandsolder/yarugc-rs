@@ -11,8 +11,9 @@ use tracing::{Span, trace, trace_span};
 use crate::core::keyboard::{Key, NamedKey};
 use crate::core::pointer::PointerButton;
 use crate::core::{
-    AccessCtx, AccessEvent, EventCtx, NewWidget, PointerButtonEvent, PointerEvent, PropertiesMut,
-    PropertiesRef, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, AccessEvent, EventCtx, FromDynWidget, NewWidget, PointerButtonEvent, PointerEvent,
+    PropertiesMut, PropertiesRef, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
+    WidgetPod,
 };
 use crate::layout::{Length, UnitPoint};
 use crate::theme;
@@ -78,8 +79,10 @@ impl Button {
     }
 
     /// Returns a mutable reference to the child.
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
-        this.ctx.get_mut(&mut this.widget.child)
+    pub fn child_mut<'t, W: Widget + FromDynWidget + ?Sized>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> Option<WidgetMut<'t, W>> {
+        this.ctx.get_mut(this.widget.child.id())
     }
 }
 
@@ -286,8 +289,7 @@ mod tests {
             let mut harness = TestHarness::create_with_size(test_property_set(), button, (50, 50));
 
             harness.edit_root_widget(|mut button| {
-                let mut label = Button::child_mut(&mut button);
-                let mut label = label.downcast();
+                let mut label = Button::child_mut::<Label>(&mut button).unwrap();
 
                 Label::set_text(&mut label, "The quick brown fox jumps over the lazy dog");
 
@@ -315,7 +317,7 @@ mod tests {
             button.insert_prop(CornerRadius { radius: 20.px() });
             button.insert_prop(Padding::from_vh(3.px(), 8.px()));
 
-            let mut label = Button::child_mut(&mut button);
+            let mut label = Button::child_mut::<Label>(&mut button).unwrap();
             label.insert_prop(ContentColor::new(red));
         });
 
@@ -342,26 +344,22 @@ mod tests {
 
         harness.edit_root_widget(|mut grid| {
             {
-                let mut button = Grid::get_mut(&mut grid, 0);
-                let mut button = button.downcast::<Button>();
+                let mut button = Grid::get_mut::<Button>(&mut grid, 0).unwrap();
                 button.insert_prop(BoxShadow::new(ORANGE, (10., 10.)));
             }
 
             {
-                let mut button = Grid::get_mut(&mut grid, 1);
-                let mut button = button.downcast::<Button>();
+                let mut button = Grid::get_mut::<Button>(&mut grid, 1).unwrap();
                 button.insert_prop(BoxShadow::new(ORANGE, (-10., 10.)).blur(5.px()));
             }
 
             {
-                let mut button = Grid::get_mut(&mut grid, 2);
-                let mut button = button.downcast::<Button>();
+                let mut button = Grid::get_mut::<Button>(&mut grid, 2).unwrap();
                 button.insert_prop(BoxShadow::new(ORANGE, (-10., -10.)).blur(0.px()));
             }
 
             {
-                let mut button = Grid::get_mut(&mut grid, 3);
-                let mut button = button.downcast::<Button>();
+                let mut button = Grid::get_mut::<Button>(&mut grid, 3).unwrap();
                 button.insert_prop(BoxShadow::new(ORANGE, (0., 0.)).blur(5.px()));
             }
         });
@@ -372,8 +370,7 @@ mod tests {
         harness.edit_root_widget(|mut grid| {
             // Copy-pasted from second case above.
             {
-                let mut button = Grid::get_mut(&mut grid, 1);
-                let mut button = button.downcast::<Button>();
+                let mut button = Grid::get_mut::<Button>(&mut grid, 1).unwrap();
                 button.insert_prop(BoxShadow::new(ORANGE, (-10., 10.)).blur(2.5.px()));
             }
         });

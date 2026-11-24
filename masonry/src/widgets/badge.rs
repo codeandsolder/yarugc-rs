@@ -8,8 +8,8 @@ use include_doc_path::include_doc_path;
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, NewWidget, NoAction, PropertiesMut, PropertiesRef, StyleProperty, Update, UpdateCtx,
-    Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, FromDynWidget, NewWidget, NoAction, PropertiesMut, PropertiesRef, StyleProperty,
+    Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::layout::UnitPoint;
 use crate::parley::style::FontWeight;
@@ -137,8 +137,10 @@ impl Badge {
     }
 
     /// Returns a mutable reference to the child.
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
-        this.ctx.get_mut(&mut this.widget.child)
+    pub fn child_mut<'t, W: Widget + FromDynWidget + ?Sized>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> Option<WidgetMut<'t, W>> {
+        this.ctx.get_mut(this.widget.child.id())
     }
 }
 

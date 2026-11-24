@@ -962,7 +962,10 @@ fn widget_access_resolves_child_specific_defaults() {
     assert_eq!(*child_from_ctx.get_prop::<ContentColor>(), child_color);
 
     harness.edit_root_widget(|mut parent| {
-        let mut child = parent.ctx.get_mut(&mut parent.widget.state);
+        let mut child = parent
+            .ctx
+            .get_mut::<Label>(parent.widget.state.id())
+            .unwrap();
         assert_eq!(*child.get_prop::<ContentColor>(), child_color);
     });
 }

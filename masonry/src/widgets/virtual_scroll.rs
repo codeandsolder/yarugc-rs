@@ -8,8 +8,8 @@ use understory_virtual_list::{ScrollAlign, SparsePrefixSumExtentModel, VirtualLi
 
 use crate::core::keyboard::{Key, KeyState, NamedKey};
 use crate::core::{
-    AccessCtx, AccessEvent, ChildrenIds, ComposeCtx, EventCtx, KeyboardEvent, LayoutCtx,
-    MeasureCtx, NewWidget, PaintCtx, PointerEvent, PointerScrollEvent, PropertiesMut,
+    AccessCtx, AccessEvent, ChildrenIds, ComposeCtx, EventCtx, FromDynWidget, KeyboardEvent,
+    LayoutCtx, MeasureCtx, NewWidget, PaintCtx, PointerEvent, PointerScrollEvent, PropertiesMut,
     PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use crate::dpi::PhysicalPosition;
@@ -467,24 +467,13 @@ impl VirtualScroll {
         }
     }
 
-    /// Returns mutable reference to the child widget at `idx`.
-    ///
-    /// # Panics
-    ///
-    /// If the widget at `idx` is not in the scroll area.
+    /// Returns a mutable handle if the index contains a registered child widget.
     #[track_caller]
-    pub fn child_mut<'t>(
+    pub fn child_mut<'t, W: Widget + FromDynWidget + ?Sized>(
         this: &'t mut WidgetMut<'_, Self>,
         idx: usize,
-    ) -> WidgetMut<'t, dyn Widget> {
-        let Some(child) = this.widget.items.get_mut(&idx) else {
-            panic!(
-                "`VirtualScroll::child_mut` called with non-present index {idx}.\nActive range is {:?}.",
-                this.widget.active_range
-            )
-        };
-
-        this.ctx.get_mut(child)
+    ) -> Option<WidgetMut<'t, W>> {
+        this.ctx.get_mut(this.widget.items.get(&idx)?.id())
     }
 
     /// Sets the valid number of items.

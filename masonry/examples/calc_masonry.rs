@@ -173,10 +173,12 @@ impl CalcState {
         }
 
         let _ = render_root.edit_base_layer(|mut grid: masonry::core::WidgetMut<'_, Grid>| {
-            let mut flex = Grid::get_mut(&mut grid, 0);
-            let mut flex = flex.downcast();
-            let mut label = Flex::get_mut(&mut flex, 1);
-            let mut label = label.downcast::<Label>();
+            let Some(mut flex) = Grid::get_mut::<Flex>(&mut grid, 0) else {
+                return;
+            };
+            let Some(mut label) = Flex::get_mut::<Label>(&mut flex, 1) else {
+                return;
+            };
             Label::set_text(&mut label, &*self.value);
         });
     }

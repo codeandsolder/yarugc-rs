@@ -318,10 +318,7 @@ impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for FlexE
         mut this: Mut<'_, Self>,
         f: impl FnOnce(Mut<'_, Pod<W>>) -> R,
     ) -> (Mut<'_, Self>, Option<R>) {
-        let ret = {
-            let mut child = widgets::Flex::get_mut(&mut this.parent, this.idx);
-            child.try_downcast().map(f)
-        };
+        let ret = { widgets::Flex::get_mut(&mut this.parent, this.idx).map(f) };
 
         (this, ret)
     }
@@ -561,9 +558,11 @@ where
             if self.params != prev.params {
                 widgets::Flex::set_params(&mut element.parent, element.idx, self.params);
             }
-            let mut child = widgets::Flex::get_mut(&mut element.parent, element.idx);
+            let Some(typed_child) = widgets::Flex::get_mut(&mut element.parent, element.idx) else {
+                return;
+            };
             self.view
-                .rebuild(&prev.view, view_state, ctx, child.downcast(), app_state);
+                .rebuild(&prev.view, view_state, ctx, typed_child, app_state);
         }
     }
 
@@ -573,8 +572,10 @@ where
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
-        let mut child = widgets::Flex::get_mut(&mut element.parent, element.idx);
-        self.view.teardown(view_state, ctx, child.downcast());
+        let Some(typed_child) = widgets::Flex::get_mut(&mut element.parent, element.idx) else {
+            return;
+        };
+        self.view.teardown(view_state, ctx, typed_child);
     }
 
     fn message(
@@ -584,9 +585,11 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let mut child = widgets::Flex::get_mut(&mut element.parent, element.idx);
+        let Some(typed_child) = widgets::Flex::get_mut(&mut element.parent, element.idx) else {
+            return MessageResult::Stale;
+        };
         self.view
-            .message(view_state, message, child.downcast(), app_state)
+            .message(view_state, message, typed_child, app_state)
     }
 }
 

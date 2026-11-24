@@ -79,9 +79,11 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) {
-        let mut child = widgets::RadioGroup::child_mut(&mut element);
+        let Some(typed_child) = widgets::RadioGroup::child_mut(&mut element) else {
+            return;
+        };
         self.child
-            .rebuild(&prev.child, view_state, ctx, child.downcast(), app_state);
+            .rebuild(&prev.child, view_state, ctx, typed_child, app_state);
     }
 
     fn teardown(
@@ -90,8 +92,10 @@ where
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
-        let mut child = widgets::RadioGroup::child_mut(&mut element);
-        self.child.teardown(view_state, ctx, child.downcast());
+        let Some(typed_child) = widgets::RadioGroup::child_mut(&mut element) else {
+            return;
+        };
+        self.child.teardown(view_state, ctx, typed_child);
     }
 
     fn message(
@@ -101,8 +105,10 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let mut child = widgets::RadioGroup::child_mut(&mut element);
+        let Some(typed_child) = widgets::RadioGroup::child_mut(&mut element) else {
+            return MessageResult::Stale;
+        };
         self.child
-            .message(view_state, message, child.downcast(), app_state)
+            .message(view_state, message, typed_child, app_state)
     }
 }

@@ -4,7 +4,7 @@
 use tracing::info_span;
 
 use crate::app::RenderRoot;
-use crate::core::{FromDynWidget, MutateCtx, PropertiesMut, Widget, WidgetId, WidgetMut};
+use crate::core::{FromDynWidget, Widget, WidgetId, WidgetMut};
 use crate::passes::merge_state_up;
 
 pub(crate) fn mutate_widget<R, W: Widget + FromDynWidget + ?Sized>(
@@ -13,40 +13,11 @@ pub(crate) fn mutate_widget<R, W: Widget + FromDynWidget + ?Sized>(
     mutate_fn: impl FnOnce(WidgetMut<'_, W>) -> R,
 ) -> Option<R> {
     let node = root.widget_arena.nodes.find_mut(id)?;
-    let children = node.children;
-    let widget = W::from_dyn_mut(&mut *node.item.widget)?;
-    let state = &mut node.item.state;
-    let properties = &mut node.item.properties;
-    let class_set = &node.item.class_set;
-    let id = state.id;
-    let stack = root
-        .property_arena
-        .get(state.property_stack_id, widget.as_dyn().type_id());
-
-    let _span = info_span!("mutate_widget", name = widget.short_type_name()).entered();
-
-    // NOTE - we can set parent_widget_state to None here, because the loop below will merge the
-    // states up to the root.
-
-    let root_widget = WidgetMut {
-        ctx: MutateCtx {
-            global_state: &mut root.global_state,
-            parent_widget_state: None,
-            widget_state: state,
-            properties: PropertiesMut {
-                local: properties,
-                default_map: root
-                    .property_arena
-                    .default_properties
-                    .for_widget(widget.as_dyn().type_id()),
-                stack,
-                class_set,
-            },
-            children,
-            property_arena: &root.property_arena,
-        },
-        widget,
-    };
+    // The ancestor path is merged after the callback, so the handle itself
+    // need not retain a mutable reference to its parent.
+    let root_widget: WidgetMut<'_, W> =
+        WidgetMut::from_node(node, &mut root.global_state, &root.property_arena, None)?;
+    let _span = info_span!("mutate_widget", name = root_widget.widget.short_type_name()).entered();
 
     let result = mutate_fn(root_widget);
 

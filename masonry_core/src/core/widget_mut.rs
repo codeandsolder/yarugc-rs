@@ -4,7 +4,13 @@
 use std::any::TypeId;
 use std::fmt::Debug;
 
-use crate::core::{FromDynWidget, MutateCtx, Property, PropertyStackId, Widget, WidgetId};
+use tree_arena::ArenaMut;
+
+use crate::app::RenderRootState;
+use crate::core::{
+    FromDynWidget, MutateCtx, PropertiesMut, Property, PropertyArena, PropertyStackId, Widget,
+    WidgetArenaNode, WidgetId, WidgetState,
+};
 use crate::kurbo::Affine;
 use crate::properties::core_property_changed;
 
@@ -54,6 +60,36 @@ impl<W: Widget + ?Sized> Debug for WidgetMut<'_, W> {
     }
 }
 
+impl<'a, W: Widget + FromDynWidget + ?Sized> WidgetMut<'a, W> {
+    pub(crate) fn from_node(
+        node: ArenaMut<'a, WidgetArenaNode>,
+        global_state: &'a mut RenderRootState,
+        property_arena: &'a PropertyArena,
+        parent_widget_state: Option<&'a mut WidgetState>,
+    ) -> Option<Self> {
+        let widget = W::from_dyn_mut(&mut *node.item.widget)?;
+        let state = &mut node.item.state;
+        let type_id = widget.as_dyn().type_id();
+        let stack = property_arena.get(state.property_stack_id, type_id);
+        Some(Self {
+            widget,
+            ctx: MutateCtx {
+                global_state,
+                parent_widget_state,
+                widget_state: state,
+                properties: PropertiesMut {
+                    local: &mut node.item.properties,
+                    default_map: property_arena.default_properties.for_widget(type_id),
+                    stack,
+                    class_set: &node.item.class_set,
+                },
+                children: node.children,
+                property_arena,
+            },
+        })
+    }
+}
+
 impl<W: Widget + ?Sized> WidgetMut<'_, W> {
     /// Returns the [`WidgetId`] of the current widget.
     #[must_use = "Use the widget identifier."]
@@ -63,7 +99,7 @@ impl<W: Widget + ?Sized> WidgetMut<'_, W> {
 
     /// Returns a `WidgetMut` for the same underlying widget with a shorter lifetime.
     pub fn reborrow_mut(&mut self) -> WidgetMut<'_, W> {
-        let widget = &mut self.widget;
+        let widget = &mut *self.widget;
         WidgetMut {
             widget,
             ctx: self.ctx.reborrow_mut(),
@@ -119,7 +155,7 @@ impl<W: Widget + ?Sized> WidgetMut<'_, W> {
     /// Sets the property stack and immediately uses it for subsequent reads.
     /// Passing None restores the default stack for the concrete widget type.
     pub fn set_property_stack(&mut self, stack_id: Option<PropertyStackId>) {
-        let state = &mut self.ctx.widget_state;
+        let state = &mut *self.ctx.widget_state;
         if state.property_stack_id == stack_id {
             return;
         }
@@ -136,7 +172,7 @@ impl<W: Widget + ?Sized> WidgetMut<'_, W> {
     /// Sets the local transform of this widget.
     ///
     /// It behaves similarly as CSS transforms.
-    pub fn set_transform(&mut self, transform: Affine) {
+    pub const fn set_transform(&mut self, transform: Affine) {
         self.ctx.set_transform(transform);
     }
 
