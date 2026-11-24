@@ -124,8 +124,9 @@ fn hidden_save_link() -> impl Element<AppState> + use<> {
         })
 }
 
-pub fn main() {
+pub fn main() -> Result<(), xilem_web::DomError> {
     _ = console_log::init_with_level(log::Level::Debug);
     console_error_panic_hook::set_once();
-    App::new(document_body(), AppState::default(), app_logic).run();
+    App::new(document_body()?, AppState::default(), app_logic)?.run();
+    Ok(())
 }

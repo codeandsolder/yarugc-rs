@@ -71,7 +71,8 @@ fn app_logic(state: &mut AppState) -> impl DomFragment<AppState> + use<> {
     )
 }
 
-fn main() {
+fn main() -> Result<(), xilem_web::DomError> {
     console_error_panic_hook::set_once();
-    App::new(document_body(), AppState::default(), app_logic).run();
+    App::new(document_body()?, AppState::default(), app_logic)?.run();
+    Ok(())
 }

@@ -20,6 +20,7 @@ pub enum AttributeValue {
 }
 
 impl AttributeValue {
+    #[must_use = "Use the serialized attribute value."]
     pub fn serialize(&self) -> CowStr {
         match self {
             Self::True => "".into(), // empty string is equivalent to a true set attribute
@@ -42,11 +43,7 @@ pub trait IntoAttributeValue: Sized {
 
 impl<T: IntoAttributeValue> IntoAttributeValue for Option<T> {
     fn into_attr_value(self) -> Option<AttributeValue> {
-        if let Some(value) = self {
-            T::into_attr_value(value)
-        } else {
-            None
-        }
+        self.and_then(T::into_attr_value)
     }
 }
 

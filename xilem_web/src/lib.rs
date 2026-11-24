@@ -30,9 +30,10 @@
 //!     ))
 //! }
 //!
-//! pub fn main() {
+//! pub fn main() -> Result<(), xilem_web::DomError> {
 //!     let clicks = 0;
-//!     App::new(document_body(), clicks, app_logic).run();
+//!     App::new(document_body()?, clicks, app_logic)?.run();
+//!     Ok(())
 //! }
 //! ```
 //!
@@ -52,7 +53,6 @@
 // TODO: Remove any items listed as "Deferred"
 #![cfg_attr(test, expect(clippy::print_stdout, reason = "Deferred: Noisy"))]
 #![expect(missing_debug_implementations, reason = "Deferred: Noisy")]
-#![expect(clippy::cast_possible_truncation, reason = "Deferred: Noisy")]
 #![expect(clippy::missing_assert_message, reason = "Deferred: Noisy")]
 #![expect(missing_docs, reason = "We have many as-yet undocumented items")]
 #![expect(unreachable_pub, reason = "Potentially controversial code style")]
@@ -70,10 +70,14 @@ use web_sys::wasm_bindgen::JsCast;
 pub const HTML_NS: &str = "http://www.w3.org/1999/xhtml";
 /// The SVG namespace
 pub const SVG_NS: &str = "http://www.w3.org/2000/svg";
-/// The MathML namespace
+/// The `MathML` namespace
 pub const MATHML_NS: &str = "http://www.w3.org/1998/Math/MathML";
 
 mod after_update;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Message dispatch is shared only within the backend"
+)]
 mod app;
 mod attribute_value;
 mod context;
@@ -84,6 +88,10 @@ mod pod;
 mod pointer;
 mod templated;
 mod text;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Splice implementation is internal to the web backend"
+)]
 mod vec_splice;
 mod vecmap;
 
@@ -104,7 +112,7 @@ pub use self::attribute_value::{AttributeValue, IntoAttributeValue};
 pub use self::context::{MessageThunk, ViewCtx};
 pub use self::core::DynMessage;
 pub use self::dom_helpers::{
-    document, document_body, get_element_by_id, input_event_target_value,
+    DomError, document, document_body, get_element_by_id, input_event_target_value,
     textarea_event_target_value,
 };
 pub use self::optional_action::{Action, OptionalAction};

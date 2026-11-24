@@ -14,7 +14,7 @@ macro_rules! one_of_downcasts {
         e: &mut Mut<'_, Self::OneOfElement>,
         f: impl FnOnce(Mut<'_, Pod<$node>>) -> R,
     ) -> Option<R> {
-        let (OneOf::$variant(node), OneOf::$variant(props)) = (&mut e.node, &mut e.props) else {
+        let (OneOf::$variant(node), OneOf::$variant(props)) = (&mut *e.node, &mut *e.props) else {
             return None;
         };
         Some(f(PodMut::new(
@@ -162,17 +162,17 @@ where
     unnameable_types,
     reason = "Implementation detail, public because of trait visibility rules"
 )]
-pub enum Noop {}
+pub struct Noop(core::convert::Infallible);
 
 impl<T> AsRef<T> for Noop {
     fn as_ref(&self) -> &T {
-        match *self {}
+        match self.0 {}
     }
 }
 
 impl<T> AsMut<T> for Noop {
     fn as_mut(&mut self) -> &mut T {
-        match *self {}
+        match self.0 {}
     }
 }
 
@@ -182,7 +182,7 @@ impl PhantomElementCtx for ViewCtx {
 
 impl DomNode for Noop {
     fn apply_props(&self, _props: &mut Self::Props, _: &mut PodFlags) {
-        match *self {}
+        match self.0 {}
     }
 
     type Props = Self;

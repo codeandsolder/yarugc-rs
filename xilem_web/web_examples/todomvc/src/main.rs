@@ -203,8 +203,9 @@ fn app_logic(state: &mut AppState) -> impl DomView<AppState> + use<> {
     ))
 }
 
-fn main() {
+fn main() -> Result<(), xilem_web::DomError> {
     console_error_panic_hook::set_once();
     tracing_wasm::set_as_global_default();
-    App::new(get_element_by_id("todoapp"), AppState::load(), app_logic).run();
+    App::new(get_element_by_id("todoapp")?, AppState::load(), app_logic)?.run();
+    Ok(())
 }

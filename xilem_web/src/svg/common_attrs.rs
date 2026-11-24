@@ -48,20 +48,17 @@ pub fn stroke<State, Action, V>(
 
 /// Rather general join string function, might be reused somewhere else as well...
 fn join(iter: &mut impl Iterator<Item: std::fmt::Display>, sep: &str) -> String {
-    match iter.next() {
-        None => String::new(),
-        Some(first_elt) => {
-            // estimate lower bound of capacity needed
-            let (lower, _) = iter.size_hint();
-            let mut result = String::with_capacity(sep.len() * lower);
-            write!(&mut result, "{first_elt}").unwrap();
-            iter.for_each(|elt| {
-                result.push_str(sep);
-                write!(&mut result, "{elt}").unwrap();
-            });
-            result
+    iter.next().map_or_else(String::new, |first| {
+        let (lower, _) = iter.size_hint();
+        let mut result = String::with_capacity(sep.len() * lower);
+        // Formatting into a String cannot fail for the numeric Display implementations used here.
+        let _ = write!(&mut result, "{first}");
+        for item in iter {
+            result.push_str(sep);
+            let _ = write!(&mut result, "{item}");
         }
-    }
+        result
+    })
 }
 
 /// Convert a solid SVG color into its hex string.
@@ -128,15 +125,15 @@ where
                     &mut attrs,
                     opacity_attr_modifier("fill-opacity", &self.color),
                 );
-            } else if self.color != prev.color {
+            } else if self.color == prev.color {
+                Attributes::skip(&mut attrs, 2);
+            } else {
                 Attributes::mutate(&mut attrs, |m| {
                     *m = ("fill", color_to_string(&self.color)).into();
                 });
                 Attributes::mutate(&mut attrs, |m| {
                     *m = opacity_attr_modifier("fill-opacity", &self.color);
                 });
-            } else {
-                Attributes::skip(&mut attrs, 2);
             }
         });
     }
@@ -188,39 +185,39 @@ fn update_stroke_modifiers(
     if attrs.flags.was_created() {
         push_stroke_modifiers(attrs, next_stroke, next_color);
     } else {
-        if next_color != prev_color {
+        if next_color == prev_color {
+            Attributes::skip(&mut attrs, 2);
+        } else {
             Attributes::mutate(&mut attrs, |m| {
                 *m = ("stroke", color_to_string(next_color)).into();
             });
             Attributes::mutate(&mut attrs, |m| {
                 *m = opacity_attr_modifier("stroke-opacity", next_color);
             });
-        } else {
-            Attributes::skip(&mut attrs, 2);
         }
-        if next_stroke.dash_pattern != prev_stroke.dash_pattern {
+        if next_stroke.dash_pattern == prev_stroke.dash_pattern {
+            Attributes::skip(&mut attrs, 1);
+        } else {
             let dash_pattern = (!next_stroke.dash_pattern.is_empty())
                 .then(|| join(&mut next_stroke.dash_pattern.iter(), " "));
             Attributes::mutate(&mut attrs, |m| {
                 *m = ("stroke-dasharray", dash_pattern).into();
             });
-        } else {
-            Attributes::skip(&mut attrs, 1);
         }
-        if next_stroke.dash_offset != prev_stroke.dash_offset {
+        if next_stroke.dash_offset.to_bits() == prev_stroke.dash_offset.to_bits() {
+            Attributes::skip(&mut attrs, 1);
+        } else {
             let dash_offset = (next_stroke.dash_offset != 0.0).then_some(next_stroke.dash_offset);
             Attributes::mutate(&mut attrs, |m| {
                 *m = ("stroke-dashoffset", dash_offset).into();
             });
-        } else {
-            Attributes::skip(&mut attrs, 1);
         }
-        if next_stroke.width != prev_stroke.width {
+        if next_stroke.width.to_bits() == prev_stroke.width.to_bits() {
+            Attributes::skip(&mut attrs, 1);
+        } else {
             Attributes::mutate(&mut attrs, |m| {
                 *m = ("stroke-width", next_stroke.width).into();
             });
-        } else {
-            Attributes::skip(&mut attrs, 1);
         }
     }
 }

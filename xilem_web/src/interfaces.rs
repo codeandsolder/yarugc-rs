@@ -379,7 +379,6 @@ where
     T: DomView<State, Action>,
     <T::DomNode as DomNode>::Props: WithElementProps,
     T::DomNode: AsRef<web_sys::Element>,
-    State: 'static,
 {
 }
 
@@ -395,7 +394,6 @@ where
     State: 'static,
     T: HtmlElement<State, Action>,
     T::DomNode: AsRef<web_sys::HtmlAnchorElement>,
-    State: 'static,
 {
 }
 

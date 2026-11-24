@@ -1,7 +1,7 @@
 // Copyright 2024 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use wasm_bindgen::JsCast;
+use wasm_bindgen::{JsCast, UnwrapThrowExt};
 
 use crate::core::{MessageCtx, MessageResult, Mut, OrphanView};
 use crate::{Pod, PodFlags, ViewCtx};
@@ -20,9 +20,9 @@ macro_rules! impl_string_view {
                 _: &mut State,
             ) -> (Self::OrphanElement, Self::OrphanViewState) {
                 let node = if ctx.is_hydrating() {
-                    ctx.hydrate_node().unwrap().unchecked_into()
+                    ctx.hydrate_node().unwrap_throw().unchecked_into()
                 } else {
-                    web_sys::Text::new_with_data(view).unwrap()
+                    ctx.document().create_text_node(view)
                 };
                 (Pod::new(node, (), PodFlags::new(ctx.is_hydrating())), ())
             }
@@ -68,6 +68,9 @@ impl_string_view!(std::borrow::Cow<'static, str>);
 
 macro_rules! impl_to_string_view {
     ($ty:ty) => {
+        impl_to_string_view!($ty, |prev: &$ty, new: &$ty| prev != new);
+    };
+    ($ty:ty, $changed:expr) => {
         impl<State: 'static, Action> OrphanView<$ty, State, Action> for ViewCtx {
             type OrphanElement = Pod<web_sys::Text>;
 
@@ -81,7 +84,7 @@ macro_rules! impl_to_string_view {
                 let node = if ctx.is_hydrating() {
                     ctx.hydrate_node().unwrap().unchecked_into()
                 } else {
-                    web_sys::Text::new_with_data(&view.to_string()).unwrap()
+                    ctx.document().create_text_node(&view.to_string())
                 };
                 (Pod::new(node, (), PodFlags::new(ctx.is_hydrating())), ())
             }
@@ -94,7 +97,7 @@ macro_rules! impl_to_string_view {
                 element: Mut<'_, Self::OrphanElement>,
                 _: &mut State,
             ) {
-                if prev != new {
+                if ($changed)(prev, new) {
                     element.node.set_data(&new.to_string());
                 }
             }
@@ -121,8 +124,8 @@ macro_rules! impl_to_string_view {
 }
 
 // Allow numbers to be used directly as a view
-impl_to_string_view!(f32);
-impl_to_string_view!(f64);
+impl_to_string_view!(f32, |prev: &f32, new: &f32| prev.to_bits() != new.to_bits());
+impl_to_string_view!(f64, |prev: &f64, new: &f64| prev.to_bits() != new.to_bits());
 impl_to_string_view!(i8);
 impl_to_string_view!(u8);
 impl_to_string_view!(i16);

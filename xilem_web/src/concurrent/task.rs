@@ -7,7 +7,6 @@ use std::rc::Rc;
 
 use futures_channel::oneshot;
 use futures_util::FutureExt;
-use wasm_bindgen::UnwrapThrowExt;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::ViewCtx;
@@ -174,24 +173,26 @@ where
         &self,
         view_state: &mut Self::ViewState,
         _: &mut ViewCtx,
-        _: Mut<'_, Self::Element>,
+        (): Mut<'_, Self::Element>,
     ) {
-        let handle = view_state.abort_handle.take().unwrap_throw();
-        handle.abort();
+        if let Some(handle) = view_state.abort_handle.take() {
+            handle.abort();
+        }
     }
 
     fn message(
         &self,
         _: &mut Self::ViewState,
         message: &mut MessageCtx,
-        _element: Mut<'_, Self::Element>,
+        (): Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        debug_assert!(
-            message.remaining_path().is_empty(),
-            "id path should be empty in AsyncRepeat::message, got {message:?}"
-        );
-        let message = message.take_message::<M>().unwrap();
+        if !message.remaining_path().is_empty() {
+            return MessageResult::Stale;
+        }
+        let Some(message) = message.take_message::<M>() else {
+            return MessageResult::Stale;
+        };
         MessageResult::Action((self.on_event)(app_state, *message))
     }
 }

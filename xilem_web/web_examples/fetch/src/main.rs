@@ -211,11 +211,12 @@ fn cat_fetch_controls(state: &AppState) -> impl Element<AppState> + use<> {
     .class("cat-fetch-controls")
 }
 
-fn main() {
+fn main() -> Result<(), xilem_web::DomError> {
     _ = console_log::init_with_level(log::Level::Debug);
     console_error_panic_hook::set_once();
 
     log::info!("Start application");
 
-    App::new(document_body(), AppState::default(), app_logic).run();
+    App::new(document_body()?, AppState::default(), app_logic)?.run();
+    Ok(())
 }

@@ -46,9 +46,10 @@ fn counter_view<T: 'static>(count: i32) -> impl HtmlDivElement<T, Message> {
     ))
 }
 
-fn main() {
+fn main() -> Result<(), xilem_web::DomError> {
     _ = console_log::init_with_level(log::Level::Debug);
     console_error_panic_hook::set_once();
     log::info!("Start web application");
-    App::new(document_body(), Model::default(), app_logic).run();
+    App::new(document_body()?, Model::default(), app_logic)?.run();
+    Ok(())
 }

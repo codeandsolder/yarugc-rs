@@ -13,7 +13,7 @@ use wasm_bindgen::{JsCast, UnwrapThrowExt};
 use crate::core::{AppendVec, ElementSplice, MessageCtx, MessageResult, Mut, View, ViewMarker};
 use crate::modifiers::Children;
 use crate::vec_splice::VecSplice;
-use crate::{AnyPod, DomFragment, DomNode, FromWithContext, HTML_NS, Pod, ViewCtx, document};
+use crate::{AnyPod, DomFragment, DomNode, FromWithContext, HTML_NS, Pod, ViewCtx};
 
 // sealed, because this should only cover `ViewSequences` with the blanket impl below
 /// This is basically a specialized dynamically dispatchable [`ViewSequence`][crate::core::ViewSequence], It's currently not able to change the underlying type unlike [`AnyDomView`](crate::AnyDomView), so it should not be used as `dyn DomViewSequence`.
@@ -23,7 +23,7 @@ pub(crate) trait DomViewSequence<State: 'static, Action>: 'static {
     fn as_any(&self) -> &dyn Any;
 
     /// Build the associated widgets into `elements` and initialize all states.
-    #[must_use]
+    #[must_use = "Retain the built sequence state."]
     fn dyn_seq_build(
         &self,
         ctx: &mut ViewCtx,
@@ -198,7 +198,10 @@ impl ElementSplice<AnyPod> for DomChildrenSplice<'_, '_, '_, '_> {
     }
 
     fn mutate<R>(&mut self, f: impl FnOnce(Mut<'_, AnyPod>) -> R) -> R {
-        let child = self.children.mutate();
+        let child = self
+            .children
+            .mutate()
+            .expect_throw("Element splice mutated beyond remaining children");
         let ret = f(child.as_mut(self.parent, self.parent_was_removed));
         self.ix += 1;
         ret
@@ -214,7 +217,10 @@ impl ElementSplice<AnyPod> for DomChildrenSplice<'_, '_, '_, '_> {
     }
 
     fn delete<R>(&mut self, f: impl FnOnce(Mut<'_, AnyPod>) -> R) -> R {
-        let mut child = self.children.delete_next();
+        let mut child = self
+            .children
+            .delete_next()
+            .expect_throw("Element splice deleted beyond remaining children");
         let child = child.as_mut(self.parent, true);
         // This is an optimization to avoid too much DOM traffic, otherwise first the children would be deleted from that node in an up-traversal
         if !self.parent_was_removed {
@@ -232,6 +238,7 @@ pub struct ElementState {
 }
 
 impl ElementState {
+    #[must_use = "Retain the state for rebuilding the child sequence."]
     pub fn new(seq_state: Box<dyn Any>) -> Self {
         Self {
             seq_state,
@@ -253,8 +260,7 @@ pub(crate) fn build_element<State, Action, Element>(
 where
     State: 'static,
     Action: 'static,
-    Element: 'static,
-    Element: FromWithContext<Pod<web_sys::Element>>,
+    Element: FromWithContext<Pod<web_sys::Element>> + 'static,
 {
     let mut elements = AppendVec::default();
     let children_state =
@@ -280,8 +286,7 @@ pub(crate) fn rebuild_element<State, Action, Element>(
 ) where
     State: 'static,
     Action: 'static,
-    Element: 'static,
-    Element: DomNode<Props: AsMut<Children>>,
+    Element: DomNode<Props: AsMut<Children>> + 'static,
 {
     let mut dom_children_splice = DomChildrenSplice::new(
         &mut state.append_scratch,
@@ -299,6 +304,7 @@ pub(crate) fn rebuild_element<State, Action, Element>(
         &mut dom_children_splice,
         app_state,
     );
+    drop(element);
 }
 
 pub(crate) fn teardown_element<State, Action, Element>(
@@ -309,8 +315,7 @@ pub(crate) fn teardown_element<State, Action, Element>(
 ) where
     State: 'static,
     Action: 'static,
-    Element: 'static,
-    Element: DomNode<Props: AsMut<Children>>,
+    Element: DomNode<Props: AsMut<Children>> + 'static,
 {
     let mut dom_children_splice = DomChildrenSplice::new(
         &mut state.append_scratch,
@@ -322,6 +327,7 @@ pub(crate) fn teardown_element<State, Action, Element>(
         ctx.is_hydrating(),
     );
     children.dyn_seq_teardown(&mut state.seq_state, ctx, &mut dom_children_splice);
+    drop(element);
 }
 
 pub(crate) fn message_element<State, Action, Element>(
@@ -334,8 +340,7 @@ pub(crate) fn message_element<State, Action, Element>(
 where
     State: 'static,
     Action: 'static,
-    Element: 'static,
-    Element: DomNode<Props: AsMut<Children>>,
+    Element: DomNode<Props: AsMut<Children>> + 'static,
 {
     let mut dom_children_splice = DomChildrenSplice::new(
         &mut state.append_scratch,
@@ -344,17 +349,19 @@ where
         element.node.as_ref(),
         // HACK: This will never be read, since we're handling a message rather than making any tree changes
         // As such, for now we just use a dummy value
-        Rc::new(web_sys::DocumentFragment::new().unwrap()),
+        Rc::new(web_sys::DocumentFragment::new().unwrap_throw()),
         true,
         // Hydration should only be used within `View::{build,rebuild}`, a message reaching this would indicate that the element is already build and hydrated, so this can safely be false.
         false,
     );
-    children.dyn_seq_message(
+    let result = children.dyn_seq_message(
         &mut state.seq_state,
         ctx,
         &mut dom_children_splice,
         app_state,
-    )
+    );
+    drop(element);
+    result
 }
 
 /// An element that can change its tag, it's useful for autonomous custom elements (i.e. web components)
@@ -405,7 +412,8 @@ where
         app_state: &mut State,
     ) {
         if prev.name != self.name {
-            let new_element = document()
+            let new_element = ctx
+                .document()
                 .create_element_ns(Some(HTML_NS), &self.name)
                 .unwrap_throw();
 
@@ -418,6 +426,12 @@ where
                     .unwrap_throw();
             }
             *element.node = new_element.unchecked_into();
+            // Child pods have been transferred, but the new DOM element has no
+            // attributes, classes or inline styles. Rebuild those modifiers.
+            element.props.attributes = None;
+            element.props.classes = None;
+            element.props.styles = None;
+            *element.flags = crate::PodFlags::new(false);
         }
 
         rebuild_element(
@@ -673,7 +687,7 @@ pub mod html {
 }
 
 pub mod mathml {
-    //! MathML elements with the namespace [`MATHML_NS`](`crate::MATHML_NS`)
+    //! `MathML` elements with the namespace [`MATHML_NS`](`crate::MATHML_NS`)
     define_elements!(
         MATHML_NS,
         (Math, math, Element),

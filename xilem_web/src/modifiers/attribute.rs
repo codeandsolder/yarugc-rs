@@ -23,12 +23,14 @@ pub enum AttributeModifier {
 
 impl AttributeModifier {
     /// Returns the attribute name of this modifier.
-    pub fn name(&self) -> &CowStr {
+    #[must_use = "Use the modifier attribute name."]
+    pub const fn name(&self) -> &CowStr {
         let (Self::Set(name, _) | Self::Remove(name)) = self;
         name
     }
 
     /// Convert this modifier into its attribute name.
+    #[must_use = "Use the modifier attribute name."]
     pub fn into_name(self) -> CowStr {
         let (Self::Set(name, _) | Self::Remove(name)) = self;
         name

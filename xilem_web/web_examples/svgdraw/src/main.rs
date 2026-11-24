@@ -210,16 +210,17 @@ impl Draw {
     }
 }
 
-fn main() {
+fn main() -> Result<(), xilem_web::DomError> {
     console_error_panic_hook::set_once();
     App::new(
-        document_body(),
+        document_body()?,
         Draw {
             new_line_width: 5.0,
             zoom: 1.0,
             ..Draw::default()
         },
         Draw::view,
-    )
+    )?
     .run();
+    Ok(())
 }

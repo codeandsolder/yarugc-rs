@@ -5,8 +5,8 @@ use std::borrow::Cow;
 use std::marker::PhantomData;
 
 use wasm_bindgen::prelude::Closure;
-use wasm_bindgen::{JsCast, UnwrapThrowExt, throw_str};
-use web_sys::{AddEventListenerOptions, js_sys};
+use wasm_bindgen::{JsCast, UnwrapThrowExt};
+use web_sys::{AddEventListenerOptions, EventTarget, js_sys};
 
 use crate::core::anymore::AnyDebug;
 use crate::core::{MessageCtx, MessageResult, Mut, View, ViewId, ViewMarker, ViewPathTracker};
@@ -15,7 +15,9 @@ use crate::{DomView, OptionalAction, ViewCtx};
 // Use a distinctive number here, to be able to catch bugs.
 // In case the generational-id view path in `View::Message` lead to a wrong view
 /// This is a randomly generated 32 bit number - 592908563 in decimal.
-const ON_EVENT_VIEW_ID: ViewId = ViewId::new(0x23571113);
+const ON_EVENT_VIEW_ID: ViewId = ViewId::new(0x2357_1113);
+
+type EventPhantom<State, Action, Event> = PhantomData<fn() -> (State, Action, Event)>;
 
 /// Wraps a [`View`] `V` and attaches an event listener.
 ///
@@ -27,7 +29,7 @@ pub struct OnEvent<V, State, Action, Event, Callback> {
     pub(crate) capture: bool,
     pub(crate) passive: bool,
     pub(crate) handler: Callback,
-    pub(crate) phantom_event_ty: PhantomData<fn() -> (State, Action, Event)>,
+    pub(crate) phantom_event_ty: EventPhantom<State, Action, Event>,
 }
 
 impl<V, State, Action, Event, Callback> OnEvent<V, State, Action, Event, Callback>
@@ -50,7 +52,8 @@ where
     /// Passive event handlers can't prevent the browser's default action from
     /// running (otherwise possible with `event.prevent_default()`), which
     /// restricts what they can be used for, but reduces overhead.
-    pub fn passive(mut self, value: bool) -> Self {
+    #[must_use = "Use the configured event view."]
+    pub const fn passive(mut self, value: bool) -> Self {
         self.passive = value;
         self
     }
@@ -62,57 +65,100 @@ where
     /// when both elements have registered a handle for that event.
     /// The event propagation mode determines the order in which elements receive the event.
     // TODO use similar Nomenclature as gloo (Phase::Bubble/Phase::Capture)?
-    pub fn capture(mut self, value: bool) -> Self {
+    #[must_use = "Use the configured event view."]
+    pub const fn capture(mut self, value: bool) -> Self {
         self.capture = value;
         self
     }
 }
 
-fn create_event_listener<Event: JsCast + AnyDebug>(
-    target: &web_sys::EventTarget,
-    event: &str,
-    // TODO options
+/// Owns the callback and its exact registration on the DOM target.
+/// Removing or replacing the view unregisters the old callback even if
+/// the DOM node is retained elsewhere.
+pub(crate) struct EventListener {
+    target: EventTarget,
+    event: Cow<'static, str>,
     capture: bool,
     passive: bool,
-    ctx: &mut ViewCtx,
-) -> Closure<dyn FnMut(web_sys::Event)> {
-    let thunk = ctx.message_thunk();
-    let callback = Closure::new(move |event: web_sys::Event| {
-        let event = event.unchecked_into::<Event>();
-        thunk.push_message(event);
-    });
-
-    let options = AddEventListenerOptions::new();
-    options.set_capture(capture);
-    options.set_passive(passive);
-
-    target
-        .add_event_listener_with_callback_and_add_event_listener_options(
-            event,
-            callback.as_ref().unchecked_ref(),
-            &options,
-        )
-        .unwrap_throw();
-    callback
+    callback: Closure<dyn FnMut(web_sys::Event)>,
 }
 
-fn remove_event_listener(
-    target: &web_sys::EventTarget,
-    event: &str,
-    callback: &Closure<dyn FnMut(web_sys::Event)>,
-    is_capture: bool,
-) {
-    target
-        .remove_event_listener_with_callback_and_bool(
+#[derive(Clone, Copy)]
+struct ListenerOptions {
+    capture: bool,
+    passive: bool,
+}
+
+impl EventListener {
+    pub(crate) fn new(
+        target: &EventTarget,
+        event: Cow<'static, str>,
+        capture: bool,
+        passive: bool,
+        callback: impl FnMut(web_sys::Event) + 'static,
+    ) -> Self {
+        let callback = Closure::new(callback);
+        let options = AddEventListenerOptions::new();
+        options.set_capture(capture);
+        options.set_passive(passive);
+        target
+            .add_event_listener_with_callback_and_add_event_listener_options(
+                &event,
+                callback.as_ref().unchecked_ref(),
+                &options,
+            )
+            .unwrap_throw();
+        Self {
+            target: target.clone(),
             event,
-            callback.as_ref().unchecked_ref(),
-            is_capture,
-        )
-        .unwrap_throw();
+            capture,
+            passive,
+            callback,
+        }
+    }
+
+    fn matches(&self, target: &EventTarget, event: &str, options: ListenerOptions) -> bool {
+        &self.target == target
+            && self.event == event
+            && self.capture == options.capture
+            && self.passive == options.passive
+    }
+}
+
+impl Drop for EventListener {
+    fn drop(&mut self) {
+        if let Err(err) = self.target.remove_event_listener_with_callback_and_bool(
+            &self.event,
+            self.callback.as_ref().unchecked_ref(),
+            self.capture,
+        ) {
+            web_sys::console::error_1(&err);
+        }
+    }
+}
+
+fn create_event_listener<Event: JsCast + AnyDebug>(
+    target: &EventTarget,
+    event: &str,
+    options: ListenerOptions,
+    ctx: &ViewCtx,
+) -> EventListener {
+    let thunk = ctx.message_thunk();
+    EventListener::new(
+        target,
+        event.to_owned().into(),
+        options.capture,
+        options.passive,
+        move |event| {
+            if let Ok(event) = event.dyn_into::<Event>() {
+                thunk.push_message(event);
+            }
+        },
+    )
 }
 
 mod hidden {
-    use wasm_bindgen::prelude::Closure;
+    use super::EventListener;
     #[expect(
         unnameable_types,
         reason = "Implementation detail, public because of trait visibility rules"
@@ -120,7 +166,7 @@ mod hidden {
     /// State for the `OnEvent` view.
     pub struct OnEventState<S> {
         pub(crate) child_state: S,
-        pub(crate) callback: Closure<dyn FnMut(web_sys::Event)>,
+        pub(crate) listener: Option<EventListener>,
     }
 }
 
@@ -131,8 +177,7 @@ use hidden::OnEventState;
 fn build_event_listener<State, Action, V, Event>(
     element_view: &V,
     event: &str,
-    capture: bool,
-    passive: bool,
+    options: ListenerOptions,
     ctx: &mut ViewCtx,
     app_state: &mut State,
 ) -> (V::Element, OnEventState<V::ViewState>)
@@ -145,11 +190,10 @@ where
     // we use a placeholder id here, the id can never change, so we don't need to store it anywhere
     ctx.with_id(ON_EVENT_VIEW_ID, |ctx| {
         let (element, child_state) = element_view.build(ctx, app_state);
-        let callback =
-            create_event_listener::<Event>(element.as_ref(), event, capture, passive, ctx);
+        let listener = create_event_listener::<Event>(element.as_ref(), event, options, ctx);
         let state = OnEventState {
             child_state,
-            callback,
+            listener: Some(listener),
         };
         (element, state)
     })
@@ -159,11 +203,7 @@ fn rebuild_event_listener<State, Action, V, Event>(
     element_view: &V,
     prev_element_view: &V,
     mut element: Mut<'_, V::Element>,
-    event: &str,
-    capture: bool,
-    passive: bool,
-    prev_capture: bool,
-    prev_passive: bool,
+    registration: (&str, ListenerOptions),
     state: &mut OnEventState<V::ViewState>,
     ctx: &mut ViewCtx,
     app_state: &mut State,
@@ -173,6 +213,7 @@ fn rebuild_event_listener<State, Action, V, Event>(
     V: DomView<State, Action>,
     Event: JsCast + 'static + AnyDebug,
 {
+    let (event, options) = registration;
     ctx.with_id(ON_EVENT_VIEW_ID, |ctx| {
         element_view.rebuild(
             prev_element_view,
@@ -181,33 +222,35 @@ fn rebuild_event_listener<State, Action, V, Event>(
             element.reborrow_mut(),
             app_state,
         );
-        let was_created = element.flags.was_created();
-        let needs_update = prev_capture != capture || prev_passive != passive || was_created;
-        if !needs_update {
+        if state
+            .listener
+            .as_ref()
+            .is_some_and(|listener| listener.matches(element.as_ref(), event, options))
+        {
             return;
         }
-        if !was_created {
-            remove_event_listener(element.as_ref(), event, &state.callback, prev_capture);
-        }
-        state.callback =
-            create_event_listener::<Event>(element.as_ref(), event, capture, passive, ctx);
+        // Drop the previous registration before creating its replacement.
+        drop(state.listener.take());
+        state.listener = Some(create_event_listener::<Event>(
+            element.as_ref(),
+            event,
+            options,
+            ctx,
+        ));
     });
 }
 
 fn teardown_event_listener<State, Action, V>(
     element_view: &V,
     element: Mut<'_, V::Element>,
-    _event: &str,
     state: &mut OnEventState<V::ViewState>,
-    _capture: bool,
     ctx: &mut ViewCtx,
 ) where
     State: 'static,
     Action: 'static,
     V: DomView<State, Action>,
 {
-    // TODO: is this really needed (as the element will be removed anyway)?
-    // remove_event_listener(element.as_ref(), event, &state.callback, capture);
+    state.listener = None;
     ctx.with_id(ON_EVENT_VIEW_ID, |ctx| {
         element_view.teardown(&mut state.child_state, ctx, element);
     });
@@ -229,18 +272,16 @@ where
     OA: OptionalAction<Action>,
     Callback: Fn(&mut State, Event) -> OA + 'static,
 {
-    let Some(first) = message.take_first() else {
-        throw_str("Parent view of `OnEvent` sent outdated and/or incorrect empty view path");
-    };
-    if first != ON_EVENT_VIEW_ID {
-        throw_str("Parent view of `OnEvent` sent outdated and/or incorrect empty view path");
+    if message.take_first() != Some(ON_EVENT_VIEW_ID) {
+        return MessageResult::Stale;
     }
     if message.remaining_path().is_empty() {
-        let event = message.take_message::<Event>().unwrap_throw();
-        match (handler)(app_state, *event).action() {
-            Some(a) => MessageResult::Action(a),
-            None => MessageResult::Nop,
-        }
+        let Some(event) = message.take_message::<Event>() else {
+            return MessageResult::Stale;
+        };
+        (handler)(app_state, *event)
+            .action()
+            .map_or(MessageResult::Nop, MessageResult::Action)
     } else {
         element_view.message(&mut state.child_state, message, element, app_state)
     }
@@ -265,8 +306,10 @@ where
         build_event_listener::<_, _, _, Event>(
             &self.dom_view,
             &self.event,
-            self.capture,
-            self.passive,
+            ListenerOptions {
+                capture: self.capture,
+                passive: self.passive,
+            },
             ctx,
             app_state,
         )
@@ -277,44 +320,24 @@ where
         prev: &Self,
         view_state: &mut Self::ViewState,
         ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
+        element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) {
-        // special case, where event name can change, so we can't reuse the rebuild_event_listener function above
-        ctx.with_id(ON_EVENT_VIEW_ID, |ctx| {
-            self.dom_view.rebuild(
-                &prev.dom_view,
-                &mut view_state.child_state,
-                ctx,
-                element.reborrow_mut(),
-                app_state,
-            );
-
-            let was_created = element.flags.was_created();
-            let needs_update = prev.capture != self.capture
-                || prev.passive != self.passive
-                || prev.event != self.event
-                || was_created;
-            if !needs_update {
-                return;
-            }
-            if !was_created {
-                remove_event_listener(
-                    element.as_ref(),
-                    &prev.event,
-                    &view_state.callback,
-                    prev.capture,
-                );
-            }
-
-            view_state.callback = create_event_listener::<Event>(
-                element.as_ref(),
+        rebuild_event_listener::<_, _, _, Event>(
+            &self.dom_view,
+            &prev.dom_view,
+            element,
+            (
                 &self.event,
-                self.capture,
-                self.passive,
-                ctx,
-            );
-        });
+                ListenerOptions {
+                    capture: self.capture,
+                    passive: self.passive,
+                },
+            ),
+            view_state,
+            ctx,
+            app_state,
+        );
     }
 
     fn teardown(
@@ -323,14 +346,7 @@ where
         ctx: &mut ViewCtx,
         element: Mut<'_, Self::Element>,
     ) {
-        teardown_event_listener(
-            &self.dom_view,
-            element,
-            &self.event,
-            view_state,
-            self.capture,
-            ctx,
-        );
+        teardown_event_listener(&self.dom_view, element, view_state, ctx);
     }
 
     fn message(
@@ -379,7 +395,8 @@ macro_rules! event_definitions {
             /// Passive event handlers can't prevent the browser's default action from
             /// running (otherwise possible with `event.prevent_default()`), which
             /// restricts what they can be used for, but reduces overhead.
-            pub fn passive(mut self, value: bool) -> Self {
+            #[must_use = "Use the configured event view."]
+    pub const fn passive(mut self, value: bool) -> Self {
                 self.passive = value;
                 self
             }
@@ -391,7 +408,8 @@ macro_rules! event_definitions {
             /// when both elements have registered a handle for that event.
             /// The event propagation mode determines the order in which elements receive the event.
             // TODO use similar Nomenclature as gloo (Phase::Bubble/Phase::Capture)?
-            pub fn capture(mut self, value: bool) -> Self {
+            #[must_use = "Use the configured event view."]
+    pub const fn capture(mut self, value: bool) -> Self {
                 self.capture = value;
                 self
             }
@@ -415,8 +433,7 @@ macro_rules! event_definitions {
                 build_event_listener::<_, _, _, web_sys::$web_sys_ty>(
                     &self.dom_view,
                     $event_name,
-                    self.capture,
-                    self.passive,
+                    ListenerOptions { capture: self.capture, passive: self.passive },
                     ctx,
                     app_state
                 )
@@ -434,11 +451,7 @@ macro_rules! event_definitions {
                     &self.dom_view,
                     &prev.dom_view,
                     element,
-                    $event_name,
-                    self.capture,
-                    self.passive,
-                    prev.capture,
-                    prev.passive,
+                    ($event_name, ListenerOptions { capture: self.capture, passive: self.passive }),
                     view_state,
                     ctx,
                     app_state
@@ -451,7 +464,7 @@ macro_rules! event_definitions {
                 ctx: &mut ViewCtx,
                 element: Mut<'_, Self::Element>,
             ) {
-                teardown_event_listener(&self.dom_view, element, $event_name, view_state, self.capture, ctx);
+                teardown_event_listener(&self.dom_view, element, view_state, ctx);
             }
 
             fn message(
@@ -568,7 +581,7 @@ pub struct OnResizeState<VState> {
 }
 
 impl<V, State, Action, Callback> ViewMarker for OnResize<V, State, Action, Callback> {}
-impl<State, Action, OA, Callback, V: View<State, Action, ViewCtx>> View<State, Action, ViewCtx>
+impl<State, Action, OA, Callback, V> View<State, Action, ViewCtx>
     for OnResize<V, State, Action, Callback>
 where
     State: 'static,
@@ -585,8 +598,9 @@ where
         ctx.with_id(ON_EVENT_VIEW_ID, |ctx| {
             let thunk = ctx.message_thunk();
             let callback = Closure::new(move |entries: js_sys::Array| {
-                let entry: web_sys::ResizeObserverEntry = entries.at(0).unchecked_into();
-                thunk.push_message(entry);
+                if let Ok(entry) = entries.at(0).dyn_into::<web_sys::ResizeObserverEntry>() {
+                    thunk.push_message(entry);
+                }
             });
 
             let observer =
@@ -647,20 +661,16 @@ where
         element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let Some(first) = message.take_first() else {
-            throw_str("Parent view of `OnResize` sent outdated and/or incorrect empty view path");
-        };
-        if first != ON_EVENT_VIEW_ID {
-            throw_str("Parent view of `OnResize` sent outdated and/or incorrect empty view path");
+        if message.take_first() != Some(ON_EVENT_VIEW_ID) {
+            return MessageResult::Stale;
         }
         if message.remaining_path().is_empty() {
-            let event = message
-                .take_message::<web_sys::ResizeObserverEntry>()
-                .unwrap_throw();
-            match (self.handler)(app_state, *event).action() {
-                Some(a) => MessageResult::Action(a),
-                None => MessageResult::Nop,
-            }
+            let Some(event) = message.take_message::<web_sys::ResizeObserverEntry>() else {
+                return MessageResult::Stale;
+            };
+            (self.handler)(app_state, *event)
+                .action()
+                .map_or(MessageResult::Nop, MessageResult::Action)
         } else {
             self.dom_view
                 .message(&mut view_state.child_state, message, element, app_state)

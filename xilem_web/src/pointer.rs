@@ -6,11 +6,11 @@
 use std::marker::PhantomData;
 
 use peniko::kurbo::Point;
-use wasm_bindgen::prelude::Closure;
-use wasm_bindgen::{JsCast, UnwrapThrowExt, throw_str};
+use wasm_bindgen::JsCast;
 use web_sys::PointerEvent;
 
 use crate::core::{MessageCtx, MessageResult, Mut, View, ViewId, ViewMarker, ViewPathTracker};
+use crate::events::EventListener;
 use crate::interfaces::Element;
 use crate::{DomView, ViewCtx};
 
@@ -33,9 +33,7 @@ pub struct Pointer<V, T, A, F> {
     reason = "Implementation detail, public because of trait visibility rules"
 )]
 pub struct PointerState<S> {
-    down_closure: Closure<dyn FnMut(PointerEvent)>,
-    move_closure: Closure<dyn FnMut(PointerEvent)>,
-    up_closure: Closure<dyn FnMut(PointerEvent)>,
+    listeners: Option<[EventListener; 3]>,
     child_state: S,
 }
 
@@ -48,19 +46,22 @@ pub enum PointerMsg {
 }
 
 impl PointerMsg {
-    pub fn position(&self) -> Point {
+    #[must_use = "Use the pointer event detail."]
+    pub const fn position(&self) -> Point {
         match self {
             Self::Down(p) | Self::Move(p) | Self::Up(p) => p.position,
         }
     }
 
-    pub fn button(&self) -> i16 {
+    #[must_use = "Use the pointer event detail."]
+    pub const fn button(&self) -> i16 {
         match self {
             Self::Down(p) | Self::Move(p) | Self::Up(p) => p.button,
         }
     }
 
-    pub fn id(&self) -> i32 {
+    #[must_use = "Use the pointer event detail."]
+    pub const fn id(&self) -> i32 {
         match self {
             Self::Down(p) | Self::Move(p) | Self::Up(p) => p.id,
         }
@@ -80,7 +81,7 @@ impl PointerDetails {
         Self {
             id: e.pointer_id(),
             button: e.button(),
-            position: Point::new(e.client_x() as f64, e.client_y() as f64),
+            position: Point::new(f64::from(e.client_x()), f64::from(e.client_y())),
         }
     }
 }
@@ -96,41 +97,31 @@ pub fn pointer<T: 'static, A, F: Fn(&mut T, PointerMsg), V: Element<T, A>>(
     }
 }
 
-fn build_event_listeners(
-    ctx: &mut ViewCtx,
-    el: &web_sys::Element,
-) -> [Closure<dyn FnMut(PointerEvent)>; 3] {
-    let el_clone = el.clone();
-
-    let thunk = ctx.message_thunk();
-    let down_closure = Closure::new(move |e: PointerEvent| {
-        thunk.push_message(PointerMsg::Down(PointerDetails::from_pointer_event(&e)));
-        el_clone.set_pointer_capture(e.pointer_id()).unwrap();
-        e.prevent_default();
-        e.stop_propagation();
-    });
-    el.add_event_listener_with_callback("pointerdown", down_closure.as_ref().unchecked_ref())
-        .unwrap();
-
-    let thunk = ctx.message_thunk();
-    let move_closure = Closure::new(move |e: PointerEvent| {
-        thunk.push_message(PointerMsg::Move(PointerDetails::from_pointer_event(&e)));
-        e.prevent_default();
-        e.stop_propagation();
-    });
-    el.add_event_listener_with_callback("pointermove", move_closure.as_ref().unchecked_ref())
-        .unwrap();
-
-    let thunk = ctx.message_thunk();
-    let up_closure = Closure::new(move |e: PointerEvent| {
-        thunk.push_message(PointerMsg::Up(PointerDetails::from_pointer_event(&e)));
-        e.prevent_default();
-        e.stop_propagation();
-    });
-    el.add_event_listener_with_callback("pointerup", up_closure.as_ref().unchecked_ref())
-        .unwrap();
-
-    [down_closure, move_closure, up_closure]
+fn build_event_listeners(ctx: &ViewCtx, el: &web_sys::Element) -> [EventListener; 3] {
+    type PointerHandler = (&'static str, fn(PointerDetails) -> PointerMsg);
+    let kinds: [PointerHandler; 3] = [
+        ("pointerdown", PointerMsg::Down),
+        ("pointermove", PointerMsg::Move),
+        ("pointerup", PointerMsg::Up),
+    ];
+    kinds.map(|(name, message)| {
+        let target = el.clone();
+        let thunk = ctx.message_thunk();
+        EventListener::new(el.as_ref(), name.into(), false, false, move |event| {
+            let Ok(event) = event.dyn_into::<PointerEvent>() else {
+                return;
+            };
+            if name == "pointerdown" {
+                // Capture before dispatch, since the callback may replace the node.
+                if let Err(error) = target.set_pointer_capture(event.pointer_id()) {
+                    web_sys::console::warn_1(&error);
+                }
+            }
+            event.prevent_default();
+            event.stop_propagation();
+            thunk.push_message(message(PointerDetails::from_pointer_event(&event)));
+        })
+    })
 }
 
 impl<V, State, Action, Callback> ViewMarker for Pointer<V, State, Action, Callback> {}
@@ -150,11 +141,9 @@ where
             let (element, child_state) = self.child.build(ctx, app_state);
             let el = element.node.as_ref();
 
-            let [down_closure, move_closure, up_closure] = build_event_listeners(ctx, el);
+            let listeners = build_event_listeners(ctx, el);
             let state = PointerState {
-                down_closure,
-                move_closure,
-                up_closure,
+                listeners: Some(listeners),
                 child_state,
             };
             (element, state)
@@ -179,8 +168,8 @@ where
             );
 
             if el.flags.was_created() {
-                [state.down_closure, state.move_closure, state.up_closure] =
-                    build_event_listeners(ctx, el.node.as_ref());
+                drop(state.listeners.take());
+                state.listeners = Some(build_event_listeners(ctx, el.node.as_ref()));
             }
         });
     }
@@ -192,7 +181,7 @@ where
         element: Mut<'_, Self::Element>,
     ) {
         ctx.with_id(POINTER_VIEW_ID, |ctx| {
-            // TODO remove event listeners from child or is this not necessary?
+            view_state.listeners = None;
             self.child
                 .teardown(&mut view_state.child_state, ctx, element);
         });
@@ -205,14 +194,13 @@ where
         element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let Some(first) = message.take_first() else {
-            throw_str("Parent view of `Pointer` sent outdated and/or incorrect empty view path");
-        };
-        if first != POINTER_VIEW_ID {
-            throw_str("Parent view of `Pointer` sent outdated and/or incorrect empty view path");
+        if message.take_first() != Some(POINTER_VIEW_ID) {
+            return MessageResult::Stale;
         }
         if message.remaining_path().is_empty() {
-            let msg = message.take_message().unwrap_throw();
+            let Some(msg) = message.take_message() else {
+                return MessageResult::Stale;
+            };
             MessageResult::Action((self.callback)(app_state, *msg))
         } else {
             self.child

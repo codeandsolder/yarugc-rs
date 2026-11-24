@@ -17,7 +17,7 @@ use crate::{DomView, ViewCtx};
 
 type CowStr = std::borrow::Cow<'static, str>;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 /// An modifier element to either set or remove an inline style.
 ///
 /// It's used in [`Styles`].
@@ -28,12 +28,14 @@ pub enum StyleModifier {
 
 impl StyleModifier {
     /// Returns the property name of this modifier.
-    pub fn name(&self) -> &CowStr {
+    #[must_use = "Use the modifier style name."]
+    pub const fn name(&self) -> &CowStr {
         let (Self::Set(name, _) | Self::Remove(name)) = self;
         name
     }
 
     /// Convert this modifier into its property name.
+    #[must_use = "Use the modifier style name."]
     pub fn into_name(self) -> CowStr {
         let (Self::Set(name, _) | Self::Remove(name)) = self;
         name
@@ -85,19 +87,19 @@ where
 
 impl<T: StyleIter> StyleIter for Option<T> {
     fn styles_iter(&self) -> impl Iterator<Item = (CowStr, Option<CowStr>)> {
-        self.iter().flat_map(|c| c.styles_iter())
+        self.iter().flat_map(StyleIter::styles_iter)
     }
 }
 
 impl<T: StyleIter> StyleIter for Vec<T> {
     fn styles_iter(&self) -> impl Iterator<Item = (CowStr, Option<CowStr>)> {
-        self.iter().flat_map(|c| c.styles_iter())
+        self.iter().flat_map(StyleIter::styles_iter)
     }
 }
 
 impl<T: StyleIter, const N: usize> StyleIter for [T; N] {
     fn styles_iter(&self) -> impl Iterator<Item = (CowStr, Option<CowStr>)> {
-        self.iter().flat_map(|c| c.styles_iter())
+        self.iter().flat_map(StyleIter::styles_iter)
     }
 }
 
@@ -179,35 +181,34 @@ impl Styles {
 
     /// Applies potential changes of the inline styles of an element to the underlying DOM node.
     pub fn apply_changes(this: Modifier<'_, Self>, element: &web_sys::Element) {
-        if this.flags.in_hydration() {
+        let Modifier { modifier, flags } = this;
+        if flags.in_hydration() {
             return;
-        } else if this.flags.was_created() {
-            for modifier in &this.modifier.modifiers {
+        } else if flags.was_created() {
+            for modifier in &modifier.modifiers {
                 match modifier {
                     StyleModifier::Remove(name) => remove_style(element, name),
                     StyleModifier::Set(name, value) => set_style(element, name, value),
                 }
             }
-        } else if !this.modifier.updated.is_empty() {
-            for modifier in this.modifier.modifiers.iter().rev() {
-                match modifier {
-                    StyleModifier::Remove(name) if this.modifier.updated.remove(name).is_some() => {
+        } else if !modifier.updated.is_empty() {
+            for entry in modifier.modifiers.iter().rev() {
+                match entry {
+                    StyleModifier::Remove(name) if modifier.updated.remove(name).is_some() => {
                         remove_style(element, name);
                     }
-                    StyleModifier::Set(name, value)
-                        if this.modifier.updated.remove(name).is_some() =>
-                    {
+                    StyleModifier::Set(name, value) if modifier.updated.remove(name).is_some() => {
                         set_style(element, name, value);
                     }
                     _ => {}
                 }
             }
             // if there's any remaining key in updated, it means these are deleted keys
-            for (name, ()) in this.modifier.updated.drain() {
+            for (name, ()) in modifier.updated.drain() {
                 remove_style(element, &name);
             }
         }
-        debug_assert!(this.modifier.updated.is_empty());
+        debug_assert!(modifier.updated.is_empty());
     }
 
     /// Returns a previous [`StyleModifier`], when `predicate` returns true, this is similar to [`Iterator::find`].
@@ -220,6 +221,7 @@ impl Styles {
 
     #[inline]
     /// Returns the current value of a style property with `name` if it is set.
+    #[must_use = "Use the existing style property, if present."]
     pub fn get_style(&self, name: &str) -> Option<&CowStr> {
         if let Some(StyleModifier::Set(_, value)) = self.get(
             |m| matches!(m, StyleModifier::Remove(key) | StyleModifier::Set(key, _) if key == name),
@@ -532,16 +534,18 @@ impl<E, State, Action> Rotate<E, State, Action> {
     }
 }
 
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "Needs to fit the generic signature of Styles::update_with_modify_style"
+#[cfg_attr(
+    target_pointer_width = "64",
+    expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "Needs to fit the generic signature of Styles::update_with_modify_style"
+    )
 )]
 fn rotate_transform_modifier(transform: Option<&CowStr>, radians: &f64) -> StyleModifier {
-    let value = if let Some(transform) = transform {
-        format!("{transform} rotate({radians}rad)")
-    } else {
-        format!("rotate({radians}rad)")
-    };
+    let value = transform.map_or_else(
+        || format!("rotate({radians}rad)"),
+        |transform| format!("{transform} rotate({radians}rad)"),
+    );
     StyleModifier::Set("transform".into(), CowStr::from(value))
 }
 
@@ -648,7 +652,7 @@ impl From<Vec2> for ScaleValue {
 pub struct Scale<E, State, Action> {
     el: E,
     phantom: PhantomData<fn() -> (State, Action)>,
-    scale: ScaleValue,
+    value: ScaleValue,
 }
 
 impl<E, State, Action> Scale<E, State, Action> {
@@ -656,17 +660,16 @@ impl<E, State, Action> Scale<E, State, Action> {
         Self {
             el: element,
             phantom: PhantomData,
-            scale: scale.into(),
+            value: scale.into(),
         }
     }
 }
 
 fn scale_transform_modifier(transform: Option<&CowStr>, scale: &ScaleValue) -> StyleModifier {
-    let value = if let Some(transform) = transform {
-        format!("{transform} scale({scale})")
-    } else {
-        format!("scale({scale})")
-    };
+    let value = transform.map_or_else(
+        || format!("scale({scale})"),
+        |transform| format!("{transform} scale({scale})"),
+    );
     StyleModifier::Set("transform".into(), CowStr::from(value))
 }
 
@@ -688,7 +691,7 @@ where
         let styles = &mut element.modifier();
         Styles::push(
             styles,
-            scale_transform_modifier(styles.modifier.get_style("transform"), &self.scale),
+            scale_transform_modifier(styles.modifier.get_style("transform"), &self.value),
         );
         (element, state)
     }
@@ -708,8 +711,8 @@ where
             Styles::update_with_modify_style(
                 styles,
                 "transform",
-                &prev.scale,
-                &self.scale,
+                &prev.value,
+                &self.value,
                 scale_transform_modifier,
             );
         });

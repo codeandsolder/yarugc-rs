@@ -131,7 +131,7 @@ where
         &self,
         view_state: &mut Self::ViewState,
         _: &mut ViewCtx,
-        _: Mut<'_, Self::Element>,
+        (): Mut<'_, Self::Element>,
     ) {
         clear_interval(view_state.interval_handle);
     }
@@ -140,14 +140,14 @@ where
         &self,
         _: &mut Self::ViewState,
         message: &mut MessageCtx,
-        _element: Mut<'_, Self::Element>,
+        (): Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        debug_assert!(message.remaining_path().is_empty());
-        message.take_message::<()>().unwrap_throw();
-        match (self.callback)(app_state).action() {
-            Some(action) => MessageResult::Action(action),
-            None => MessageResult::Nop,
+        if !message.remaining_path().is_empty() || message.take_message::<()>().is_none() {
+            return MessageResult::Stale;
         }
+        (self.callback)(app_state)
+            .action()
+            .map_or(MessageResult::Nop, MessageResult::Action)
     }
 }

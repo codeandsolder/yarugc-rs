@@ -78,7 +78,7 @@ pub struct Modifier<'a, M> {
 }
 
 impl<'a, M> Modifier<'a, M> {
-    pub fn new(modifier: &'a mut M, flags: &'a mut PodFlags) -> Self {
+    pub const fn new(modifier: &'a mut M, flags: &'a mut PodFlags) -> Self {
         Self { modifier, flags }
     }
 }

@@ -52,9 +52,9 @@ fn slider(
         .on_input(cb)
 }
 
-fn main() {
+fn main() -> Result<(), xilem_web::DomError> {
     console_error_panic_hook::set_once();
-    App::new(document_body(), Triangle { a: 200, b: 100 }, |t| {
+    App::new(document_body()?, Triangle { a: 200, b: 100 }, |t| {
         let x1 = 390;
         let y1 = 30;
         let x2 = x1;
@@ -94,6 +94,7 @@ fn main() {
                 ml::msup((ml::mi(c), ml::mn(2))),
             ))),
         ))
-    })
+    })?
     .run();
+    Ok(())
 }
