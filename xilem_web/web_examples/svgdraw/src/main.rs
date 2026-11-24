@@ -8,9 +8,7 @@ use std::rc::Rc;
 use wasm_bindgen::UnwrapThrowExt;
 use xilem_web::elements::html::{div, input, label, span};
 use xilem_web::elements::svg::{g, svg};
-use xilem_web::interfaces::{
-    Element, HtmlInputElement, SvgGeometryElement, SvgPathElement, SvggElement,
-};
+use xilem_web::interfaces::{Element, HtmlInputElement, SvgElement, SvgPathElement};
 use xilem_web::modifiers::style as s;
 use xilem_web::svg::kurbo::{BezPath, Point, QuadSpline, Shape, Stroke};
 use xilem_web::svg::peniko::Color;

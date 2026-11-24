@@ -389,9 +389,24 @@ jobs:
         with:
           rust-toolchain: ${{ steps.compiler.outputs.channel }}
 
-      # TODO: Find a way to make tests work. Until then the tests are merely compiled.
+      # Compile the full WASM test suite; exercise the Web lifecycle in Chromium below.
       - name: Run cargo test --no-run
         run: cargo test --workspace ${{ env.NO_WASM_PKGS }} --locked --profile ci --target wasm32-unknown-unknown --all-features --no-run
+
+      - name: Install wasm-bindgen CLI
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
+        with:
+          tool: wasm-bindgen@0.2.130
+
+      - name: Run Web browser lifecycle regression
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/xilem-web-browser"
+          mkdir -p "$output"
+          cargo build --locked --profile ci --target wasm32-unknown-unknown -p xilem_web --example browser_lifecycle --message-format=json > "$output/build.jsonl"
+          wasm=$(jq -er 'select(.reason == "compiler-artifact" and .target.name == "browser_lifecycle") | .executable' "$output/build.jsonl")
+          wasm-bindgen --target web --out-dir "$output" --out-name browser_lifecycle "$wasm"
+          node xilem_web/tests/browser/lifecycle.mjs "$output" "$(command -v google-chrome)"
 
       - name: Finalize mandatory sccache
         if: always()
