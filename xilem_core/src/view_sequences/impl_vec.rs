@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{
     AppendVec, Count, ElementSplice, MessageCtx, MessageResult, ViewElement, ViewId,
@@ -11,10 +10,7 @@ use crate::{
 
 /// The state used to implement `ViewSequence` for `Vec<impl ViewSequence>`
 ///
-/// We use a generation arena for vector types, with half of the `ViewId` dedicated
-/// to the index, and the other half used for the generation.
-///
-// This is managed in [`create_generational_view_id`] and [`view_id_to_index_generation`]
+/// Each vector child has two routing segments: its index and a full-width generation.
 #[doc(hidden)]
 #[expect(
     unnameable_types,
@@ -28,32 +24,19 @@ pub struct VecViewState<InnerState> {
     /// The fields of the tuple are (number of widgets to skip, `InnerState`).
     inner_states: Vec<(usize, InnerState)>,
 
-    generations: Vec<u32>,
+    generations: Vec<u64>,
 }
 
-/// Turns an index and a generation into a packed id, suitable for use in
-/// [`ViewId`]s
-fn create_generational_view_id(index: usize, generation: u32) -> ViewId {
-    let id_low: u32 = index
-        .try_into()
-        // If you're seeing this panic, you can use a nested `Vec<Vec<...>>`, where each individual `Vec`
-        // has fewer than u32::MAX-1 elements.
-        .expect("Views in a vector backed sequence must be indexable by u32");
-    let id_low: u64 = id_low.into();
-    let id_high: u64 = u64::from(generation) << 32;
-    ViewId::new(id_high | id_low)
-}
-
-/// Undoes [`create_generational_view_id`]
-fn view_id_to_index_generation(view_id: ViewId) -> (usize, u32) {
-    #![expect(
-        clippy::cast_possible_truncation,
-        reason = "Explicitly splits u64 into two u32s"
-    )]
-    let view_id = view_id.routing_id();
-    let id_low_ix = view_id as u32;
-    let id_high_gen = (view_id >> 32) as u32;
-    (id_low_ix as usize, id_high_gen)
+// Use independent path segments to avoid limiting the index or generation to 32 bits.
+fn with_child_id<Context: ViewPathTracker, R>(
+    ctx: &mut Context,
+    index: usize,
+    generation: u64,
+    f: impl FnOnce(&mut Context) -> R,
+) -> R {
+    ctx.with_id(ViewId::new(index as u64), |ctx| {
+        ctx.with_id(ViewId::new(generation), f)
+    })
 }
 
 /// The implementation for an `Vec` of a `ViewSequence`.
@@ -90,15 +73,16 @@ where
             .enumerate()
             .zip(&generations)
             .map(|((index, seq), generation)| {
-                let id = create_generational_view_id(index, *generation);
                 let this_skip = elements.index() - start_idx;
-                let inner_state = ctx.with_id(id, |ctx| seq.seq_build(ctx, elements, app_state));
+                let inner_state = with_child_id(ctx, index, *generation, |ctx| {
+                    seq.seq_build(ctx, elements, app_state)
+                });
                 (this_skip, inner_state)
             })
             .collect();
         VecViewState {
-            generations,
             inner_states,
+            generations,
         }
     }
 
@@ -121,8 +105,7 @@ where
         {
             *child_skip = elements.index() - start_idx;
             // Rebuild the items which are common to both vectors
-            let id = create_generational_view_id(i, *child_generation);
-            ctx.with_id(id, |ctx| {
+            with_child_id(ctx, i, *child_generation, |ctx| {
                 child.seq_rebuild(child_prev, child_state, ctx, elements, app_state);
             });
         }
@@ -137,38 +120,17 @@ where
             for (index, ((old_seq, generation), (_, mut inner_state))) in
                 to_teardown.zip(generations).zip(states).enumerate()
             {
-                let id = create_generational_view_id(index + n, *generation);
-                ctx.with_id(id, |ctx| {
+                with_child_id(ctx, index + n, *generation, |ctx| {
                     old_seq.seq_teardown(&mut inner_state, ctx, elements);
                 });
                 // We increment the generation on the "falling edge" by convention
-                *generation = generation.checked_add(1).unwrap_or_else(|| {
-                    static SHOULD_WARN: AtomicBool = AtomicBool::new(true);
-                    // We only want to warn about this once
-                    // because e.g. if every item in a vector hits
-                    // this at the same time, we don't want to repeat it too many times
-                    if SHOULD_WARN.swap(false, Ordering::Relaxed) {
-                        tracing::warn!(
-                            inner_type = core::any::type_name::<Seq>(),
-                            issue_url = "https://github.com/linebender/xilem/issues",
-                            "Got overflowing generation in ViewSequence from `Vec<inner_type>`.\
-                            This can possibly cause incorrect routing of async messages in extreme cases.\
-                            Please open an issue if you see this. There are known solutions"
-                        );
-                    }
-                    // The known solution mentioned in the above message is to use a different ViewId for the index and the generation
-                    // We believe this to be superfluous for the default use case, as even with 1000 rebuilds a second, each adding
-                    // to the same array, this would take 50 days of the application running continuously.
-                    // See also https://github.com/bevyengine/bevy/pull/9907, where they warn in their equivalent case
-
-                    // We use 0 to wrap around. It would require extremely unfortunate timing to get an async event
-                    // with the correct generation exactly u32::MAX generations late, so wrapping is the best option
-                    0
-                });
+                *generation = generation.wrapping_add(1);
             }
         } else if n > prev_n {
             // If needed, create new generations
-            seq_state.generations.resize(n, 0);
+            if n > seq_state.generations.len() {
+                seq_state.generations.resize(n, 0);
+            }
             let outer_idx = elements.index();
             elements.with_scratch(|elements| {
                 seq_state.inner_states.extend(
@@ -177,10 +139,11 @@ where
                         .zip(&seq_state.generations[prev_n..])
                         .enumerate()
                         .map(|(index, (seq, generation))| {
-                            let id = create_generational_view_id(index + prev_n, *generation);
                             let this_skip = elements.index() + outer_idx - start_idx;
                             let inner_state =
-                                ctx.with_id(id, |ctx| seq.seq_build(ctx, elements, app_state));
+                                with_child_id(ctx, index + prev_n, *generation, |ctx| {
+                                    seq.seq_build(ctx, elements, app_state)
+                                });
                             (this_skip, inner_state)
                         }),
                 );
@@ -201,8 +164,9 @@ where
             .zip(&seq_state.generations)
             .enumerate()
         {
-            let id = create_generational_view_id(index, *generation);
-            ctx.with_id(id, |ctx| seq.seq_teardown(state, ctx, elements));
+            with_child_id(ctx, index, *generation, |ctx| {
+                seq.seq_teardown(state, ctx, elements);
+            });
         }
     }
 
@@ -214,19 +178,24 @@ where
         elements: &mut impl ElementSplice<Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let start = message
+        let Some(index) = message
             .take_first()
-            .expect("Id path has elements for Vec<ViewSequence>");
-        let (index, generation) = view_id_to_index_generation(start);
-        let stored_generation = &seq_state.generations[index];
-        if *stored_generation != generation {
-            // The value in the sequence is no longer the same child
+            .and_then(|id| usize::try_from(id.routing_id()).ok())
+        else {
+            return MessageResult::Stale;
+        };
+        let Some(generation) = message.take_first() else {
+            return MessageResult::Stale;
+        };
+        if seq_state.generations.get(index).copied() != Some(generation.routing_id()) {
             return MessageResult::Stale;
         }
-        // Panics if index is out of bounds, but we know it isn't because this is the same generation
-        let (child_skip, inner_state) = &mut seq_state.inner_states[index];
-
-        elements.skip(*child_skip);
-        self[index].seq_message(inner_state, message, elements, app_state)
+        let Some((seq, (skip, inner_state))) =
+            self.get(index).zip(seq_state.inner_states.get_mut(index))
+        else {
+            return MessageResult::Stale;
+        };
+        elements.skip(*skip);
+        seq.seq_message(inner_state, message, elements, app_state)
     }
 }

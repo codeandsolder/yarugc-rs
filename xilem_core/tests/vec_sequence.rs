@@ -66,7 +66,7 @@ fn one_zero() {
     assert_eq!(seq_children.active.len(), 1);
     let child = seq_children.active.first().unwrap();
     assert_eq!(child.operations, &[Operation::Build(0)]);
-    assert_eq!(child.view_path.len(), 1);
+    assert_eq!(child.view_path.len(), 2);
 
     let view2 = sequence(2, vec![]);
     view2.rebuild(&view, &mut state, &mut ctx, &mut element, &mut ());
@@ -122,7 +122,7 @@ fn one_two() {
     assert_eq!(seq_children.active.len(), 1);
     let child = seq_children.active.first().unwrap();
     assert_eq!(child.operations, &[Operation::Build(0)]);
-    assert_eq!(child.view_path.len(), 1);
+    assert_eq!(child.view_path.len(), 2);
 
     let view2 = sequence(4, vec![record_ops(2), record_ops(3)]);
     view2.rebuild(&view, &mut state, &mut ctx, &mut element, &mut ());
@@ -140,10 +140,10 @@ fn one_two() {
         first_child.operations,
         &[Operation::Build(0), Operation::Rebuild { from: 0, to: 2 }]
     );
-    assert_eq!(first_child.view_path.len(), 1);
+    assert_eq!(first_child.view_path.len(), 2);
     let second_child = &seq_children.active[1];
     assert_eq!(second_child.operations, &[Operation::Build(3)]);
-    assert_eq!(second_child.view_path.len(), 1);
+    assert_eq!(second_child.view_path.len(), 2);
 
     view2.teardown(&mut state, &mut ctx, &mut element);
     ctx.assert_empty();
@@ -255,4 +255,47 @@ fn stale_messages() {
         let result = view3.message(&mut state, ctx, &mut element, &mut ());
         assert!(matches!(result, MessageResult::Stale));
     });
+}
+
+#[test]
+fn partial_regrowth_never_revives_removed_generations() {
+    let view = sequence(0, vec![record_ops(0), record_ops(1), record_ops(2)]);
+    let mut ctx = TestCtx::default();
+    let (mut element, mut state) = view.build(&mut ctx, &mut ());
+    let old_paths: Vec<_> = element
+        .children
+        .as_ref()
+        .unwrap()
+        .active
+        .iter()
+        .map(|child| child.view_path.clone())
+        .collect();
+    let empty = sequence(0, vec![]);
+    empty.rebuild(&view, &mut state, &mut ctx, &mut element, &mut ());
+    let partial = sequence(0, vec![record_ops(3)]);
+    partial.rebuild(&empty, &mut state, &mut ctx, &mut element, &mut ());
+    let full = sequence(0, vec![record_ops(4), record_ops(5), record_ops(6)]);
+    full.rebuild(&partial, &mut state, &mut ctx, &mut element, &mut ());
+
+    for path in old_paths {
+        ctx.with_message_context(path, DynMessage::new(()), |ctx| {
+            assert!(matches!(
+                full.message(&mut state, ctx, &mut element, &mut ()),
+                MessageResult::Stale
+            ));
+        });
+    }
+    let new_paths: Vec<_> = element
+        .children
+        .as_ref()
+        .unwrap()
+        .active
+        .iter()
+        .map(|child| child.view_path.clone())
+        .collect();
+    for (path, action) in new_paths.into_iter().zip(4..=6) {
+        ctx.with_message_context(path, DynMessage::new(()), |ctx| {
+            assert_action(full.message(&mut state, ctx, &mut element, &mut ()), action);
+        });
+    }
 }

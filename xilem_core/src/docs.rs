@@ -35,25 +35,28 @@
 //! # struct InterestingPrimitive;
 //! ```
 
-use crate::{NoElement, View, ViewPathTracker, ViewSequence, run_once};
+use crate::{Environment, NoElement, View, ViewId, ViewPathTracker, ViewSequence, run_once};
+use alloc::vec::Vec;
 
-/// A type used for documentation
-#[derive(Debug)]
-pub enum Fake {}
+/// A runnable context used in documentation examples.
+#[derive(Debug, Default)]
+pub struct Fake {
+    environment: Environment,
+    path: Vec<ViewId>,
+}
 
 impl ViewPathTracker for Fake {
-    fn environment(&mut self) -> &mut crate::environment::Environment {
-        match *self {}
+    fn environment(&mut self) -> &mut Environment {
+        &mut self.environment
     }
-    fn push_id(&mut self, _: crate::ViewId) {
-        match *self {}
+    fn push_id(&mut self, id: ViewId) {
+        self.path.push(id);
     }
     fn pop_id(&mut self) {
-        match *self {}
+        self.path.pop();
     }
-
-    fn view_path(&mut self) -> &[crate::ViewId] {
-        match *self {}
+    fn view_path(&mut self) -> &[ViewId] {
+        &self.path
     }
 }
 
@@ -93,6 +96,7 @@ pub struct State;
 
 /// A minimal component.
 // TODO: Does this need to have the state argument?
+#[must_use = "Use this component in a view tree."]
 pub fn some_component<Action>(
     _: &mut State,
 ) -> impl DocsView<State, Action, Element = NoElement> + use<Action> {
@@ -101,6 +105,7 @@ pub fn some_component<Action>(
 }
 
 /// A minimal component with generic State.
+#[must_use = "Use this component in a view tree."]
 pub fn some_component_generic<State: 'static, Action>(
     _: &mut State,
 ) -> impl DocsView<State, Action, Element = NoElement> + use<State, Action> {
@@ -109,6 +114,7 @@ pub fn some_component_generic<State: 'static, Action>(
 }
 
 /// A minimal component without any state.
+#[must_use = "Use this component in a view tree."]
 pub fn stateless_component<Action>() -> impl DocsView<(), Action, Element = NoElement> + use<Action>
 {
     // The view which does nothing already exists in `run_once`.

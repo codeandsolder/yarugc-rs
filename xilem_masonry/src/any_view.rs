@@ -28,11 +28,10 @@ impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for Pod<P
     fn with_downcast_val<R>(
         mut this: Self::Mut<'_>,
         f: impl FnOnce(Mut<'_, Pod<W>>) -> R,
-    ) -> (Self::Mut<'_>, R) {
+    ) -> (Self::Mut<'_>, Option<R>) {
         let ret = {
             let mut child = Passthrough::child_mut(&mut this);
-            let downcast = child.downcast();
-            f(downcast)
+            child.try_downcast().map(f)
         };
 
         (this, ret)

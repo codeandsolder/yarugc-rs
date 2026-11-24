@@ -5,44 +5,17 @@ use core::marker::PhantomData;
 
 use crate::element::NoElement;
 use crate::{
-    AppendVec, Count, ElementSplice, MessageCtx, MessageResult, ViewElement, ViewPathTracker,
-    ViewSequence,
+    AppendVec, Count, ElementSplice, MessageCtx, MessageResult, NoElements, ViewElement,
+    ViewPathTracker, ViewSequence,
 };
 
-/// A stub `ElementSplice` implementation for `NoElement`.
-///
-/// It is technically possible for someone to create an implementation of `ViewSequence`
-/// which uses a (different) `NoElement` `ElementSplice`. But we don't think that sequence could be meaningful.
-pub(crate) struct NoElements;
-
-impl ElementSplice<NoElement> for NoElements {
-    fn with_scratch<R>(&mut self, f: impl FnOnce(&mut AppendVec<NoElement>) -> R) -> R {
-        let mut append_vec = AppendVec::default();
-        f(&mut append_vec)
-    }
-
-    fn insert(&mut self, _: NoElement) {}
-
-    fn mutate<R>(&mut self, f: impl FnOnce(<NoElement as ViewElement>::Mut<'_>) -> R) -> R {
-        f(())
-    }
-
-    fn skip(&mut self, _: usize) {}
-
-    fn index(&self) -> usize {
-        0
-    }
-
-    fn delete<R>(&mut self, f: impl FnOnce(<NoElement as ViewElement>::Mut<'_>) -> R) -> R {
-        f(())
-    }
-}
+type SequenceSignature<State, Action, Context> = fn() -> (State, Action, Context);
 
 /// The [`ViewSequence`] for [`without_elements`], see its documentation for more context.
 #[derive(Debug)]
 pub struct WithoutElements<Seq, State, Action, Context> {
     seq: Seq,
-    phantom: PhantomData<fn() -> (State, Action, Context)>,
+    phantom: PhantomData<SequenceSignature<State, Action, Context>>,
 }
 
 /// An adapter which turns a [`ViewSequence`] containing any number of views with side effects, into a `ViewSequence` with any element type.

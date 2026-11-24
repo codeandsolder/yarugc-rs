@@ -241,9 +241,9 @@ impl SuperElement<Self, TestCtx> for TestElement {
     fn with_downcast_val<R>(
         this: Self::Mut<'_>,
         f: impl FnOnce(Mut<'_, Self>) -> R,
-    ) -> (Self::Mut<'_>, R) {
+    ) -> (Self::Mut<'_>, Option<R>) {
         let ret = f(this);
-        (this, ret)
+        (this, Some(ret))
     }
 }
 

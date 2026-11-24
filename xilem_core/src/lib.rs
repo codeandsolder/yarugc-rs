@@ -65,10 +65,10 @@ mod view_sequences;
 mod views;
 
 pub use self::element::{AnyElement, Mut, NoElement, SuperElement, ViewElement};
-pub use self::element_splice::{AppendVec, ElementSplice};
+pub use self::element_splice::{AppendVec, ElementSplice, NoElements};
 pub use self::environment::{
-    Environment, EnvironmentItem, OnActionWithContext, Provides, Rebuild, Resource, Slot,
-    WithContext, on_action_with_context, provides, with_context,
+    Environment, OnActionWithContext, Provides, Rebuild, Resource, WithContext,
+    on_action_with_context, provides, with_context,
 };
 pub use self::message::{DynMessage, MessageResult, SendMessage};
 pub use self::message_context::MessageCtx;
@@ -78,8 +78,9 @@ pub use self::view_ctx::{ViewId, ViewPathTracker};
 pub use self::view_sequence::{Count, ViewSequence};
 pub use self::view_sequences::{WithoutElements, without_elements};
 pub use self::views::{
-    Fork, Frozen, Lens, MapMessage, MapState, Memoize, OrphanView, RunOnce, fork, frozen, lens,
-    map_action, map_message_result, map_state, memoize, one_of, run_once, run_once_raw,
+    ActionMapper, Fork, Frozen, Lens, MapMessage, MapState, Memoize, MessageMapper, OrphanView,
+    RunOnce, fork, frozen, lens, map_action, map_message_result, map_state, memoize, one_of,
+    run_once, run_once_raw,
 };
 
 // TODO - Remove this re-export and rewrite code importing it

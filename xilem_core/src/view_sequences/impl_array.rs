@@ -55,14 +55,9 @@ where
             self.iter().zip(prev).zip(seq_state).enumerate()
         {
             *this_skip = elements.index() - start_idx;
-            ctx.with_id(
-                ViewId::new(idx.try_into().expect(
-                    "ViewSequence arrays with more than u64::MAX + 1 elements not supported",
-                )),
-                |ctx| {
-                    seq.seq_rebuild(prev_seq, state, ctx, elements, app_state);
-                },
-            );
+            ctx.with_id(ViewId::new(idx as u64), |ctx| {
+                seq.seq_rebuild(prev_seq, state, ctx, elements, app_state);
+            });
         }
     }
 
@@ -74,15 +69,17 @@ where
         elements: &mut impl ElementSplice<Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let start = message
+        let Some(index) = message
             .take_first()
-            .expect("Id path has elements for [ViewSequence; N]");
-
-        let index: usize = start.routing_id().try_into().unwrap();
-        // We know the index is in bounds because it was created from an index into a value of Self
-        let (this_skip, inner_state) = &mut seq_state[index];
-        elements.skip(*this_skip);
-        self[index].seq_message(inner_state, message, elements, app_state)
+            .and_then(|id| usize::try_from(id.routing_id()).ok())
+        else {
+            return MessageResult::Stale;
+        };
+        let Some((seq, (skip, inner_state))) = self.get(index).zip(seq_state.get_mut(index)) else {
+            return MessageResult::Stale;
+        };
+        elements.skip(*skip);
+        seq.seq_message(inner_state, message, elements, app_state)
     }
 
     #[doc(hidden)]
@@ -93,14 +90,9 @@ where
         elements: &mut impl ElementSplice<Element>,
     ) {
         for (idx, (seq, (_, state))) in self.iter().zip(seq_state).enumerate() {
-            ctx.with_id(
-                ViewId::new(idx.try_into().expect(
-                    "ViewSequence arrays with more than u64::MAX + 1 elements not supported",
-                )),
-                |ctx| {
-                    seq.seq_teardown(state, ctx, elements);
-                },
-            );
+            ctx.with_id(ViewId::new(idx as u64), |ctx| {
+                seq.seq_teardown(state, ctx, elements);
+            });
         }
     }
 }

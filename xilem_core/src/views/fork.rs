@@ -3,9 +3,9 @@
 
 use core::marker::PhantomData;
 
-use crate::view_sequences::NoElements;
 use crate::{
-    AppendVec, MessageCtx, Mut, NoElement, View, ViewId, ViewMarker, ViewPathTracker, ViewSequence,
+    AppendVec, MessageCtx, MessageResult, Mut, NoElement, NoElements, View, ViewId, ViewMarker,
+    ViewPathTracker, ViewSequence,
 };
 
 /// Create a view which acts as `active_view`, whilst also running `alongside_view`, without inserting it into the tree.
@@ -84,11 +84,11 @@ where
         ctx: &mut Context,
         element: Mut<'_, Self::Element>,
     ) {
-        ctx.with_id(ViewId::new(0), |ctx| {
+        ctx.with_id(ViewId::new(1), |ctx| {
             self.alongside_view
                 .seq_teardown(alongside_state, ctx, &mut NoElements);
         });
-        ctx.with_id(ViewId::new(1), |ctx| {
+        ctx.with_id(ViewId::new(0), |ctx| {
             self.active_view.teardown(active_state, ctx, element);
         });
     }
@@ -99,8 +99,10 @@ where
         message: &mut MessageCtx,
         element: Mut<'_, Self::Element>,
         app_state: &mut State,
-    ) -> crate::MessageResult<Action> {
-        let first = message.take_first().expect("Id path has elements for Fork");
+    ) -> MessageResult<Action> {
+        let Some(first) = message.take_first() else {
+            return MessageResult::Stale;
+        };
         match first.routing_id() {
             0 => self
                 .active_view
@@ -111,7 +113,7 @@ where
                 &mut NoElements,
                 app_state,
             ),
-            _ => unreachable!(),
+            _ => MessageResult::Stale,
         }
     }
 }

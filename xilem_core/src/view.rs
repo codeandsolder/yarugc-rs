@@ -141,14 +141,7 @@ pub trait View<State: 'static, Action, Context: ViewPathTracker>: ViewMarker + '
     fn map_action<ParentAction, F>(
         self,
         f: F,
-    ) -> crate::MapMessage<
-        Self,
-        State,
-        ParentAction,
-        Action,
-        Context,
-        impl Fn(&mut State, MessageResult<Action>) -> MessageResult<ParentAction> + 'static,
-    >
+    ) -> crate::MapMessage<Self, State, ParentAction, Action, Context, crate::ActionMapper<F>>
     where
         ParentAction: 'static,
         Action: 'static,

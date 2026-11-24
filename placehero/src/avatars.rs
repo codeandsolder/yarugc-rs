@@ -48,20 +48,25 @@ impl Avatars {
     pub(crate) fn avatar<State: 'static, Action: 'static>(
         url: String,
     ) -> impl WidgetView<State, Action> + use<State, Action> {
-        with_context(move |this: &mut Self, _| {
+        with_context(move |resource: Option<&mut Self>, _| {
             let width = 50.px();
             let height = 50.px();
-            if let Some(maybe_image) = this.icons.get(&url) {
-                if let Some(image_) = maybe_image {
+            if let Some(this) = resource {
+                if let Some(Some(image_)) = this.icons.get(&url) {
                     return Either::A(image(image_.clone()).dims((width, height)));
                 }
-            } else if let Some(requester) = this.requester.as_ref() {
-                drop(requester.send(AvatarRequest {
-                    avatar_url: url.to_string(),
-                }));
-                this.icons.insert(url.to_string(), None);
-            } else {
-                // If the worker hasn't started yet, we have to wait until it does to do so.
+                if !this.icons.contains_key(&url) {
+                    if let Some(requester) = this.requester.as_ref() {
+                        if requester
+                            .send(AvatarRequest {
+                                avatar_url: url.clone(),
+                            })
+                            .is_ok()
+                        {
+                            this.icons.insert(url.clone(), None);
+                        }
+                    }
+                }
             }
             Either::B(
                 sized_box(spinner())

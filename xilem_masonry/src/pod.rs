@@ -66,9 +66,8 @@ impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for Pod<d
     fn with_downcast_val<R>(
         mut this: Self::Mut<'_>,
         f: impl FnOnce(Mut<'_, Pod<W>>) -> R,
-    ) -> (Self::Mut<'_>, R) {
-        let downcast = this.downcast();
-        let ret = f(downcast);
+    ) -> (Self::Mut<'_>, Option<R>) {
+        let ret = this.try_downcast().map(f);
         (this, ret)
     }
 }

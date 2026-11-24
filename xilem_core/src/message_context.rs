@@ -40,23 +40,21 @@ impl MessageCtx {
     /// The remaining id path, which should mostly be handled by your children.
     ///
     /// If this returns an empty slice, then `take_first` will return `None`.
+    #[must_use = "Inspect the unconsumed routing path."]
     pub fn remaining_path(&self) -> &[ViewId] {
         &self.full_id_path[self.id_path_index..]
     }
 
     /// The id path to this view from the root.
+    #[must_use = "Inspect the consumed routing path."]
     pub fn current_path(&self) -> &[ViewId] {
         &self.full_id_path[..self.id_path_index]
     }
 
     /// Takes the message, downcasting it to the specified type.
     ///
-    /// If the message is not of the specified type, returns `None`.
-    ///
-    /// # Panics
-    ///
-    /// - If the message has already been taken.
-    /// - If the message is not fully routed (i.e. the remaining path is not empty)
+    /// Returns None for an absent, incorrectly typed, or not yet fully routed message.
+    /// The original message is retained unless it is successfully taken.
     #[track_caller]
     pub fn take_message<T: AnyDebug>(&mut self) -> Option<Box<T>> {
         self.maybe_take_message(|_| true)
@@ -64,36 +62,26 @@ impl MessageCtx {
 
     /// Downcasts the message to the specified type, taking it if `f` returns true.
     ///
-    /// If the message is not of the specified type, returns `None`.
-    ///
-    /// # Panics
-    ///
-    /// - If the message has already been taken.
-    /// - If the message is not fully routed (i.e. the remaining path is not empty)
+    /// Returns None for an absent, incorrectly typed, or not yet fully routed message.
+    /// The original message is retained unless it is successfully taken.
     #[track_caller]
     pub fn maybe_take_message<T: AnyDebug>(
         &mut self,
         f: impl FnOnce(&T) -> bool,
     ) -> Option<Box<T>> {
-        debug_assert_eq!(
-            self.full_id_path.len(),
-            self.id_path_index,
-            "Can't take a message that has not reached its target"
-        );
-        if let Some(message) = self.message.take() {
-            if message.is::<T>() {
-                let message = message.downcast().unwrap();
-                if f(&*message) {
-                    return Some(message);
-                } else {
-                    self.message = Some(DynMessage(message));
-                }
-            } else {
+        if self.id_path_index != self.full_id_path.len() {
+            return None;
+        }
+        let value = self.message.as_ref()?.0.downcast_ref::<T>()?;
+        if !f(value) {
+            return None;
+        }
+        match self.message.take()?.downcast() {
+            Ok(value) => Some(value),
+            Err(message) => {
                 self.message = Some(message);
+                None
             }
-            None
-        } else {
-            panic!("The message has already been taken.");
         }
     }
 
@@ -103,7 +91,7 @@ impl MessageCtx {
     /// and [`maybe_take_message`](Self::maybe_take_message).
     /// Almost all views should use those methods instead.
     #[track_caller]
-    pub fn force_take_message<T: AnyDebug>(&mut self) -> Option<DynMessage> {
+    pub const fn force_take_message(&mut self) -> Option<DynMessage> {
         self.message.take()
     }
 }
@@ -116,7 +104,12 @@ impl MessageCtx {
     ///
     /// For driver implementers, the provided environment should your app's global environment.
     /// This can be recovered by [`finish`](Self::finish).
-    pub fn new(environment: Environment, target_id_path: Vec<ViewId>, message: DynMessage) -> Self {
+    #[must_use = "Route the message through the returned context."]
+    pub const fn new(
+        environment: Environment,
+        target_id_path: Vec<ViewId>,
+        message: DynMessage,
+    ) -> Self {
         Self {
             environment,
             full_id_path: target_id_path,
@@ -126,6 +119,7 @@ impl MessageCtx {
     }
 
     /// Unwraps this `MessageCtx` into its constituent parts.
+    #[must_use = "Recover the environment and any remaining message."]
     pub fn finish(self) -> (Environment, Vec<ViewId>, Option<DynMessage>) {
         let Self {
             environment,
@@ -169,17 +163,14 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(
-        not(debug_assertions),
-        ignore = "This test doesn't work without debug assertions (i.e. in release mode)"
-    )]
-    #[should_panic(expected = "Can't take a message that has not reached its target")]
     fn take_message_nonempty_path() {
         let env = Environment::new();
         let path = vec![ViewId::new(1)];
 
         let mut ctx = MessageCtx::new(env, path.clone(), DynMessage::new(()));
-        ctx.take_message::<()>();
+        assert!(ctx.take_message::<()>().is_none());
+        assert_eq!(ctx.take_first(), Some(ViewId::new(1)));
+        assert!(ctx.take_message::<()>().is_some());
     }
 
     #[test]
@@ -194,14 +185,13 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "The message has already been taken.")]
     fn take_message_twice() {
         let env = Environment::new();
         let path = vec![];
 
         let mut ctx = MessageCtx::new(env, path.clone(), DynMessage::new(()));
         let () = *ctx.take_message::<()>().unwrap();
-        ctx.take_message::<()>();
+        assert!(ctx.take_message::<()>().is_none());
     }
 
     #[test]

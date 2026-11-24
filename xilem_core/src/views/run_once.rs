@@ -43,7 +43,7 @@ use crate::{MessageCtx, MessageResult, Mut, NoElement, View, ViewMarker, ViewPat
 /// # // We need to call the function to make the inline constant be evaluated
 /// # let _ = log_data(&mut AppData { data: 10 });
 /// ```
-pub fn run_once<F>(once: F) -> RunOnce<F>
+pub const fn run_once<F>(once: F) -> RunOnce<F>
 where
     // TODO(DJMcNab): Accept
     F: Fn() + 'static,
@@ -62,7 +62,7 @@ where
 ///
 /// This is [`run_once`] without the capturing rules.
 /// See [`run_once`] for full documentation.
-pub fn run_once_raw<F>(once: F) -> RunOnce<F>
+pub const fn run_once_raw<F>(once: F) -> RunOnce<F>
 where
     F: Fn() + 'static,
 {
@@ -110,17 +110,17 @@ where
         // Nothing to do
     }
 
-    fn teardown(&self, (): &mut Self::ViewState, _: &mut Context, _: Mut<'_, Self::Element>) {
+    fn teardown(&self, (): &mut Self::ViewState, _: &mut Context, (): Mut<'_, Self::Element>) {
         // Nothing to do
     }
 
     fn message(
         &self,
         (): &mut Self::ViewState,
-        message: &mut MessageCtx,
-        _: Mut<'_, Self::Element>,
+        _message: &mut MessageCtx,
+        (): Mut<'_, Self::Element>,
         _: &mut State,
     ) -> MessageResult<Action> {
-        panic!("Message should not have been sent to a `RunOnce` View: {message:?}");
+        MessageResult::Stale
     }
 }

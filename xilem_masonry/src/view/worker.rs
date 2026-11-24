@@ -1,7 +1,6 @@
 // Copyright 2024 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use std::any::{Any, TypeId};
 use std::future::Future;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -12,8 +11,8 @@ use tokio::task::JoinHandle;
 use crate::ViewCtx;
 use crate::core::anymore::AnyDebug;
 use crate::core::{
-    MessageCtx, MessageProxy, MessageResult, Mut, NoElement, Resource, View, ViewId, ViewMarker,
-    ViewPathTracker,
+    Environment, MessageCtx, MessageProxy, MessageResult, Mut, NoElement, Resource, View, ViewId,
+    ViewMarker, ViewPathTracker,
 };
 
 // TODO: Update generic variable names to be more .
@@ -40,9 +39,8 @@ pub fn worker<F, H, M, S, V, State, Action, Fut>(
     F,
     H,
     M,
-    impl Fn(&mut State, &mut Dummy, UnboundedSender<V>) + 'static,
+    impl Fn(&mut State, &mut Environment, UnboundedSender<V>) -> bool + 'static,
     V,
-    Dummy,
 >
 where
     F: Fn(MessageProxy<M>, UnboundedReceiver<V>) -> Fut,
@@ -61,8 +59,11 @@ where
     };
     Worker {
         init_future,
-        store_sender: move |state: &mut State, _dummy: &mut Dummy, sender: UnboundedSender<V>| {
+        store_sender: move |state: &mut State,
+                            _environment: &mut Environment,
+                            sender: UnboundedSender<V>| {
             store_sender(state, sender);
+            true
         },
         on_response,
         message: PhantomData,
@@ -77,11 +78,19 @@ pub fn env_worker<F, H, M, S, V, Res, State, Action, Fut>(
     init_future: F,
     store_sender: S,
     on_response: H,
-) -> Worker<State, Action, F, H, M, S, V, Res>
+) -> Worker<
+    State,
+    Action,
+    F,
+    H,
+    M,
+    impl Fn(&mut State, &mut Environment, UnboundedSender<V>) -> bool + 'static,
+    V,
+>
 where
     F: Fn(MessageProxy<M>, UnboundedReceiver<V>) -> Fut,
     Fut: Future<Output = ()> + Send + 'static,
-    S: Fn(&mut State, &mut Res, UnboundedSender<V>),
+    S: Fn(&mut State, &mut Res, UnboundedSender<V>) + 'static,
     H: Fn(&mut State, M) -> Action + 'static,
     M: AnyDebug + Send + 'static,
     Res: Resource,
@@ -96,20 +105,19 @@ where
     };
     Worker {
         init_future,
-        store_sender,
+        store_sender: move |state: &mut State,
+                            environment: &mut Environment,
+                            sender: UnboundedSender<V>| {
+            let Some(resource) = environment.get_mut::<Res>() else {
+                return false;
+            };
+            store_sender(state, resource, sender);
+            true
+        },
         on_response,
         message: PhantomData,
     }
 }
-
-/// An internal struct used to make [`env_worker`]/[`worker`] work.
-///
-/// This is an interim solution until we design better ways for callbacks to interact with messages.
-#[derive(Debug)]
-#[doc(hidden)]
-pub struct Dummy;
-
-impl Resource for Dummy {}
 
 /// Launch a worker which will run until the view is no longer in the tree.
 ///
@@ -125,9 +133,8 @@ pub fn worker_raw<M, V, S, F, H, State, Action, Fut>(
     F,
     H,
     M,
-    impl Fn(&mut State, &mut Dummy, UnboundedSender<V>) + 'static,
+    impl Fn(&mut State, &mut Environment, UnboundedSender<V>) -> bool + 'static,
     V,
-    Dummy,
 >
 where
     // TODO(DJMcNab): Accept app_state here
@@ -141,39 +148,41 @@ where
     Worker {
         init_future,
         on_response,
-        store_sender: move |state: &mut State, _dummy: &mut Dummy, sender: UnboundedSender<V>| {
+        store_sender: move |state: &mut State,
+                            _environment: &mut Environment,
+                            sender: UnboundedSender<V>| {
             store_sender(state, sender);
+            true
         },
         message: PhantomData,
     }
 }
 
 /// The View type for [`worker`], [`env_worker`] and [`worker_raw`]. See its documentation for details.
-pub struct Worker<State, Action, F, H, M, S, V, Res> {
+pub struct Worker<State, Action, F, H, M, S, V> {
     init_future: F,
     store_sender: S,
     on_response: H,
-    message: PhantomData<fn(M, V, Res, State) -> Action>,
+    message: PhantomData<fn(M, V, State) -> Action>,
 }
 
-impl<State, Action, F, H, M, S, V, Res> ViewMarker for Worker<State, Action, F, H, M, S, V, Res> {}
+impl<State, Action, F, H, M, S, V> ViewMarker for Worker<State, Action, F, H, M, S, V> {}
 
-impl<State, Action, F, H, M, Fut, S, V, Res> View<State, Action, ViewCtx>
-    for Worker<State, Action, F, H, M, S, V, Res>
+impl<State, Action, F, H, M, Fut, S, V> View<State, Action, ViewCtx>
+    for Worker<State, Action, F, H, M, S, V>
 where
-    Res: Resource,
     Action: 'static,
     F: Fn(MessageProxy<M>, UnboundedReceiver<V>) -> Fut + 'static,
     V: Send + 'static,
     Fut: Future<Output = ()> + Send + 'static,
-    S: Fn(&mut State, &mut Res, UnboundedSender<V>) + 'static,
+    S: Fn(&mut State, &mut Environment, UnboundedSender<V>) -> bool + 'static,
     H: Fn(&mut State, M) -> Action + 'static,
     M: AnyDebug + Send + 'static,
     State: 'static,
 {
     type Element = NoElement;
 
-    type ViewState = JoinHandle<()>;
+    type ViewState = Option<JoinHandle<()>>;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let path: Arc<[ViewId]> = ctx.view_path().into();
@@ -181,70 +190,48 @@ where
         let proxy = ctx.proxy();
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let env = ctx.environment();
-        if TypeId::of::<Res>() != TypeId::of::<Dummy>() {
-            let pos = env.get_slot_for_type::<Res>();
-            let Some(pos) = pos else {
-                panic!(
-                    // TODO: Track caller for this view?
-                    "Xilem: Tried to get context for {}, but it hasn't been provided. Did you forget to wrap this view with `xilem_core::environment::provides`?",
-                    core::any::type_name::<Res>()
-                );
-            };
-            let slot = &mut env.slots[usize::try_from(pos).unwrap()];
-            let Some(value) = slot.item.as_mut() else {
-                panic!(
-                    // TODO: Track caller for this view?
-                    "Xilem: Tried to get context for {}, but it hasn't been `Provided`.",
-                    core::any::type_name::<Res>()
-                );
-            };
-            (self.store_sender)(
-                app_state,
-                value
-                    .value
-                    .downcast_mut::<Res>()
-                    .expect("Environment's slots should have the correct types."),
-                tx,
-            );
-        } else {
-            // Hack: Use the same signature for both versions which need and don't need an environment.
-            let value: &mut dyn Any = &mut Dummy;
-            let res = value.downcast_mut::<Res>().expect("Has same type id.");
-            (self.store_sender)(app_state, res, tx);
+        if !(self.store_sender)(app_state, ctx.environment(), tx) {
+            return (NoElement, None);
         }
         let handle = ctx
             .runtime()
             .spawn((self.init_future)(MessageProxy::new(proxy, path), rx));
-        (NoElement, handle)
+        (NoElement, Some(handle))
     }
 
     fn rebuild(
         &self,
         _prev: &Self,
-        _view_state: &mut Self::ViewState,
-        _: &mut ViewCtx,
+        view_state: &mut Self::ViewState,
+        ctx: &mut ViewCtx,
         (): Mut<'_, Self::Element>,
-        _: &mut State,
+        app_state: &mut State,
     ) {
+        if view_state.is_none() {
+            *view_state = self.build(ctx, app_state).1;
+        }
     }
 
     fn teardown(&self, handle: &mut Self::ViewState, _: &mut ViewCtx, _: Mut<'_, Self::Element>) {
-        handle.abort();
+        if let Some(handle) = handle.take() {
+            handle.abort();
+        }
     }
 
     fn message(
         &self,
-        _: &mut Self::ViewState,
+        view_state: &mut Self::ViewState,
         message: &mut MessageCtx,
         _element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        debug_assert!(
-            message.remaining_path().is_empty(),
-            "id path should be empty in Task::message"
-        );
-        let message = message.take_message::<M>().unwrap();
-        MessageResult::Action((self.on_response)(app_state, *message))
+        if view_state.is_none() {
+            return MessageResult::Stale;
+        }
+        message
+            .take_message::<M>()
+            .map_or(MessageResult::Stale, |message| {
+                MessageResult::Action((self.on_response)(app_state, *message))
+            })
     }
 }

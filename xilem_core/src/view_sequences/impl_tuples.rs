@@ -28,8 +28,8 @@ where
 
     fn seq_rebuild(
         &self,
-        _: &Self,
-        _: &mut Self::SeqState,
+        (): &Self,
+        (): &mut Self::SeqState,
         _: &mut Context,
         _: &mut impl ElementSplice<Element>,
         _: &mut State,
@@ -38,7 +38,7 @@ where
 
     fn seq_teardown(
         &self,
-        _seq_state: &mut Self::SeqState,
+        (): &mut Self::SeqState,
         _ctx: &mut Context,
         _elements: &mut impl ElementSplice<Element>,
     ) {
@@ -46,12 +46,12 @@ where
 
     fn seq_message(
         &self,
-        _: &mut Self::SeqState,
-        message: &mut MessageCtx,
+        (): &mut Self::SeqState,
+        _message: &mut MessageCtx,
         _: &mut impl ElementSplice<Element>,
         _: &mut State,
     ) -> MessageResult<Action> {
-        unreachable!("Messages should never be dispatched to an empty tuple {message:?}.");
+        MessageResult::Stale
     }
 }
 
@@ -135,13 +135,13 @@ macro_rules! impl_view_tuple {
                 &self,
                 ctx: &mut Context,
                 elements: &mut AppendVec<Element>,
-                mut app_state: &mut State,
+                app_state: &mut State,
             ) -> Self::SeqState {
                 let start_idx = elements.index();
                 ($(
                     ctx.with_id(ViewId::new($idx), |ctx| {
                         let this_skip = elements.index() - start_idx;
-                        let state = self.$idx.seq_build(ctx, elements, &mut app_state);
+                        let state = self.$idx.seq_build(ctx, elements, app_state);
                         (this_skip, state)
                     }),
                 )+)
@@ -153,13 +153,13 @@ macro_rules! impl_view_tuple {
                 seq_state: &mut Self::SeqState,
                 ctx: &mut Context,
                 elements: &mut impl ElementSplice<Element>,
-                mut app_state: &mut State,
+                app_state: &mut State,
             ) {
                 let start_idx = elements.index();
                 $(
                     ctx.with_id(ViewId::new($idx), |ctx| {
                         seq_state.$idx.0 = elements.index() - start_idx;
-                        self.$idx.seq_rebuild(&prev.$idx, &mut seq_state.$idx.1, ctx, elements, &mut app_state);
+                        self.$idx.seq_rebuild(&prev.$idx, &mut seq_state.$idx.1, ctx, elements, app_state);
                     });
                 )+
             }
@@ -182,21 +182,21 @@ macro_rules! impl_view_tuple {
                 seq_state: &mut Self::SeqState,
                 message: &mut MessageCtx,
                 elements: &mut impl ElementSplice<Element>,
-                mut app_state: &mut State,
+                app_state: &mut State,
             ) -> MessageResult<Action> {
-                let start = message
-                    .take_first()
-                    .expect("Id path has elements for tuple");
+                let Some(start) = message.take_first() else {
+                    return MessageResult::Stale;
+                };
                 match start.routing_id() {
                     $(
                         $idx => {
                             elements.skip(seq_state.$idx.0);
-                            self.$idx.seq_message(&mut seq_state.$idx.1, message, elements, &mut app_state)
+                            self.$idx.seq_message(&mut seq_state.$idx.1, message, elements, app_state)
                         },
                     )+
                     // If we have received a message, our parent is (mostly) certain that we requested it
                     // The only time that wouldn't be the case is when a generational index has overflowed?
-                    _ => unreachable!("Unexpected id path {start:?} in tuple (wants to be routed via {message:?})"),
+                    _ => MessageResult::Stale,
                 }
             }
         }

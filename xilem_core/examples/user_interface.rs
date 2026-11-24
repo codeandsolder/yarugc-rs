@@ -38,7 +38,7 @@ struct WidgetMut<'a, W: Widget> {
 }
 impl Widget for Box<dyn Widget> {
     fn as_mut_any(&mut self) -> &mut dyn Any {
-        self
+        self.as_mut().as_mut_any()
     }
 }
 
@@ -117,13 +117,12 @@ impl<W: Widget> SuperElement<WidgetBox<W>, ViewCtx> for WidgetBox<Box<dyn Widget
     fn with_downcast_val<R>(
         this: Self::Mut<'_>,
         f: impl FnOnce(<WidgetBox<W> as ViewElement>::Mut<'_>) -> R,
-    ) -> (Self::Mut<'_>, R) {
-        let value = WidgetMut {
-        value: this.value.as_mut_any().downcast_mut().expect(
-            "this widget should have been created from a child widget of type `W` in `Self::upcast`",
-        ),
-    };
-        let ret = f(value);
+    ) -> (Self::Mut<'_>, Option<R>) {
+        let ret = this
+            .value
+            .as_mut_any()
+            .downcast_mut::<W>()
+            .map(|value| f(WidgetMut { value }));
         (this, ret)
     }
 }
@@ -162,4 +161,43 @@ where
     W: Widget + Send + Sync,
 {
     type Widget = W;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn erased_widget_downcast_checks_actual_type() {
+        struct OtherWidget;
+        impl Widget for OtherWidget {
+            fn as_mut_any(&mut self) -> &mut dyn Any {
+                self
+            }
+        }
+        let mut ctx = ViewCtx {
+            path: vec![],
+            environment: Environment::new(),
+        };
+        let mut widget =
+            <WidgetBox<Box<dyn Widget>> as SuperElement<WidgetBox<ButtonWidget>, ViewCtx>>::upcast(
+                &mut ctx,
+                WidgetBox {
+                    widget: ButtonWidget {},
+                },
+            );
+        let handle = WidgetMut {
+            value: &mut widget.widget,
+        };
+        let (handle, wrong) = <WidgetBox<Box<dyn Widget>> as SuperElement<
+            WidgetBox<OtherWidget>,
+            ViewCtx,
+        >>::with_downcast_val(handle, |_| 1);
+        assert_eq!(wrong, None);
+        let (_, correct) = <WidgetBox<Box<dyn Widget>> as SuperElement<
+            WidgetBox<ButtonWidget>,
+            ViewCtx,
+        >>::with_downcast_val(handle, |_| 2);
+        assert_eq!(correct, Some(2));
+    }
 }

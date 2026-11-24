@@ -6,22 +6,58 @@ use core::marker::PhantomData;
 
 use crate::{MessageCtx, MessageResult, Mut, View, ViewMarker, ViewPathTracker};
 
+type ViewSignature<State, ParentAction, ChildAction, Context> =
+    fn() -> (State, ParentAction, ChildAction, Context);
+
+/// Maps a child message result into a parent message result.
+pub trait MessageMapper<State, ChildAction, ParentAction> {
+    /// Transform the result, with mutable access to application state.
+    fn map(
+        &self,
+        state: &mut State,
+        result: MessageResult<ChildAction>,
+    ) -> MessageResult<ParentAction>;
+}
+
+impl<State, ChildAction, ParentAction, F> MessageMapper<State, ChildAction, ParentAction> for F
+where
+    F: Fn(&mut State, MessageResult<ChildAction>) -> MessageResult<ParentAction>,
+{
+    fn map(
+        &self,
+        state: &mut State,
+        result: MessageResult<ChildAction>,
+    ) -> MessageResult<ParentAction> {
+        self(state, result)
+    }
+}
+
+/// Adapts an action-only callback, leaving non-action results unchanged.
+#[derive(Debug)]
+pub struct ActionMapper<F>(F);
+
+impl<State, ChildAction, ParentAction, F> MessageMapper<State, ChildAction, ParentAction>
+    for ActionMapper<F>
+where
+    F: Fn(&mut State, ChildAction) -> ParentAction,
+{
+    fn map(
+        &self,
+        state: &mut State,
+        result: MessageResult<ChildAction>,
+    ) -> MessageResult<ParentAction> {
+        result.map(|action| (self.0)(state, action))
+    }
+}
+
 /// View type for [`map_message_result`] and [`map_action`]. Most users will want to use `map_action` (the latter).
 ///
 /// This view maps a child [`View<State,ChildAction,_>`] to [`View<State,ParentAction,_>`], whilst allowing the kind of [`MessageResult`] to be changed.
 #[must_use = "View values do nothing unless provided to Xilem."]
-pub struct MapMessage<
-    V,
-    State,
-    ParentAction,
-    ChildAction,
-    Context,
-    // This default only exists for documentation purposes.
-    F = fn(&mut State, ChildAction) -> ParentAction,
-> {
+pub struct MapMessage<V, State, ParentAction, ChildAction, Context, F> {
     map_fn: F,
     child: V,
-    phantom: PhantomData<fn() -> (State, ParentAction, ChildAction, Context)>,
+    phantom: PhantomData<ViewSignature<State, ParentAction, ChildAction, Context>>,
 }
 
 impl<V, State, ParentAction, ChildAction, Context, F> Debug
@@ -68,14 +104,7 @@ where
 pub fn map_action<State, ParentAction, ChildAction, Context: ViewPathTracker, V, F>(
     view: V,
     map_fn: F,
-) -> MapMessage<
-    V,
-    State,
-    ParentAction,
-    ChildAction,
-    Context,
-    impl Fn(&mut State, MessageResult<ChildAction>) -> MessageResult<ParentAction> + 'static,
->
+) -> MapMessage<V, State, ParentAction, ChildAction, Context, ActionMapper<F>>
 where
     State: 'static,
     ParentAction: 'static,
@@ -84,9 +113,7 @@ where
     F: Fn(&mut State, ChildAction) -> ParentAction + 'static,
 {
     MapMessage {
-        map_fn: move |app_state: &mut State, result: MessageResult<ChildAction>| {
-            result.map(|action| map_fn(app_state, action))
-        },
+        map_fn: ActionMapper(map_fn),
         child: view,
         phantom: PhantomData,
     }
@@ -127,7 +154,7 @@ where
     State: 'static,
     ParentAction: 'static,
     ChildAction: 'static,
-    F: Fn(&mut State, MessageResult<ChildAction>) -> MessageResult<ParentAction> + 'static,
+    F: MessageMapper<State, ChildAction, ParentAction> + 'static,
     Context: ViewPathTracker + 'static,
 {
     type ViewState = V::ViewState;
@@ -166,6 +193,6 @@ where
         app_state: &mut State,
     ) -> MessageResult<ParentAction> {
         let child_result = self.child.message(view_state, message, element, app_state);
-        (self.map_fn)(app_state, child_result)
+        self.map_fn.map(app_state, child_result)
     }
 }

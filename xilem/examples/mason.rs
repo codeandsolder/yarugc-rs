@@ -32,9 +32,12 @@ impl Resource for SomeContext {}
 ///
 /// Requires the `SomeContext` resource to be [provided](provides).
 fn env_using() -> impl WidgetView<AppData> + use<> {
-    with_context(|context: &mut SomeContext, _: &mut AppData| {
+    with_context(|context: Option<&mut SomeContext>, _: &mut AppData| {
         Box::new(text_button(
-            format!("Context: {}", context.0),
+            context.map_or_else(
+                || "No context provided".into(),
+                |context| format!("Context: {}", context.0),
+            ),
             |_: &mut AppData| {
                 tracing::warn!("Does nothing");
             },

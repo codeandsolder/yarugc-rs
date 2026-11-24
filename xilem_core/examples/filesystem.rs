@@ -37,13 +37,13 @@ fn app_logic(state: &mut State) -> impl FileView<State> + use<> {
     res
 }
 
-fn main() {
+fn main() -> std::io::Result<()> {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("examples/filesystem");
     if path.exists() {
-        std::fs::remove_dir_all(&path).expect("Could create directory");
+        std::fs::remove_dir_all(&path)?;
     }
-    std::fs::create_dir(&path).expect("Could tidy up directory");
+    std::fs::create_dir(&path)?;
     let mut state = State::Setup;
 
     let mut previous = app_logic(&mut state);
@@ -56,9 +56,7 @@ fn main() {
     let (mut element, mut initial_state) = previous.build(&mut root_ctx, &mut state);
     loop {
         input_buf.clear();
-        let read_count = stdin()
-            .read_line(&mut input_buf)
-            .expect("Could read from stdin");
+        let read_count = stdin().read_line(&mut input_buf)?;
         if read_count == 0 {
             // Reached EOF, i.e. user has finished
             break;
@@ -72,14 +70,15 @@ fn main() {
             "clear" => {
                 state = State::Empty;
             }
-            complex if complex.starts_with("complex ") => {
-                state = State::Complex(complex.strip_prefix("complex ").unwrap().into());
-            }
             other => {
-                eprint!("Unknown command {other:?}. Please try again:");
-                continue;
+                if let Some(value) = other.strip_prefix("complex ") {
+                    state = State::Complex(value.into());
+                } else {
+                    eprint!("Unknown command {other:?}. Please try again:");
+                    continue;
+                }
             }
-        };
+        }
         let new_view = app_logic(&mut state);
         root_ctx.current_folder_path.clone_from(&path);
         new_view.rebuild(
@@ -91,6 +90,7 @@ fn main() {
         );
         previous = new_view;
     }
+    Ok(())
 }
 
 trait FileView<State: 'static, Action = ()>: View<State, Action, ViewCtx, Element = FsPath> {}
@@ -110,9 +110,9 @@ impl SuperElement<Self, ViewCtx> for FsPath {
     fn with_downcast_val<R>(
         this: Self::Mut<'_>,
         f: impl FnOnce(Mut<'_, Self>) -> R,
-    ) -> (Self::Mut<'_>, R) {
+    ) -> (Self::Mut<'_>, Option<R>) {
         let ret = f(this);
-        (this, ret)
+        (this, Some(ret))
     }
 }
 
@@ -242,7 +242,7 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for File {
         _element: Mut<'_, Self::Element>,
         _app_state: &mut State,
     ) -> xilem_core::MessageResult<Action> {
-        unreachable!()
+        xilem_core::MessageResult::Stale
     }
 }
 

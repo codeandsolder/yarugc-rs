@@ -194,7 +194,7 @@ impl SuperElement<Self, ViewCtx> for IndexedStackElement {
     fn with_downcast_val<R>(
         mut this: Mut<'_, Self>,
         f: impl FnOnce(Mut<'_, Self>) -> R,
-    ) -> (Self::Mut<'_>, R) {
+    ) -> (Self::Mut<'_>, Option<R>) {
         let r = {
             let parent = this.parent.reborrow_mut();
             let reborrow = IndexedStackElementMut {
@@ -203,7 +203,7 @@ impl SuperElement<Self, ViewCtx> for IndexedStackElement {
             };
             f(reborrow)
         };
-        (this, r)
+        (this, Some(r))
     }
 }
 
@@ -217,11 +217,10 @@ impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for Index
     fn with_downcast_val<R>(
         mut this: Mut<'_, Self>,
         f: impl FnOnce(Mut<'_, Pod<W>>) -> R,
-    ) -> (Mut<'_, Self>, R) {
+    ) -> (Mut<'_, Self>, Option<R>) {
         let ret = {
             let mut child = widgets::IndexedStack::get_mut(&mut this.parent, this.idx);
-            let downcast = child.downcast();
-            f(downcast)
+            child.try_downcast().map(f)
         };
 
         (this, ret)
