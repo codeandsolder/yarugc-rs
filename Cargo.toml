@@ -84,7 +84,6 @@ image = { version = "0.25.10", default-features = false }
 resvg = "0.47.0"
 usvg = "0.47.0"
 web-time = "1.1.0"
-bitflags = "2.11.0"
 accesskit = "0.24.0"
 accesskit_winit = { version = "0.32.2", default-features = false, features = [
     "accesskit_unix",

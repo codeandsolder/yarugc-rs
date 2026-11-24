@@ -157,7 +157,7 @@ impl<W: Widget> Recorder<W> {
     }
 }
 
-#[warn(clippy::missing_trait_methods)]
+#[deny(clippy::missing_trait_methods)]
 impl<W: Widget> Widget for Recorder<W> {
     type Action = W::Action;
 

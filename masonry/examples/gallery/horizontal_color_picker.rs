@@ -155,7 +155,7 @@ impl Widget for HorizontalColorPicker {
                 .find(|(_, wid)| source == *wid)
                 .map(|(comp, _)| *comp)
         {
-            #[allow(
+            #[expect(
                 clippy::cast_possible_truncation,
                 reason = "Value is in range of [0.0, 1.0]"
             )]

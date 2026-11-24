@@ -61,6 +61,7 @@ fn grid_button(params: GridParams) -> Button {
 }
 
 /// Creates a grid with a bunch of buttons
+/// Builds a grid with the requested gap.
 pub fn make_grid(grid_gap: f64) -> NewWidget<Grid> {
     let label = Prose::from_text_area(
         TextArea::new_immutable("Change spacing by right and left clicking on the buttons")

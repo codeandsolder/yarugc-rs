@@ -225,6 +225,15 @@ macro_rules! saturating_sub_unsigned {
     };
 }
 
+macro_rules! unsigned_step {
+    ($step:expr, i) => {
+        $step.cast_unsigned()
+    };
+    ($step:expr, u) => {
+        $step
+    };
+}
+
 /// Implement `Steppable` for integer types.
 ///
 /// * `$t` == type on which to implement `Steppable` for
@@ -234,21 +243,19 @@ macro_rules! impl_steppable_int {
     ($(($t:ty, $u:ty, $s:tt)),+) => {
         $(
             impl Steppable for $t {
-                #[allow(trivial_numeric_casts, reason = "it's not always trivial")]
                 fn add_steps(&self, step: Self, count: i64, snap: Option<Self>) -> Self {
                     // Add the steps
                     // * Use unsigned delta so we can go from signed::MIN -> signed::MAX
                     // * Clamp count to the maximum unsigned value to avoid incorrect truncation
-                    const MAX: u64 = <$u>::MAX as u64;
+                    let magnitude = <$u>::try_from(count.unsigned_abs()).unwrap_or(<$u>::MAX);
+                    let delta = unsigned_step!(step, $s).checked_mul(magnitude);
                     let mut value = if count < 0 {
-                        let count = count.unsigned_abs().min(MAX) as $u;
-                        match (step as $u).checked_mul(count) {
+                        match delta {
                             Some(delta) => saturating_sub_unsigned!(self, delta, $s),
                             None => Self::MIN,
                         }
                     } else {
-                        let count = (count as u64).min(MAX) as $u;
-                        match (step as $u).checked_mul(count) {
+                        match delta {
                             Some(delta) => saturating_add_unsigned!(self, delta, $s),
                             None => Self::MAX,
                         }
@@ -275,13 +282,11 @@ macro_rules! impl_steppable_int {
                     value
                 }
 
-                #[allow(trivial_numeric_casts, reason = "it's not always trivial")]
                 fn steps_to(&self, target: Self, step: Self) -> u64 {
-                    let step = step as $u;
+                    let step = unsigned_step!(step, $s);
                     let delta = self.abs_diff(target);
-                    let steps = delta / step;
-                    let steps = if delta % step > 0 { steps + 1 } else { steps };
-                    steps as u64
+                    let steps = delta.div_ceil(step);
+                    u64::try_from(steps).unwrap_or(u64::MAX)
                 }
 
                 fn min_step() -> Self {
@@ -313,15 +318,14 @@ impl_steppable_int!(
 ///
 /// * `$t` == type on which to implement `Steppable` for
 macro_rules! impl_steppable_float {
-    ($($t:ty),+) => {
+    ($(($t:ty, $widen:path, $narrow:path)),+) => {
         $(
             impl Steppable for $t {
-                #[allow(trivial_numeric_casts, reason = "it's not always trivial")]
                 fn add_steps(&self, step: Self, count: i64, snap: Option<Self>) -> Self {
                     // Add the steps
                     // * Do the math in f64 for more precision in case numbers are bit-heavy
                     // * Casting to small float is ok, overflow won't truncate and will be infinite.
-                    let mut value = (*self as f64 + step as f64 * count as f64) as $t;
+                    let mut value = $narrow($widen(*self) + $widen(step) * count as f64);
                     // Potential snapping
                     if let Some(snap) = snap {
                         value = (value / snap).round() * snap;
@@ -330,10 +334,9 @@ macro_rules! impl_steppable_float {
                     value
                 }
 
-                #[allow(trivial_numeric_casts, reason = "it's not always trivial")]
                 fn steps_to(&self, target: Self, step: Self) -> u64 {
-                    let delta = target as f64 - *self as f64;
-                    let steps = delta / step as f64;
+                    let delta = $widen(target) - $widen(*self);
+                    let steps = delta / $widen(step);
                     steps.ceil() as u64
                 }
 
@@ -357,7 +360,14 @@ macro_rules! impl_steppable_float {
     };
 }
 
-impl_steppable_float!(f32, f64);
+fn narrow_step_float(value: f64) -> f32 {
+    value as f32
+}
+
+impl_steppable_float!(
+    (f32, f64::from, narrow_step_float),
+    (f64, std::convert::identity, std::convert::identity)
+);
 
 // --- MARK: BUILDERS
 impl<T: Steppable> StepInput<T> {

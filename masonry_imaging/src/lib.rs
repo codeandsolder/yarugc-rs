@@ -27,9 +27,9 @@
 
 // LINEBENDER LINT SET - lib.rs - v3
 // See https://linebender.org/wiki/canonical-lints/
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![warn(clippy::print_stdout, clippy::print_stderr)]
-#![cfg_attr(target_pointer_width = "64", warn(clippy::trivially_copy_pass_by_ref))]
+#![cfg_attr(not(test), deny(unused_crate_dependencies))]
+#![deny(clippy::print_stdout, clippy::print_stderr)]
+#![cfg_attr(target_pointer_width = "64", deny(clippy::trivially_copy_pass_by_ref))]
 // END LINEBENDER LINT SET
 #![cfg_attr(docsrs, feature(doc_cfg))]
 

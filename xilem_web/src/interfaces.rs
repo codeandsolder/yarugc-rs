@@ -1692,8 +1692,8 @@ where
 pub trait SvgCircleElement<State: 'static, Action = ()>:
     SvgGeometryElement<State, Action, DomNode: AsRef<web_sys::SvgCircleElement>>
 {
-    fn fill(self, brush: impl Into<peniko::Brush>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, brush)
+    fn fill(self, color: impl Into<peniko::Color>) -> crate::svg::Fill<Self, State, Action> {
+        crate::svg::fill(self, color)
     }
 }
 
@@ -1785,8 +1785,8 @@ where
 pub trait SvgEllipseElement<State: 'static, Action = ()>:
     SvgGeometryElement<State, Action, DomNode: AsRef<web_sys::SvgEllipseElement>>
 {
-    fn fill(self, brush: impl Into<peniko::Brush>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, brush)
+    fn fill(self, color: impl Into<peniko::Color>) -> crate::svg::Fill<Self, State, Action> {
+        crate::svg::fill(self, color)
     }
 }
 
@@ -2208,15 +2208,15 @@ where
 pub trait SvggElement<State: 'static, Action = ()>:
     SvgGraphicsElement<State, Action, DomNode: AsRef<web_sys::SvggElement>>
 {
-    fn fill(self, brush: impl Into<peniko::Brush>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, brush)
+    fn fill(self, color: impl Into<peniko::Color>) -> crate::svg::Fill<Self, State, Action> {
+        crate::svg::fill(self, color)
     }
     fn stroke(
         self,
-        brush: impl Into<peniko::Brush>,
+        color: impl Into<peniko::Color>,
         style: peniko::kurbo::Stroke,
     ) -> crate::svg::Stroke<Self, State, Action> {
-        crate::svg::stroke(self, brush, style)
+        crate::svg::stroke(self, color, style)
     }
 }
 
@@ -2235,10 +2235,10 @@ pub trait SvgGeometryElement<State: 'static, Action = ()>:
 {
     fn stroke(
         self,
-        brush: impl Into<peniko::Brush>,
+        color: impl Into<peniko::Color>,
         style: peniko::kurbo::Stroke,
     ) -> crate::svg::Stroke<Self, State, Action> {
-        crate::svg::stroke(self, brush, style)
+        crate::svg::stroke(self, color, style)
     }
 }
 
@@ -2390,8 +2390,8 @@ where
 pub trait SvgPathElement<State: 'static, Action = ()>:
     SvgGeometryElement<State, Action, DomNode: AsRef<web_sys::SvgPathElement>>
 {
-    fn fill(self, brush: impl Into<peniko::Brush>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, brush)
+    fn fill(self, color: impl Into<peniko::Color>) -> crate::svg::Fill<Self, State, Action> {
+        crate::svg::fill(self, color)
     }
 }
 
@@ -2423,8 +2423,8 @@ where
 pub trait SvgPolygonElement<State: 'static, Action = ()>:
     SvgGeometryElement<State, Action, DomNode: AsRef<web_sys::SvgPolygonElement>>
 {
-    fn fill(self, brush: impl Into<peniko::Brush>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, brush)
+    fn fill(self, color: impl Into<peniko::Color>) -> crate::svg::Fill<Self, State, Action> {
+        crate::svg::fill(self, color)
     }
 }
 
@@ -2441,8 +2441,8 @@ where
 pub trait SvgPolylineElement<State: 'static, Action = ()>:
     SvgGeometryElement<State, Action, DomNode: AsRef<web_sys::SvgPolylineElement>>
 {
-    fn fill(self, brush: impl Into<peniko::Brush>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, brush)
+    fn fill(self, color: impl Into<peniko::Color>) -> crate::svg::Fill<Self, State, Action> {
+        crate::svg::fill(self, color)
     }
 }
 
@@ -2459,8 +2459,8 @@ where
 pub trait SvgRectElement<State: 'static, Action = ()>:
     SvgGeometryElement<State, Action, DomNode: AsRef<web_sys::SvgRectElement>>
 {
-    fn fill(self, brush: impl Into<peniko::Brush>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, brush)
+    fn fill(self, color: impl Into<peniko::Color>) -> crate::svg::Fill<Self, State, Action> {
+        crate::svg::fill(self, color)
     }
 }
 
@@ -2567,15 +2567,15 @@ where
 pub trait SvgTextContentElement<State: 'static, Action = ()>:
     SvgGraphicsElement<State, Action, DomNode: AsRef<web_sys::SvgTextContentElement>>
 {
-    fn fill(self, brush: impl Into<peniko::Brush>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, brush)
+    fn fill(self, color: impl Into<peniko::Color>) -> crate::svg::Fill<Self, State, Action> {
+        crate::svg::fill(self, color)
     }
     fn stroke(
         self,
-        brush: impl Into<peniko::Brush>,
+        color: impl Into<peniko::Color>,
         style: peniko::kurbo::Stroke,
     ) -> crate::svg::Stroke<Self, State, Action> {
-        crate::svg::stroke(self, brush, style)
+        crate::svg::stroke(self, color, style)
     }
 }
 

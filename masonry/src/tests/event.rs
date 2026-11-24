@@ -317,25 +317,7 @@ fn pointer_move(pos: impl Into<Point>, id: u64) -> PointerEvent {
 }
 
 #[track_caller]
-fn pointer_press(pos: impl Into<Point>, id: u64) -> PointerEvent {
-    let (pointer_info, pointer_state) = make_pointer_info(pos, id);
-    PointerEvent::Down(PointerButtonEvent {
-        pointer: pointer_info,
-        button: Some(PointerButton::Primary),
-        state: pointer_state,
-    })
-}
-
 #[track_caller]
-fn pointer_release(pos: impl Into<Point>, id: u64) -> PointerEvent {
-    let (pointer_info, pointer_state) = make_pointer_info(pos, id);
-    PointerEvent::Up(PointerButtonEvent {
-        pointer: pointer_info,
-        button: Some(PointerButton::Primary),
-        state: pointer_state,
-    })
-}
-
 // TODO - Implement multi-pointer hover
 #[test]
 #[ignore]
@@ -418,83 +400,6 @@ fn multi_pointers_hover() {
     assert!(!harness.get_widget(button_1_tag).ctx().is_hovered());
     assert!(harness.get_widget(button_2_tag).ctx().is_hovered());
     assert!(harness.get_widget(flex_tag).ctx().has_hovered());
-}
-
-// TODO - Implement multi-pointer capture
-#[test]
-#[ignore]
-fn multi_pointers_capture() {
-    let button_1_tag = WidgetTag::named("button_1");
-    let button_2_tag = WidgetTag::named("button_2");
-    let flex_tag = WidgetTag::named("flex");
-
-    let button_1 = NewWidget::new(Button::with_text("Button 1").record()).with_tag(button_1_tag);
-    let button_2 = NewWidget::new(Button::with_text("Button 2").record()).with_tag(button_2_tag);
-
-    let flex = NewWidget::new(
-        Flex::row()
-            .with_fixed(button_1)
-            .with_fixed(button_2)
-            .record(),
-    )
-    .with_tag(flex_tag);
-    let mut harness = TestHarness::create(test_property_set(), flex);
-
-    let button_1_rect = harness.get_widget(button_1_tag).ctx().bounding_box();
-    let button_2_rect = harness.get_widget(button_2_tag).ctx().bounding_box();
-    let button_1_id = harness.get_widget(button_1_tag).id();
-
-    fn assert_captured_by(
-        harness: &TestHarness<impl Widget>,
-        _pointer_id: PointerId,
-        id: WidgetId,
-    ) {
-        #![allow(unused, reason = "Placeholder code")]
-        unimplemented!("Per-pointer capture check is unimplemented");
-    }
-
-    // Move mouse to button 1, mouse press
-    // Check mouse is captured, button 1 is active
-    harness.mouse_move_to(button_1_id);
-    harness.mouse_button_press(None);
-
-    assert_captured_by(&harness, PointerId::PRIMARY, button_1_id);
-    assert!(harness.get_widget(button_1_tag).ctx().is_active());
-
-    // Move pointer 22 to button 2, pointer press
-    // Check mouse is still captured, button 1 is active, button 2 is active
-    harness.process_pointer_event(pointer_move(button_2_rect.center(), 22));
-    harness.process_pointer_event(pointer_press(button_2_rect.center(), 22));
-
-    assert_captured_by(&harness, PointerId::PRIMARY, button_1_id);
-    assert!(harness.get_widget(button_1_tag).ctx().is_active());
-    assert!(harness.get_widget(button_2_tag).ctx().is_active());
-
-    // Release pointer 22
-    // Check mouse is still captured, button 1 is active, button 2 is not active, action was emitted
-    harness.process_pointer_event(pointer_release(button_2_rect.center(), 22));
-
-    assert_captured_by(&harness, PointerId::PRIMARY, button_1_id);
-    assert!(harness.get_widget(button_1_tag).ctx().is_active());
-    assert!(!harness.get_widget(button_2_tag).ctx().is_active());
-    assert_matches!(harness.pop_action::<ButtonPress>(), Some((_, _)));
-
-    // Move pointer 22 to button 1, pointer release
-    // Check mouse is still captured, button 1 is active, no action was emitted
-    harness.process_pointer_event(pointer_move(button_1_rect.center(), 22));
-    harness.process_pointer_event(pointer_release(button_1_rect.center(), 22));
-
-    assert!(harness.get_widget(button_1_tag).ctx().is_active());
-    assert_matches!(harness.pop_action::<ButtonPress>(), None);
-
-    // Press and release pointer 22 on button 1
-    // Check mouse is no longer captured, button 1 is not active, action was emitted
-    // This is because clicking a button should clear all captured pointers, even from other pointers.
-    harness.process_pointer_event(pointer_press(button_1_rect.center(), 22));
-    harness.process_pointer_event(pointer_release(button_1_rect.center(), 22));
-
-    assert!(!harness.get_widget(button_1_tag).ctx().is_active());
-    assert_matches!(harness.pop_action::<ButtonPress>(), Some((_, _)));
 }
 
 // TEXT EVENTS

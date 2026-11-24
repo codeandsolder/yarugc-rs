@@ -5,11 +5,6 @@
 
 // On Windows platform, don't show a console when opening the app.
 #![cfg_attr(not(test), windows_subsystem = "windows")]
-#![allow(
-    variant_size_differences,
-    clippy::single_match,
-    reason = "Don't matter for example code"
-)]
 
 use std::str::FromStr;
 
@@ -239,6 +234,7 @@ const BTN_PLUS: WidgetTag<Button> = WidgetTag::named("btn-plus");
 const BTN_EQUALS: WidgetTag<Button> = WidgetTag::named("btn-equals");
 
 /// Build the widget tree
+/// Builds the calculator widget hierarchy.
 pub fn build_calc() -> NewWidget<impl Widget> {
     let display = Label::new(String::new()).with_style(StyleProperty::FontSize(32.));
     let display = Flex::column()

@@ -383,7 +383,7 @@ impl<S> ModularWidget<S> {
     }
 }
 
-#[warn(clippy::missing_trait_methods)]
+#[deny(clippy::missing_trait_methods)]
 impl<S: 'static> Widget for ModularWidget<S> {
     type Action = NoAction;
 

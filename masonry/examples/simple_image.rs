@@ -32,6 +32,7 @@ impl AppDriver for Driver {
 }
 
 /// Return an image with hardcoded data
+/// Creates the image displayed by this example.
 pub fn make_image() -> NewWidget<Image> {
     let image_bytes = include_bytes!("./assets/PicWithAlpha.png");
     let image_data = image::load_from_memory(image_bytes).unwrap().to_rgba8();

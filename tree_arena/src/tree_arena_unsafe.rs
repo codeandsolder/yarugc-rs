@@ -5,7 +5,6 @@
 //! Items are stored in a hashmap (and then boxed!) instead of in a buffer.
 //! A future version will likely use some kind of slotmap.
 
-#![allow(unsafe_code, reason = "Purpose is unsafe abstraction")]
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::cell::UnsafeCell;
@@ -132,13 +131,17 @@ impl<T> DataMap<T> {
     fn find_node(&self, id: NodeId) -> Option<&TreeNode<T>> {
         let node_cell = self.items.get(&id)?;
 
-        // SAFETY
-        // We need there to be no mutable access to the node
+        // SAFETY: We need there to be no mutable access to the node
         // Mutable access to the node would imply there is some &mut self
         // As we are taking &self, there can be no mutable access to the node
         // Thus this is safe
 
-        Some(unsafe { node_cell.get().as_ref()? })
+        #[expect(
+            unsafe_code,
+            reason = "Access the node through its shared arena borrow"
+        )]
+        let node = unsafe { node_cell.get().as_ref()? };
+        Some(node)
     }
 
     /// Finds an item in the tree.
@@ -172,15 +175,17 @@ impl<T> DataMap<T> {
         let parent_id = *self.parents.get(&id)?;
         let node_cell = self.items.get(&id)?;
 
-        // SAFETY
-        //
-        // When using this on [`ArenaMutList`] associated with some node,
+        // SAFETY: When using this on [`ArenaMutList`] associated with some node,
         // must ensure that `id` is a descendant of that node, otherwise can
         // obtain two mutable references to the same node
         //
         // Similarly we cannot take any other actions that would affect this node,
         // such as removing it or removing a parent (and thus this node) or violate
         // exclusivity by creating a shared reference to the node
+        #[expect(
+            unsafe_code,
+            reason = "Access the node through its exclusive arena borrow"
+        )]
         let TreeNode { item, children } = unsafe { node_cell.get().as_mut()? };
 
         let children = ArenaMutList {

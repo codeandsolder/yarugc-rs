@@ -247,10 +247,11 @@ impl RenderContext {
             return;
         }
 
-        #[allow(
+        #[expect(
             unsafe_code,
             reason = "We only mutate a backend-specific flag on the Metal HAL surface when the runtime backend matches Metal"
         )]
+        // SAFETY: The HAL surface is borrowed from its owning wgpu surface and the Metal layer is locked before modification.
         unsafe {
             if let Some(hal_surface) = surface.surface.as_hal::<::wgpu::hal::api::Metal>() {
                 let guard = hal_surface.render_layer().lock();

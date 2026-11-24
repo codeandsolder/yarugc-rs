@@ -1,7 +1,7 @@
 // Copyright 2024 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-#![allow(
+#![expect(
     dead_code,
     reason = "This is a utility module, which means that some exposed items aren't used in all instantiations"
 )]
@@ -75,7 +75,7 @@ impl ViewElement for TestElement {
 /// The const generic parameter is used for testing `AnyView`
 pub(super) struct OperationView<const N: u32>(pub(super) u32);
 
-#[allow(
+#[expect(
     clippy::manual_non_exhaustive,
     reason = "Unlike `#[non_exhaustive]`, this patterns stops the crate's tests from constructing this."
 )]

@@ -136,7 +136,6 @@ pub type ChildrenIds = SmallVec<[WidgetId; 16]>;
 /// Generally speaking, widgets aren't used directly. They are stored by Masonry and accessed
 /// through [`WidgetPod`](crate::core::WidgetPod)s. Widget methods are called by Masonry, and a
 /// widget should only be mutated either during a method call or through a [`WidgetMut`].
-#[allow(unused_variables, reason = "Default impls don't use method arguments")]
 pub trait Widget: AsDynWidget + Any {
     /// The action type that this widget will submit, through [`EventCtx::submit_action`]
     /// (or the method of the same name on a different context).
@@ -154,9 +153,9 @@ pub trait Widget: AsDynWidget + Any {
     /// event will bubble to each of its parents.
     fn on_pointer_event(
         &mut self,
-        ctx: &mut EventCtx<'_>,
-        props: &mut PropertiesMut<'_>,
-        event: &PointerEvent,
+        _ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _event: &PointerEvent,
     ) {
     }
 
@@ -167,9 +166,9 @@ pub trait Widget: AsDynWidget + Any {
     /// [focused widget]: crate::doc::masonry_concepts#text-focus
     fn on_text_event(
         &mut self,
-        ctx: &mut EventCtx<'_>,
-        props: &mut PropertiesMut<'_>,
-        event: &TextEvent,
+        _ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _event: &TextEvent,
     ) {
     }
 
@@ -178,9 +177,9 @@ pub trait Widget: AsDynWidget + Any {
     /// Accessibility events target a specific widget id, then bubble to each parent.
     fn on_access_event(
         &mut self,
-        ctx: &mut EventCtx<'_>,
-        props: &mut PropertiesMut<'_>,
-        event: &AccessEvent,
+        _ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _event: &AccessEvent,
     ) {
     }
 
@@ -205,9 +204,9 @@ pub trait Widget: AsDynWidget + Any {
     /// the monitor's refresh, causing lag or jerky animations.
     fn on_anim_frame(
         &mut self,
-        ctx: &mut UpdateCtx<'_>,
-        props: &mut PropertiesMut<'_>,
-        interval: u64,
+        _ctx: &mut UpdateCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _interval: u64,
     ) {
     }
 
@@ -217,10 +216,10 @@ pub trait Widget: AsDynWidget + Any {
     /// and eventually to the app driver.
     fn on_action(
         &mut self,
-        ctx: &mut ActionCtx<'_>,
-        props: &mut PropertiesMut<'_>,
-        action: &ErasedAction,
-        source: WidgetId,
+        _ctx: &mut ActionCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _action: &ErasedAction,
+        _source: WidgetId,
     ) {
     }
 
@@ -240,11 +239,17 @@ pub trait Widget: AsDynWidget + Any {
     /// This method is called to notify your widget of certain special events,
     /// (available in the [`Update`] enum) that are generally related to
     /// changes in the widget graph or in the state of your specific widget.
-    fn update(&mut self, ctx: &mut UpdateCtx<'_>, props: &mut PropertiesMut<'_>, event: &Update) {}
+    fn update(
+        &mut self,
+        _ctx: &mut UpdateCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _event: &Update,
+    ) {
+    }
 
     // TODO - Remove default implementation
     /// Handles a property being added, changed, or removed.
-    fn property_changed(&mut self, ctx: &mut UpdateCtx<'_>, property_type: TypeId) {}
+    fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: TypeId) {}
 
     /// Computes the content-box [`Length`] that the widget wants to be on the given `axis`.
     ///
@@ -369,7 +374,7 @@ pub trait Widget: AsDynWidget + Any {
     /// and after this widget explicitly requests compose. It may also be called in other scenarios.
     ///
     /// [`layout`]: Self::layout
-    fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {}
+    fn compose(&mut self, _ctx: &mut ComposeCtx<'_>) {}
 
     /// Paints the widget's background.
     ///
@@ -403,9 +408,9 @@ pub trait Widget: AsDynWidget + Any {
     /// and can paint things outside the clip.
     fn post_paint(
         &mut self,
-        ctx: &mut PaintCtx<'_>,
-        props: &PropertiesRef<'_>,
-        painter: &mut Painter<'_>,
+        _ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        _painter: &mut Painter<'_>,
     ) {
     }
 
@@ -521,7 +526,7 @@ pub trait Widget: AsDynWidget + Any {
     ///
     /// **pos** - the mouse position in the window's coordinate space,
     /// e.g. `(0,0)` is the top-left corner of the window.
-    fn get_cursor(&self, ctx: &QueryCtx<'_>, pos: Point) -> CursorIcon {
+    fn get_cursor(&self, _ctx: &QueryCtx<'_>, _pos: Point) -> CursorIcon {
         CursorIcon::Default
     }
 

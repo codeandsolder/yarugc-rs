@@ -172,7 +172,7 @@ mod hidden {
     )]
     pub struct AnyFlexChildState<State: 'static, Action: 'static> {
         /// Just the optional view state of the flex item view
-        #[allow(
+        #[expect(
             clippy::type_complexity,
             reason = "There's no way to avoid spelling out this type."
         )]

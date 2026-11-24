@@ -75,6 +75,7 @@ impl AppDriver for Driver {
 }
 
 /// Return initial to-do-list without items.
+/// Builds the to-do list widget hierarchy.
 pub fn make_widget_tree() -> NewWidget<impl Widget> {
     let text_input = NewWidget::new(
         TextInput::new("").with_placeholder("ex: 'Do the dishes', 'File my taxes', ..."),

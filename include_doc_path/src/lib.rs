@@ -66,7 +66,7 @@ mod parsing;
 pub fn include_doc_path(input: TokenStream) -> TokenStream {
     match parsing::parse_string_literal(input) {
         Ok((relative_path, span)) => {
-            logic::include_doc_path_impl(relative_path, span, false, false).into()
+            logic::include_doc_path_impl(&relative_path, span, false, false).into()
         }
         Err(error) => error,
     }
@@ -79,7 +79,7 @@ pub fn include_doc_path(input: TokenStream) -> TokenStream {
 pub fn helper_include_local_path(input: TokenStream) -> TokenStream {
     match parsing::parse_string_literal(input) {
         Ok((relative_path, span)) => {
-            logic::include_doc_path_impl(relative_path, span, true, false).into()
+            logic::include_doc_path_impl(&relative_path, span, true, false).into()
         }
         Err(error) => error,
     }
@@ -92,7 +92,7 @@ pub fn helper_include_local_path(input: TokenStream) -> TokenStream {
 pub fn helper_include_github_url(input: TokenStream) -> TokenStream {
     match parsing::parse_string_literal(input) {
         Ok((relative_path, span)) => {
-            logic::include_doc_path_impl(relative_path, span, false, true).into()
+            logic::include_doc_path_impl(&relative_path, span, false, true).into()
         }
         Err(error) => error,
     }

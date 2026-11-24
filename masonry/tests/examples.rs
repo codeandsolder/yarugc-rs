@@ -6,15 +6,23 @@
 //! When running integration tests, it will compare the rendered snapshots of the widgets
 //! with the expected snapshots.
 
+/// Example widgets and their snapshot tests.
 #[cfg(test)]
-#[allow(dead_code, reason = "We don't need to run the main functions.")]
-#[allow(missing_docs, reason = "Example code doesn't need docs.")]
+#[expect(
+    dead_code,
+    reason = "The standalone example entry points are not called by snapshot integration tests"
+)]
 #[path = "../examples"]
 pub mod others {
+    /// Calculator example.
     pub mod calc_masonry;
+    /// Custom widget example.
     pub mod custom_widget;
+    /// Grid layout example.
     pub mod grid_masonry;
+    /// Image widget example.
     pub mod simple_image;
+    /// To-do list example.
     pub mod to_do_list;
 }
 

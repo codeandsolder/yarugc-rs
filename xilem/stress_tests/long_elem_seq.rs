@@ -16,16 +16,16 @@ fn widgets<State: 'static + Send + Sync, const N: usize>() -> impl WidgetView<St
 {
     map_message_result(
         flex_row((
-            text_button("button", |_| unimplemented!()),
-            checkbox("checkbox", true, |_, _| unimplemented!()),
+            text_button("button", |_| [0; N]),
+            checkbox("checkbox", true, |_, _| [0; N]),
             label("label"),
             portal(progress_bar(Some(0.))),
             prose("prose"),
-            sized_box(slider(0., 0., 0., |_, _| unimplemented!())),
+            sized_box(slider(0., 0., 0., |_, _| [0; N])),
             spinner(),
             split(
-                text_input("input".into(), |_, _| unimplemented!()),
-                text_input("input".into(), |_, _| unimplemented!()),
+                text_input("input".into(), |_, _| [0; N]),
+                text_input("input".into(), |_, _| [0; N]),
             ),
         )),
         |_, _message: MessageResult<[u32; N]>| MessageResult::Nop,

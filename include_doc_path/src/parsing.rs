@@ -26,7 +26,7 @@ fn backslash_x(s: &str) -> Option<(u8, &str)> {
     let b1 = byte(s, 1);
     let hi = char::from(b0).to_digit(16)?;
     let lo = char::from(b1).to_digit(16)?;
-    let ch = (hi as u8) * 0x10 + (lo as u8);
+    let ch = u8::try_from(hi * 0x10 + lo).ok()?;
     Some((ch, &s[2..]))
 }
 
@@ -35,26 +35,20 @@ fn backslash_u(s: &str) -> Option<(char, &str)> {
         return None;
     }
     let s = &s[1..];
-    let mut ch = 0;
+    let mut codepoint = 0;
     let mut digits = 0;
-    loop {
-        let b = byte(s, digits);
-        if b == b'}' {
-            break;
+    for (index, byte) in s.bytes().enumerate() {
+        match byte {
+            b'}' if digits > 0 => return Some((char::from_u32(codepoint)?, s.get(index + 1..)?)),
+            b'_' if digits > 0 => {}
+            _ if digits < 6 => {
+                codepoint = codepoint * 0x10 + char::from(byte).to_digit(16)?;
+                digits += 1;
+            }
+            _ => return None,
         }
-        if digits == 6 {
-            return None;
-        }
-        let digit = char::from(b).to_digit(16)?;
-        ch = ch * 0x10 + digit;
-        digits += 1;
     }
-    if digits == 0 {
-        return None;
-    }
-    let ch = char::from_u32(ch)?;
-    let s = &s[digits + 1..];
-    Some((ch, s))
+    None
 }
 
 /// Parse a cooked (non-raw) string literal, handling all escape sequences.
@@ -154,7 +148,7 @@ fn parse_lit_str_raw(mut s: &str) -> Option<(Box<str>, Box<str>)> {
             _ => return None,
         }
     }
-    let close = s.rfind('"').unwrap();
+    let close = s.rfind('"')?;
     for end in s.get(close + 1..close + 1 + pounds)?.bytes() {
         if end != b'#' {
             return None;
@@ -170,12 +164,15 @@ fn parse_lit_str_raw(mut s: &str) -> Option<(Box<str>, Box<str>)> {
 // End of syn-derived code.
 // ---------------------------------------------------------------------------
 
-pub(crate) fn parse_string_literal(input: TokenStream) -> Result<(String, Span), TokenStream> {
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "The proc-macro crate requires non-macro helpers to remain internal; unreachable_pub rejects unrestricted visibility."
+)]
+pub(super) fn parse_string_literal(input: TokenStream) -> Result<(String, Span), TokenStream> {
     let mut iter = input.into_iter();
     // Must have exactly one token
-    let token = match iter.next() {
-        Some(t) => t,
-        None => return Err(compile_error("expected string literal", Span::call_site())),
+    let Some(token) = iter.next() else {
+        return Err(compile_error("expected string literal", Span::call_site()));
     };
 
     if iter.next().is_some() {
@@ -193,8 +190,10 @@ pub(crate) fn parse_string_literal(input: TokenStream) -> Result<(String, Span),
             // Try raw string literal first (r"..." or r#"..."#)
             if raw.starts_with('r') {
                 match parse_lit_str_raw(&raw) {
-                    Some((content, _suffix)) => return Ok((String::from(content), span)),
-                    None => {
+                    Some((content, suffix)) if suffix.is_empty() => {
+                        return Ok((String::from(content), span));
+                    }
+                    _ => {
                         return Err(compile_error("invalid raw string literal", span));
                     }
                 }
@@ -203,8 +202,10 @@ pub(crate) fn parse_string_literal(input: TokenStream) -> Result<(String, Span),
             // Regular (cooked) string literal
             if raw.starts_with('"') {
                 match parse_lit_str_cooked(&raw) {
-                    Some((content, _suffix)) => return Ok((String::from(content), span)),
-                    None => {
+                    Some((content, suffix)) if suffix.is_empty() => {
+                        return Ok((String::from(content), span));
+                    }
+                    _ => {
                         return Err(compile_error("invalid string literal", span));
                     }
                 }
@@ -219,5 +220,29 @@ pub(crate) fn parse_string_literal(input: TokenStream) -> Result<(String, Span),
             "expected string literal like \"path/file.png\"",
             Span::call_site(),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{backslash_u, parse_lit_str_cooked, parse_lit_str_raw};
+
+    #[test]
+    fn unicode_escape_separators_and_invalid_scalars() {
+        assert_eq!(backslash_u("{1F_600}rest"), Some(('😀', "rest")));
+        for invalid in ["{}", "{_12}", "{1234567}", "{D800}", "{110000}", "{12"] {
+            assert_eq!(backslash_u(invalid), None, "{invalid}");
+        }
+    }
+
+    #[test]
+    fn string_literal_parsing() {
+        let (content, suffix) = parse_lit_str_cooked(r#""a\x62\u{63}""#).expect("valid literal");
+        assert_eq!(&*content, "abc");
+        assert!(suffix.is_empty());
+        let (content, suffix) = parse_lit_str_raw(r##"r#"a\b"#"##).expect("valid raw literal");
+        assert_eq!(&*content, r"a\b");
+        assert!(suffix.is_empty());
+        assert!(parse_lit_str_raw("r#\"unterminated").is_none());
     }
 }

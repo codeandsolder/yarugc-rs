@@ -43,7 +43,10 @@ impl AppDriver for Driver {
 
 /// A widget with a custom implementation of the Widget trait.
 #[derive(Debug)]
-pub struct CustomWidget(pub String);
+pub struct CustomWidget(
+    /// Text displayed by the widget.
+    pub String,
+);
 
 impl Widget for CustomWidget {
     type Action = NoAction;

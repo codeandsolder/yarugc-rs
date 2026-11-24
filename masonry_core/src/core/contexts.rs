@@ -8,7 +8,7 @@
     reason = "Not sure if it's worth the effort"
 )]
 
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 use std::collections::hash_map::Entry;
 
 use accesskit::{NodeId, TreeUpdate};
@@ -184,41 +184,6 @@ impl_context_method!(
             self.widget_state.id
         }
 
-        #[allow(dead_code, reason = "Copy-pasted for some types that don't need it")]
-        /// Helper method to get a direct reference to a child widget from its `WidgetPod`.
-        fn get_child<Child: Widget>(&self, child: &'_ WidgetPod<Child>) -> &'_ Child {
-            let child_ref = &*self
-                .children
-                .item(child.id())
-                .expect("get_child: child not found")
-                .item
-                .widget;
-            (child_ref as &dyn Any).downcast_ref::<Child>().unwrap()
-        }
-
-        #[allow(dead_code, reason = "Copy-pasted for some types that don't need it")]
-        /// Helper method to get a direct reference to a child widget from its `WidgetPod`.
-        fn get_child_dyn(&self, child: &'_ WidgetPod<impl Widget + ?Sized>) -> &'_ dyn Widget {
-            &*self
-                .children
-                .item(child.id())
-                .expect("get_child: child not found")
-                .item
-                .widget
-        }
-
-        #[allow(dead_code, reason = "Copy-pasted for some types that don't need it")]
-        /// Helper method to get a direct reference to a child widget's `WidgetState` from its `WidgetPod`.
-        fn get_child_state(&self, child: &'_ WidgetPod<impl Widget + ?Sized>) -> &'_ WidgetState {
-            &self
-                .children
-                .item(child.id())
-                .expect("get_child_state: child not found")
-                .item
-                .state
-        }
-
-        #[allow(dead_code, reason = "Copy-pasted for some types that don't need it")]
         /// Returns the local transform of this widget.
         ///
         /// This transform is used during the mapping of this widget's border-box coordinate space
@@ -227,6 +192,42 @@ impl_context_method!(
         /// This transform is applied before `scroll_translation` and `origin`.
         pub fn transform(&self) -> Affine {
             self.widget_state.transform
+        }
+    }
+);
+
+impl_context_method!(LayoutCtx<'_>, ComposeCtx<'_>, {
+    /// Helper method to get a direct reference to a child widget from its `WidgetPod`.
+    fn get_child_dyn(&self, child: &'_ WidgetPod<impl Widget + ?Sized>) -> &'_ dyn Widget {
+        &*self
+            .children
+            .item(child.id())
+            .expect("get_child: child not found")
+            .item
+            .widget
+    }
+});
+
+impl_context_method!(
+    MutateCtx<'_>,
+    ActionCtx<'_>,
+    QueryCtx<'_>,
+    EventCtx<'_>,
+    UpdateCtx<'_>,
+    MeasureCtx<'_>,
+    LayoutCtx<'_>,
+    ComposeCtx<'_>,
+    PaintCtx<'_>,
+    AccessCtx<'_>,
+    {
+        /// Helper method to get a direct reference to a child widget's `WidgetState` from its `WidgetPod`.
+        fn get_child_state(&self, child: &'_ WidgetPod<impl Widget + ?Sized>) -> &'_ WidgetState {
+            &self
+                .children
+                .item(child.id())
+                .expect("get_child_state: child not found")
+                .item
+                .state
         }
     }
 );

@@ -31,14 +31,7 @@ fn app_logic(state: &mut State) -> impl FileView<State> + use<> {
             name: "file1.txt".into(),
             contents: "Test file contents".into(),
         }),
-        State::Empty =>
-        /* Box::new(Folder {
-            name: "nothing".into(),
-            seq: (),
-        }) */
-        {
-            unimplemented!()
-        }
+        State::Empty => Box::new(EmptyDirectory),
         State::Complex(value) => Box::new(complex_state(value.as_str())),
     };
     res
@@ -136,6 +129,52 @@ impl AnyElement<Self, ViewCtx> for FsPath {
 //     seq: Seq,
 //     phantom: PhantomData<fn() -> Marker>,
 // }
+
+struct EmptyDirectory;
+
+impl ViewMarker for EmptyDirectory {}
+impl<State: 'static, Action> View<State, Action, ViewCtx> for EmptyDirectory {
+    type Element = FsPath;
+    type ViewState = bool;
+
+    fn build(&self, ctx: &mut ViewCtx, _app_state: &mut State) -> (Self::Element, Self::ViewState) {
+        let path = ctx.current_folder_path.join("nothing");
+        let created = match std::fs::create_dir(&path) {
+            Ok(()) => true,
+            Err(error) => {
+                eprintln!("Could not create {}: {error}", path.display());
+                false
+            }
+        };
+        (path.into(), created)
+    }
+
+    fn rebuild(
+        &self,
+        _prev: &Self,
+        _state: &mut bool,
+        _ctx: &mut ViewCtx,
+        _element: Mut<'_, Self::Element>,
+        _app_state: &mut State,
+    ) {
+    }
+
+    fn teardown(&self, created: &mut bool, _ctx: &mut ViewCtx, element: Mut<'_, Self::Element>) {
+        if *created && let Err(error) = std::fs::remove_dir(&*element) {
+            eprintln!("Could not remove {}: {error}", element.display());
+        }
+    }
+
+    fn message(
+        &self,
+        _state: &mut bool,
+        _message: &mut MessageCtx,
+        _element: Mut<'_, Self::Element>,
+        _app_state: &mut State,
+    ) -> xilem_core::MessageResult<Action> {
+        xilem_core::MessageResult::Stale
+    }
+}
 
 #[derive(Clone)]
 struct File {

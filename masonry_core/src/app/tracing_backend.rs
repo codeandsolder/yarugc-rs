@@ -81,7 +81,10 @@ fn default_tracing_subscriber_native(
             .with_ansi(false);
         // Note that this layer does not use the provided filter, and instead logs all events.
 
-        #[allow(clippy::print_stderr, reason = "Can only use stderr")]
+        #[expect(
+            clippy::print_stderr,
+            reason = "Report the debug log path before the tracing subscriber is installed"
+        )]
         {
             // We print this message to stderr (rather than through `tracing`), because:
             // 1) Tracing hasn't been set up yet

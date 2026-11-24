@@ -17,8 +17,6 @@
 //!
 //! - `default`: Enables the default features of [Xilem][xilem].
 
-#![expect(clippy::todo, reason = "Landing intentionally in-progress work.")]
-
 use std::sync::Arc;
 
 use megalodon::entities::{Context, Instance, Status};
@@ -130,6 +128,9 @@ struct Placehero {
     timeline_box_contents: String,
     loading_timeline: bool,
     not_found_acct: Option<String>,
+    account_error: Option<String>,
+    context_error: Option<String>,
+    instance_error: Option<String>,
 }
 
 impl Default for Placehero {
@@ -158,6 +159,9 @@ impl Default for Placehero {
             timeline_box_contents: "raph".to_string(),
             loading_timeline: false,
             not_found_acct: None,
+            account_error: None,
+            context_error: None,
+            instance_error: None,
         }
     }
 }
@@ -196,7 +200,9 @@ impl Placehero {
                 back,
             )))
         } else {
-            Either::B(prose("Not yet connected (or other unhandled error)"))
+            Either::B(prose(
+                self.instance_error.as_deref().unwrap_or("Connecting…"),
+            ))
         }
     }
 
@@ -207,12 +213,16 @@ impl Placehero {
                 // the thread's scroll position would jump.
                 OneOf6::A(thread(show_context, context))
             } else {
-                OneOf::B(prose("Loading thread"))
+                OneOf::B(prose(
+                    self.context_error.as_deref().unwrap_or("Loading thread"),
+                ))
             }
         } else if self.loading_timeline {
             OneOf::C(
                 flex_col(spinner().dims(50.px())).cross_axis_alignment(CrossAxisAlignment::Center),
             )
+        } else if let Some(error) = self.account_error.as_ref() {
+            OneOf::D(prose(error.clone()))
         } else if let Some(acct) = self.not_found_acct.as_ref() {
             OneOf::D(prose(format!(
                 "Could not find account @{acct} on this server. \
@@ -245,6 +255,7 @@ fn app_logic(app_state: &mut Placehero) -> impl WidgetView<Placehero> + use<> {
                         .send(status.id.clone())
                         .unwrap();
                     state.show_context = Some(status);
+                    state.context_error = None;
                     state.context = None;
                 }
                 Navigation::LoadUser(user) => {
@@ -256,6 +267,8 @@ fn app_logic(app_state: &mut Placehero) -> impl WidgetView<Placehero> + use<> {
                     // it currently runs into `teardown` requiring the state to be available
                     // state.timeline = None;
                     state.loading_timeline = true;
+                    state.account_error = None;
+                    state.not_found_acct = None;
                     state.context = None;
                     state.show_context = None;
                 }
@@ -304,15 +317,20 @@ fn load_contexts(
                     .is_some_and(|it| it.id == id) =>
             {
                 app_state.context = Some(context.json);
+                app_state.context_error = None;
             }
             Ok(_) => {
                 tracing::warn!("Dropping context whose request was superseded.");
             }
-            Err(megalodon::error::Error::RequestError(e)) if e.is_connect() => {
-                todo!()
-            }
-            Err(e) => {
-                todo!("handle {e}")
+            Err(error) => {
+                if app_state
+                    .show_context
+                    .as_ref()
+                    .is_some_and(|status| status.id == id)
+                {
+                    tracing::warn!(%error, "Could not load thread");
+                    app_state.context_error = Some(format!("Could not load thread: {error}"));
+                }
             }
         },
     )
@@ -333,11 +351,9 @@ fn load_instance(
         },
         |app_state: &mut Placehero, event| match event {
             Ok(instance) => app_state.instance = Some(instance.json),
-            Err(megalodon::error::Error::RequestError(e)) if e.is_connect() => {
-                todo!()
-            }
-            Err(e) => {
-                todo!("handle {e}")
+            Err(error) => {
+                tracing::warn!(%error, "Could not load instance");
+                app_state.instance_error = Some(format!("Could not connect: {error}"));
             }
         },
     )
@@ -365,9 +381,6 @@ fn load_account(
                 app_state.loading_timeline = false;
                 app_state.not_found_acct = None;
             }
-            Err(megalodon::error::Error::RequestError(e)) if e.is_connect() => {
-                todo!()
-            }
             Err(megalodon::error::Error::OwnError(
                 e @ OwnError {
                     kind: Kind::HTTPStatusError,
@@ -383,7 +396,9 @@ fn load_account(
                 app_state.not_found_acct = Some(acct);
             }
             Err(e) => {
-                todo!("handle {e}")
+                tracing::warn!(error = %e, "Could not load account");
+                app_state.loading_timeline = false;
+                app_state.account_error = Some(format!("Could not load @{acct}: {e}"));
             }
         },
     )
