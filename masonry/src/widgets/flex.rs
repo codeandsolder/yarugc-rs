@@ -152,7 +152,7 @@ impl Flex {
     /// The child widgets are laid out horizontally, from left to right.
     ///
     #[must_use = "Use the returned value."]
-    pub fn row() -> Self {
+    pub const fn row() -> Self {
         Self::for_axis(Axis::Horizontal)
     }
 
@@ -160,7 +160,7 @@ impl Flex {
     ///
     /// The child widgets are laid out vertically, from top to bottom.
     #[must_use = "Use the returned value."]
-    pub fn column() -> Self {
+    pub const fn column() -> Self {
         Self::for_axis(Axis::Vertical)
     }
 
@@ -446,7 +446,7 @@ impl Flex {
 
 // --- MARK: COLLECTIONWIDGET
 impl CollectionWidget<FlexParams> for Flex {
-    collection_accessors!(child => match child { Child::Widget { widget, .. } => widget.id(), _ => return None });
+    collection_accessors!(child => match child { Child::Widget { widget, .. } => widget.id(), Child::Spacer { .. } => return None });
 
     /// Appends a child widget to the collection.
     fn add(
@@ -640,14 +640,14 @@ impl Child {
     fn widget_mut(&mut self) -> Option<&mut WidgetPod<dyn Widget>> {
         match self {
             Self::Widget { widget, .. } => Some(widget),
-            _ => None,
+            Self::Spacer { .. } => None,
         }
     }
 
     fn widget(&self) -> Option<&WidgetPod<dyn Widget>> {
         match self {
             Self::Widget { widget, .. } => Some(widget),
-            _ => None,
+            Self::Spacer { .. } => None,
         }
     }
 }
@@ -666,297 +666,35 @@ fn new_child(params: impl Into<FlexParams>, child: WidgetPod<dyn Widget>) -> Chi
 
 /// Calculates `(space_before, space_between)` from the `extra` space given the `child_count`.
 fn get_spacing(alignment: MainAxisAlignment, extra: f64, child_count: usize) -> (f64, f64) {
-    let space_before;
-    let space_between;
+    if child_count == 0 {
+        return (0., 0.);
+    }
     match alignment {
-        _ if child_count == 0 => {
-            space_before = 0.;
-            space_between = 0.;
-        }
-        MainAxisAlignment::Start => {
-            space_before = 0.;
-            space_between = 0.;
-        }
-        MainAxisAlignment::End => {
-            space_before = extra;
-            space_between = 0.;
-        }
-        MainAxisAlignment::Center => {
-            space_before = extra / 2.;
-            space_between = 0.;
-        }
-        MainAxisAlignment::SpaceBetween => {
-            let equal_space = extra / crate::layout_count(child_count.saturating_sub(1).max(1));
-            space_before = 0.;
-            space_between = equal_space;
-        }
+        MainAxisAlignment::Start => (0., 0.),
+        MainAxisAlignment::End => (extra, 0.),
+        MainAxisAlignment::Center => (extra / 2., 0.),
+        MainAxisAlignment::SpaceBetween => (
+            0.,
+            extra / crate::layout_count(child_count.saturating_sub(1).max(1)),
+        ),
         MainAxisAlignment::SpaceEvenly => {
             let equal_space = extra / (crate::layout_count(child_count) + 1.);
-            space_before = equal_space;
-            space_between = equal_space;
+            (equal_space, equal_space)
         }
         MainAxisAlignment::SpaceAround => {
-            let equal_space = extra / (2. * crate::layout_count(child_count));
-            space_before = equal_space;
-            space_between = equal_space * 2.;
+            let equal_space = extra / crate::layout_count(child_count);
+            (equal_space / 2., equal_space)
         }
     }
-    (space_before, space_between)
 }
 
-impl UsesProperty<Gap> for Flex {}
-
-// --- MARK: IMPL WIDGET
-impl Widget for Flex {
-    type Action = NoAction;
-
-    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        for child in self.children.iter_mut().filter_map(|x| x.widget_mut()) {
-            ctx.register_child(child);
-        }
-    }
-
-    fn property_changed(&mut self, ctx: &mut UpdateCtx<'_>, property_type: TypeId) {
-        Gap::prop_changed(ctx, property_type);
-    }
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        props: &PropertiesRef<'_>,
-        // The usual axis input has been named measure_axis here,
-        // to make it harder to use it in the wrong context by accident.
-        measure_axis: Axis,
-        len_req: LenReq,
-        // The usual cross_length input has been named perp_length here,
-        // to remove the collision with flex cross, which might not match.
-        perp_length: Option<Length>,
-    ) -> Length {
-        let perp = measure_axis.cross();
-        let main = self.direction;
-        let cross = main.cross();
-
-        let cache = ctx.property_cache();
-        let gap = props.get::<Gap>(cache);
-
-        let gap_length = gap.gap.get();
-        let gap_count = self.children.len().saturating_sub(1);
-
-        let (main_space, cross_space) = if perp == main {
-            (perp_length, None)
-        } else {
-            (None, perp_length)
-        };
-        let context_size = LayoutSize::maybe(perp, perp_length);
-
-        let (len_req, min_result) = match len_req {
-            LenReq::Min | LenReq::Max => (len_req, Length::ZERO),
-            // We always want to use up all offered space but may need even more,
-            // so we implement FitContent as space.max(MinContent).
-            LenReq::Fit(space) => (LenReq::Min, space),
-        };
-
-        // We can skip resolving bases if we don't know the main space when measuring cross.
-        // That is because in that code path we don't ever read the resolved basis.
-        let skip_resolving_bases = measure_axis == cross && main_space.is_none();
-
-        // Resolve bases
-        if !skip_resolving_bases {
-            // Basis is always resolved with a MaxContent fallback
-            let main_auto = LenDef::MaxContent;
-
-            for child in &mut self.children {
-                match child {
-                    Child::Widget {
-                        widget,
-                        flex,
-                        basis,
-                        basis_resolved,
-                        ..
-                    } => match effective_basis(*basis, *flex) {
-                        FlexBasis::Auto => {
-                            *basis_resolved = ctx.compute_length(
-                                widget,
-                                main_auto,
-                                context_size,
-                                main,
-                                cross_space,
-                            );
-                        }
-                        FlexBasis::Zero => {
-                            // TODO: When min/max constraints become a real thing,
-                            //      then need to account for them here.
-                            *basis_resolved = Length::ZERO;
-                        }
-                    },
-                    Child::Spacer {
-                        basis,
-                        basis_resolved,
-                        ..
-                    } => {
-                        *basis_resolved = *basis;
-                    }
-                }
-            }
-        }
-
-        let mut length = Length::ZERO;
-        if measure_axis == main {
-            // Calculate the main axis length
-
-            // Find the largest desired flex fraction
-            let mut flex_fraction: f64 = 0.;
-            let main_auto = len_req.into();
-
-            for child in &mut self.children {
-                let desired_flex_fraction = match child {
-                    Child::Widget {
-                        widget,
-                        flex,
-                        basis,
-                        ..
-                    } => {
-                        if *flex > 0. {
-                            match effective_basis(*basis, *flex) {
-                                FlexBasis::Auto => {
-                                    // Auto basis is always MaxContent, so this child doesn't want
-                                    // any extra flex space regardless if the request is Min or Max.
-                                    0.
-                                }
-                                FlexBasis::Zero => {
-                                    let child_length = ctx.compute_length(
-                                        widget,
-                                        main_auto,
-                                        context_size,
-                                        main,
-                                        cross_space,
-                                    );
-                                    // Flexible children with a zero basis want to reach
-                                    // their target length purely with flex space.
-                                    child_length.get() / *flex
-                                }
-                            }
-                        } else {
-                            // Inflexible children remain at their basis size,
-                            // and don't want any extra flex space.
-                            0.
-                        }
-                    }
-                    Child::Spacer { .. } => {
-                        // Spacer basis fully covers its preferred size,
-                        // so spacers don't want any extra flex space.
-                        0.
-                    }
-                };
-                flex_fraction = flex_fraction.max(desired_flex_fraction);
-            }
-
-            // Calculate the total space needed for all children
-            let total_space_needed = self
-                .children
-                .iter()
-                .map(|child| match child {
-                    Child::Widget {
-                        flex,
-                        basis_resolved,
-                        ..
-                    }
-                    | Child::Spacer {
-                        flex,
-                        basis_resolved,
-                        ..
-                    } => f64::mul_add((*flex), flex_fraction, basis_resolved.get()),
-                })
-                .sum::<f64>();
-            length = length.saturating_add(total_space_needed.px());
-
-            // Add all the gap lengths
-            let gap_lengths = crate::layout_count(gap_count) * gap_length;
-            length = length.saturating_add(gap_lengths.px());
-        } else {
-            // Calculate the cross axis length
-
-            // If we know the main axis space then we can distribute it to children.
-            // This is important, because some widgets need it for accurate measurement.
-            // For example text uses it to set max advance.
-            let flex_fraction = main_space.map(|mut main_space| {
-                // Sum flex factors and subtract bases from main space.
-                let mut flex_sum = 0.;
-                for child in &mut self.children {
-                    match child {
-                        Child::Widget {
-                            flex,
-                            basis_resolved,
-                            ..
-                        }
-                        | Child::Spacer {
-                            flex,
-                            basis_resolved,
-                            ..
-                        } => {
-                            flex_sum += *flex;
-                            main_space = main_space.saturating_sub(*basis_resolved);
-                        }
-                    }
-                }
-
-                // Subtract gap lengths
-                let gap_lengths = crate::layout_count(gap_count) * gap_length;
-                main_space = main_space.saturating_sub(gap_lengths.px());
-
-                // Calculate the flex fraction, i.e. the amount of space per one flex factor
-                if flex_sum > 0. {
-                    main_space.get() / flex_sum
-                } else {
-                    0.
-                }
-            });
-
-            // Calculate the total space needed for all children
-            for child in &mut self.children {
-                match child {
-                    Child::Widget {
-                        widget,
-                        flex,
-                        basis_resolved,
-                        ..
-                    } => {
-                        let child_main_length = flex_fraction.map(|flex_fraction| {
-                            basis_resolved.saturating_add((*flex * flex_fraction).px())
-                        });
-                        let cross_auto = len_req.into();
-
-                        let child_cross_length = ctx.compute_length(
-                            widget,
-                            cross_auto,
-                            context_size,
-                            cross,
-                            child_main_length,
-                        );
-
-                        length = length.max(child_cross_length);
-                    }
-                    // Spacers don't contribute to cross length
-                    Child::Spacer { .. } => (),
-                }
-            }
-
-            // Gaps don't contribute to the cross axis
-        }
-
-        min_result.max(length)
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, props: &PropertiesRef<'_>, size: Size) {
-        let cache = ctx.property_cache();
-        let gap = props.get::<Gap>(cache);
-        let gap_length = gap.gap.get();
-        let gap_count = self.children.len().saturating_sub(1);
-
+impl Flex {
+    fn layout_children(&mut self, ctx: &mut LayoutCtx<'_>, size: Size, gap_length: f64) -> Length {
         let main = self.direction;
         let cross = main.cross();
         let cross_space = size.get_coord(cross).px();
-
+        let cross_alignment = self.cross_alignment;
+        let gap_count = self.children.len().saturating_sub(1);
         let mut main_space = (crate::layout_count(gap_count))
             .mul_add(-gap_length, size.get_coord(main))
             .max(0.)
@@ -969,7 +707,7 @@ impl Widget for Flex {
              child: &mut WidgetPod<dyn Widget + 'static>,
              child_main_length: Length,
              alignment: &Option<CrossAxisAlignment>| {
-                let cross_auto = match alignment.unwrap_or(self.cross_alignment) {
+                let cross_auto = match alignment.unwrap_or(cross_alignment) {
                     // Cross stretch is merely an auto fallback, not an immediate choice.
                     // That means that an explicit child length will override it, matching web.
                     CrossAxisAlignment::Stretch => LenDef::Fixed(cross_space),
@@ -987,63 +725,30 @@ impl Widget for Flex {
                 main.pack_size(child_main_length.get(), child_cross_length.get())
             };
 
-        // Sum flex factors, resolve bases, subtract bases from main space,
-        // and lay out inflexible widgets.
-        for child in &mut self.children {
-            match child {
+        self.resolve_bases(|widget| {
+            ctx.compute_length(
+                widget,
+                LenDef::MaxContent,
+                size.into(),
+                main,
+                Some(cross_space),
+            )
+        });
+        for child in &self.children {
+            let (flex, basis) = match child {
                 Child::Widget {
-                    widget,
-                    alignment,
                     flex,
-                    basis,
                     basis_resolved,
-                } => {
-                    match effective_basis(*basis, *flex) {
-                        FlexBasis::Auto => {
-                            // Basis is always resolved with a MaxContent fallback
-                            let main_auto = LenDef::MaxContent;
-                            *basis_resolved = ctx.compute_length(
-                                widget,
-                                main_auto,
-                                size.into(),
-                                main,
-                                Some(cross_space),
-                            );
-                            main_space = main_space.saturating_sub(*basis_resolved);
-                        }
-                        FlexBasis::Zero => {
-                            // TODO: When min/max constraints become a real thing,
-                            //      then need to account for them here, and also
-                            //      subtract the result for main_space.
-                            *basis_resolved = Length::ZERO;
-                        }
-                    }
-                    if *flex == 0. {
-                        let child_main_length = *basis_resolved;
-                        let child_size =
-                            compute_child_size(ctx, widget, child_main_length, alignment);
-
-                        ctx.run_layout(widget, child_size);
-                    } else {
-                        flex_sum += *flex;
-                    }
+                    ..
                 }
-                Child::Spacer {
+                | Child::Spacer {
                     flex,
-                    basis,
                     basis_resolved,
-                    length_resolved,
-                } => {
-                    *basis_resolved = *basis;
-                    main_space = main_space.saturating_sub(*basis_resolved);
-
-                    if *flex == 0. {
-                        *length_resolved = *basis_resolved;
-                    } else {
-                        flex_sum += *flex;
-                    }
-                }
-            }
+                    ..
+                } => (*flex, *basis_resolved),
+            };
+            main_space = main_space.saturating_sub(basis);
+            flex_sum += flex;
         }
 
         // Calculate the flex fraction, i.e. the amount of space per one flex factor
@@ -1053,7 +758,7 @@ impl Widget for Flex {
             0.
         };
 
-        // Offer the available space to flexible children
+        // Every child's final size consists of its base and its share of free space.
         for child in &mut self.children {
             match child {
                 Child::Widget {
@@ -1062,17 +767,11 @@ impl Widget for Flex {
                     flex,
                     basis_resolved,
                     ..
-                } if *flex > 0. => {
-                    // Currently we just decide the space distribution in one go.
-                    // When Flex gets configurable grow/shrink support,
-                    // and min/max style constraints get implemented,
-                    // this distribution will need to evolve into a looped solver.
-                    let child_main_length =
-                        basis_resolved.saturating_add((*flex * flex_fraction).px());
+                } => {
+                    let extra = (*flex * flex_fraction).px();
+                    let child_main_length = basis_resolved.saturating_add(extra);
                     let child_size = compute_child_size(ctx, widget, child_main_length, alignment);
-
                     ctx.run_layout(widget, child_size);
-
                     main_space = main_space
                         .saturating_sub(child_main_length.saturating_sub(*basis_resolved));
                 }
@@ -1081,26 +780,20 @@ impl Widget for Flex {
                     basis_resolved,
                     length_resolved,
                     ..
-                } if *flex > 0. => {
-                    let child_main_length =
-                        basis_resolved.saturating_add((*flex * flex_fraction).px());
-                    *length_resolved = child_main_length;
+                } => {
+                    *length_resolved = basis_resolved.saturating_add((*flex * flex_fraction).px());
                     main_space =
                         main_space.saturating_sub(length_resolved.saturating_sub(*basis_resolved));
                 }
-                _ => (),
             }
         }
 
-        // We only distribute free space around widgets, not spacers.
-        let widget_count = self
-            .children
-            .iter()
-            .filter(|child| child.is_widget())
-            .count();
-        let (space_before, space_between) =
-            get_spacing(self.main_alignment, main_space.get(), widget_count);
+        main_space
+    }
 
+    fn alignment_baselines(&self, ctx: &LayoutCtx<'_>) -> (Option<f64>, Option<f64>) {
+        let main = self.direction;
+        let cross = main.cross();
         // Determine the shared cross alignment baselines.
         // As we currently only support the horizontal-tb writing mode, we do it only for rows.
         let mut alignment_ascent: Option<f64> = None;
@@ -1137,10 +830,291 @@ impl Widget for Flex {
                             _ => (),
                         }
                     }
-                    _ => (),
+                    Child::Spacer { .. } => (),
                 }
             }
         }
+
+        (alignment_ascent, alignment_descent)
+    }
+
+    // Both measurement and layout resolve the same bases against the main axis.
+    fn resolve_bases(&mut self, mut compute: impl FnMut(&WidgetPod<dyn Widget>) -> Length) {
+        for child in &mut self.children {
+            match child {
+                Child::Widget {
+                    widget,
+                    flex,
+                    basis,
+                    basis_resolved,
+                    ..
+                } => {
+                    *basis_resolved = match effective_basis(*basis, *flex) {
+                        FlexBasis::Auto => compute(widget),
+                        FlexBasis::Zero => Length::ZERO,
+                    };
+                }
+                Child::Spacer {
+                    basis,
+                    basis_resolved,
+                    ..
+                } => *basis_resolved = *basis,
+            }
+        }
+    }
+
+    fn measure_main(
+        &mut self,
+        ctx: &mut MeasureCtx<'_>,
+        len_req: LenReq,
+        context_size: LayoutSize,
+        cross_space: Option<Length>,
+        gap_length: f64,
+    ) -> Length {
+        let main = self.direction;
+        let gap_count = self.children.len().saturating_sub(1);
+        let mut length = Length::ZERO;
+        // Calculate the main axis length
+
+        // Find the largest desired flex fraction
+        let mut flex_fraction: f64 = 0.;
+        let main_auto = len_req.into();
+
+        for child in &mut self.children {
+            let desired_flex_fraction = match child {
+                Child::Widget {
+                    widget,
+                    flex,
+                    basis,
+                    ..
+                } => {
+                    if *flex > 0. {
+                        match effective_basis(*basis, *flex) {
+                            FlexBasis::Auto => {
+                                // Auto basis is always MaxContent, so this child doesn't want
+                                // any extra flex space regardless if the request is Min or Max.
+                                0.
+                            }
+                            FlexBasis::Zero => {
+                                let child_length = ctx.compute_length(
+                                    widget,
+                                    main_auto,
+                                    context_size,
+                                    main,
+                                    cross_space,
+                                );
+                                // Flexible children with a zero basis want to reach
+                                // their target length purely with flex space.
+                                child_length.get() / *flex
+                            }
+                        }
+                    } else {
+                        // Inflexible children remain at their basis size,
+                        // and don't want any extra flex space.
+                        0.
+                    }
+                }
+                Child::Spacer { .. } => {
+                    // Spacer basis fully covers its preferred size,
+                    // so spacers don't want any extra flex space.
+                    0.
+                }
+            };
+            flex_fraction = flex_fraction.max(desired_flex_fraction);
+        }
+
+        // Calculate the total space needed for all children
+        let total_space_needed = self
+            .children
+            .iter()
+            .map(|child| match child {
+                Child::Widget {
+                    flex,
+                    basis_resolved,
+                    ..
+                }
+                | Child::Spacer {
+                    flex,
+                    basis_resolved,
+                    ..
+                } => f64::mul_add(*flex, flex_fraction, basis_resolved.get()),
+            })
+            .sum::<f64>();
+        length = length.saturating_add(total_space_needed.px());
+
+        // Add all the gap lengths
+        let gap_lengths = crate::layout_count(gap_count) * gap_length;
+        length = length.saturating_add(gap_lengths.px());
+        length
+    }
+
+    fn measure_cross(
+        &mut self,
+        ctx: &mut MeasureCtx<'_>,
+        len_req: LenReq,
+        context_size: LayoutSize,
+        main_space: Option<Length>,
+        gap_length: f64,
+    ) -> Length {
+        let cross = self.direction.cross();
+        let gap_count = self.children.len().saturating_sub(1);
+        let mut length = Length::ZERO;
+        // Calculate the cross axis length
+
+        // If we know the main axis space then we can distribute it to children.
+        // This is important, because some widgets need it for accurate measurement.
+        // For example text uses it to set max advance.
+        let flex_fraction = main_space.map(|mut main_space| {
+            // Sum flex factors and subtract bases from main space.
+            let mut flex_sum = 0.;
+            for child in &mut self.children {
+                match child {
+                    Child::Widget {
+                        flex,
+                        basis_resolved,
+                        ..
+                    }
+                    | Child::Spacer {
+                        flex,
+                        basis_resolved,
+                        ..
+                    } => {
+                        flex_sum += *flex;
+                        main_space = main_space.saturating_sub(*basis_resolved);
+                    }
+                }
+            }
+
+            // Subtract gap lengths
+            let gap_lengths = crate::layout_count(gap_count) * gap_length;
+            main_space = main_space.saturating_sub(gap_lengths.px());
+
+            // Calculate the flex fraction, i.e. the amount of space per one flex factor
+            if flex_sum > 0. {
+                main_space.get() / flex_sum
+            } else {
+                0.
+            }
+        });
+
+        // Calculate the total space needed for all children
+        for child in &mut self.children {
+            match child {
+                Child::Widget {
+                    widget,
+                    flex,
+                    basis_resolved,
+                    ..
+                } => {
+                    let child_main_length = flex_fraction.map(|flex_fraction| {
+                        basis_resolved.saturating_add((*flex * flex_fraction).px())
+                    });
+                    let cross_auto = len_req.into();
+
+                    let child_cross_length = ctx.compute_length(
+                        widget,
+                        cross_auto,
+                        context_size,
+                        cross,
+                        child_main_length,
+                    );
+
+                    length = length.max(child_cross_length);
+                }
+                // Spacers don't contribute to cross length
+                Child::Spacer { .. } => (),
+            }
+        }
+
+        // Gaps don't contribute to the cross axis
+        length
+    }
+}
+
+impl UsesProperty<Gap> for Flex {}
+
+// --- MARK: IMPL WIDGET
+impl Widget for Flex {
+    type Action = NoAction;
+
+    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
+        for child in self.children.iter_mut().filter_map(|x| x.widget_mut()) {
+            ctx.register_child(child);
+        }
+    }
+
+    fn property_changed(&mut self, ctx: &mut UpdateCtx<'_>, property_type: TypeId) {
+        Gap::prop_changed(ctx, property_type);
+    }
+
+    fn measure(
+        &mut self,
+        ctx: &mut MeasureCtx<'_>,
+        props: &PropertiesRef<'_>,
+        // The usual axis input has been named measure_axis here,
+        // to make it harder to use it in the wrong context by accident.
+        measure_axis: Axis,
+        len_req: LenReq,
+        // The usual cross_length input has been named perp_length here,
+        // to remove the collision with flex cross, which might not match.
+        perp_length: Option<Length>,
+    ) -> Length {
+        let perp = measure_axis.cross();
+        let main = self.direction;
+
+        let cache = ctx.property_cache();
+        let gap = props.get::<Gap>(cache);
+
+        let gap_length = gap.gap.get();
+        let (main_space, cross_space) = if perp == main {
+            (perp_length, None)
+        } else {
+            (None, perp_length)
+        };
+        let context_size = LayoutSize::maybe(perp, perp_length);
+
+        let (len_req, min_result) = match len_req {
+            LenReq::Min | LenReq::Max => (len_req, Length::ZERO),
+            // We always want to use up all offered space but may need even more,
+            // so we implement FitContent as space.max(MinContent).
+            LenReq::Fit(space) => (LenReq::Min, space),
+        };
+
+        // Without a main constraint, cross measurement does not consume resolved bases.
+        if measure_axis == main || main_space.is_some() {
+            self.resolve_bases(|widget| {
+                ctx.compute_length(widget, LenDef::MaxContent, context_size, main, cross_space)
+            });
+        }
+        let length = if measure_axis == main {
+            self.measure_main(ctx, len_req, context_size, cross_space, gap_length)
+        } else {
+            self.measure_cross(ctx, len_req, context_size, main_space, gap_length)
+        };
+
+        min_result.max(length)
+    }
+
+    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, props: &PropertiesRef<'_>, size: Size) {
+        let cache = ctx.property_cache();
+        let gap = props.get::<Gap>(cache);
+        let gap_length = gap.gap.get();
+        let main = self.direction;
+        let cross = main.cross();
+        let cross_space = size.get_coord(cross).px();
+
+        let main_space = self.layout_children(ctx, size, gap_length);
+
+        // We only distribute free space around widgets, not spacers.
+        let widget_count = self
+            .children
+            .iter()
+            .filter(|child| child.is_widget())
+            .count();
+        let (space_before, space_between) =
+            get_spacing(self.main_alignment, main_space.get(), widget_count);
+
+        let (alignment_ascent, alignment_descent) = self.alignment_baselines(ctx);
 
         // Distribute free space and place children
         let mut main_offset = space_before;

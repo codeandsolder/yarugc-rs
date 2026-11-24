@@ -124,21 +124,16 @@ impl Widget for Align {
     ) -> Length {
         let child_length = ctx.measure_child(&self.child, axis, len_req, cross_length);
 
-        // Default to child length
-        let mut length = if let LenReq::Fit(space) = len_req {
+        let factor = match axis {
+            Axis::Horizontal => self.width_factor,
+            Axis::Vertical => self.height_factor,
+        };
+        let default = if let LenReq::Fit(space) = len_req {
             space
         } else {
             child_length
         };
-
-        // Potentially override with a multiple of child length,
-        // which could be less than the parent specified bounds.
-        if let Some(factor) = match axis {
-            Axis::Horizontal => self.width_factor,
-            Axis::Vertical => self.height_factor,
-        } {
-            length = (child_length.get() * factor).px();
-        }
+        let mut length = factor.map_or(default, |factor| (child_length.get() * factor).px());
 
         // Never return a length larger than the bounds
         if let LenReq::Fit(space) = len_req {

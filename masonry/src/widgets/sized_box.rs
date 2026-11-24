@@ -252,7 +252,7 @@ impl Widget for SizedBox {
         }
 
         // Otherwise measure the child
-        if let Some(child) = self.child.as_mut() {
+        self.child.as_mut().map_or(Length::ZERO, |child| {
             let cross = axis.cross();
             let cross_length = cross_length.or_else(|| {
                 // Can't use self.length() due to borrow checker stupidity,
@@ -272,9 +272,7 @@ impl Widget for SizedBox {
             let context_size = LayoutSize::maybe(cross, cross_length);
 
             ctx.compute_length(child, auto_length, context_size, axis, cross_length)
-        } else {
-            Length::ZERO
-        }
+        })
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
@@ -310,11 +308,7 @@ impl Widget for SizedBox {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        if let Some(child) = &self.child {
-            ChildrenIds::from_slice(&[child.id()])
-        } else {
-            ChildrenIds::from_slice(&[])
-        }
+        self.child.iter().map(WidgetPod::id).collect()
     }
 
     fn make_trace_span(&self, id: WidgetId) -> Span {

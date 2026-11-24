@@ -286,7 +286,7 @@ impl Widget for CollapsePanel {
             ctx.place_child(&self.child, child_origin);
 
             self.separator_line_y =
-                Some(header_height + SEPARATOR_PAD.top.get() + border_width * 0.5);
+                Some(border_width.mul_add(0.5, header_height + SEPARATOR_PAD.top.get()));
         }
 
         ctx.derive_baselines(&self.header_label);

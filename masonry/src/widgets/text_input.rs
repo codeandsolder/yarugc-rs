@@ -301,9 +301,7 @@ impl Widget for TextInput {
 
         ctx.derive_baselines(&self.text);
 
-        let text_is_empty = ctx
-            .get_child(&self.text)
-            .is_some_and(super::text_area::TextArea::is_empty);
+        let text_is_empty = ctx.get_child(&self.text).is_some_and(TextArea::is_empty);
         ctx.set_stashed(&self.placeholder, !text_is_empty);
         if text_is_empty {
             ctx.run_layout(&self.placeholder, size);

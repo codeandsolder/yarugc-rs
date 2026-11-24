@@ -219,6 +219,11 @@ impl Widget for ColorRectangle {
 // Implementation from "Reading widget properties" tutorial.
 #[expect(dead_code, reason = "example code")]
 impl ColorRectangle {
+    #[expect(clippy::unused_self, reason = "Tutorial mirrors Widget::paint")]
+    #[expect(
+        clippy::needless_pass_by_ref_mut,
+        reason = "Tutorial mirrors Widget::paint"
+    )]
     fn paint(
         &mut self,
         ctx: &mut PaintCtx<'_>,

@@ -604,10 +604,12 @@ impl Widget for VirtualScroll {
         let delta = match (key, self.direction.axis()) {
             (NamedKey::PageDown, _) => Some((DELTA_PAGE, true)),
             (NamedKey::PageUp, _) => Some((-DELTA_PAGE, true)),
-            (NamedKey::ArrowDown, Axis::Vertical) => Some((DELTA_LINE, false)),
-            (NamedKey::ArrowUp, Axis::Vertical) => Some((-DELTA_LINE, false)),
-            (NamedKey::ArrowLeft, Axis::Horizontal) => Some((DELTA_LINE, false)),
-            (NamedKey::ArrowRight, Axis::Horizontal) => Some((-DELTA_LINE, false)),
+            (NamedKey::ArrowDown, Axis::Vertical) | (NamedKey::ArrowLeft, Axis::Horizontal) => {
+                Some((DELTA_LINE, false))
+            }
+            (NamedKey::ArrowUp, Axis::Vertical) | (NamedKey::ArrowRight, Axis::Horizontal) => {
+                Some((-DELTA_LINE, false))
+            }
             _ => None,
         };
         if let Some((delta, direct)) = delta {

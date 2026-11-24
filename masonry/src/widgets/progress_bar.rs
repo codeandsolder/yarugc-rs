@@ -60,19 +60,14 @@ impl ProgressBar {
 // --- MARK: METHODS
 impl ProgressBar {
     fn value_accessibility(&self) -> Box<str> {
-        if let Some(value) = self.progress {
-            format!("{:.0}%", value * 100.).into()
-        } else {
-            "progress unspecified".into()
-        }
+        self.progress.map_or_else(
+            || "progress unspecified".into(),
+            |value| format!("{:.0}%", value * 100.).into(),
+        )
     }
 
     fn value(progress: Option<f64>) -> ArcStr {
-        if let Some(value) = progress {
-            format!("{:.0}%", value * 100.).into()
-        } else {
-            "".into()
-        }
+        progress.map_or_else(|| "".into(), |value| format!("{:.0}%", value * 100.).into())
     }
 }
 

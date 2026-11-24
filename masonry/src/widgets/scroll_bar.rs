@@ -59,7 +59,7 @@ impl ScrollBar {
     /// - `portal_size`: Size of the scrolling container in the relevant axis.
     /// - `content_size`: Size of the child in the relevant axis. Usually exceeds `portal_size` in cases where the scrollbar is visible.
     #[must_use = "Use the returned value."]
-    pub fn new(axis: Axis, portal_size: f64, content_size: f64) -> Self {
+    pub const fn new(axis: Axis, portal_size: f64, content_size: f64) -> Self {
         Self {
             axis,
             cursor_progress: 0.0,

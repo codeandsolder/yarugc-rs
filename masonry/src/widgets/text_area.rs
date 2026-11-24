@@ -26,7 +26,7 @@ use crate::util::debug_panic;
 use crate::{TextAlign, theme};
 
 // Inherit the resolved parent property after registration and property updates.
-pub(crate) fn inherit_property<
+pub(super) fn inherit_property<
     P: Property,
     Q: Property,
     W: Widget + crate::core::FromDynWidget + ?Sized,
@@ -1083,7 +1083,7 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
         if EDITABLE {
             match self.insert_newline {
                 InsertNewline::OnShiftEnter | InsertNewline::OnEnter => Role::MultilineTextInput,
-                _ => Role::TextInput,
+                InsertNewline::Never => Role::TextInput,
             }
         } else {
             Role::Document

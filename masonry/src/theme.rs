@@ -17,6 +17,7 @@ use crate::properties::{
     CheckmarkStrokeWidth, ContentColor, CornerRadius, Dimensions, Gap, Padding, PlaceholderColor,
     SelectionColor, ThumbColor, ThumbRadius, TrackColor, TrackThickness,
 };
+use crate::widgets::Selector as SelectorButton;
 use crate::widgets::{
     Badge, Button, Checkbox, DisclosureButton, Divider, Flex, Grid, Label, ProgressBar, Prose,
     RadioButton, SelectorItem, Slider, Spinner, StepInput, Steppable, Switch, TextArea, TextInput,
@@ -90,6 +91,31 @@ pub const SELECTOR_MIN_WIDTH: f64 = 100.0;
 pub fn default_property_set() -> DefaultProperties {
     let mut properties = DefaultProperties::new();
 
+    badge_theme(&mut properties);
+    button_theme(&mut properties);
+    switch_theme(&mut properties);
+    selector_theme(&mut properties);
+    text_theme(&mut properties);
+    numeric_theme(&mut properties);
+
+    // StepInput
+    default_step_input_style::<u8>(&mut properties);
+    default_step_input_style::<i8>(&mut properties);
+    default_step_input_style::<u16>(&mut properties);
+    default_step_input_style::<i16>(&mut properties);
+    default_step_input_style::<u32>(&mut properties);
+    default_step_input_style::<i32>(&mut properties);
+    default_step_input_style::<u64>(&mut properties);
+    default_step_input_style::<i64>(&mut properties);
+    default_step_input_style::<usize>(&mut properties);
+    default_step_input_style::<isize>(&mut properties);
+    default_step_input_style::<f32>(&mut properties);
+    default_step_input_style::<f64>(&mut properties);
+
+    properties
+}
+
+fn badge_theme(properties: &mut DefaultProperties) {
     // Badge
     properties.insert::<Badge, _>(Padding::from_vh(3.px(), 5.px()));
     properties.insert::<Badge, _>(CornerRadius { radius: 999.px() });
@@ -104,7 +130,9 @@ pub fn default_property_set() -> DefaultProperties {
         );
         properties.insert_stack::<Badge>(stack);
     }
+}
 
+fn button_theme(properties: &mut DefaultProperties) {
     // Button
     properties.insert::<Button, _>(Padding::from_vh(6.px(), 16.px()));
     properties.insert::<Button, _>(CornerRadius { radius: 6.px() });
@@ -167,7 +195,9 @@ pub fn default_property_set() -> DefaultProperties {
         );
         properties.insert_stack::<Checkbox>(stack);
     }
+}
 
+fn switch_theme(properties: &mut DefaultProperties) {
     // DisclosureButton
     properties.insert::<DisclosureButton, _>(ContentColor::new(DIM_GRAY));
     properties.insert::<DisclosureButton, _>(Dimensions::fixed(
@@ -213,10 +243,9 @@ pub fn default_property_set() -> DefaultProperties {
         );
         properties.insert_stack::<Switch>(stack);
     }
+}
 
-    // FIXME
-    use crate::widgets::Selector as SelectorButton;
-
+fn selector_theme(properties: &mut DefaultProperties) {
     // Selector
     properties.insert::<SelectorButton, _>(Padding::from_vh(6.px(), 16.px()));
     properties.insert::<SelectorButton, _>(CornerRadius { radius: 2.px() });
@@ -268,7 +297,9 @@ pub fn default_property_set() -> DefaultProperties {
 
     // Grid
     properties.insert::<Grid, _>(Gap::ZERO);
+}
 
+fn text_theme(properties: &mut DefaultProperties) {
     // TextInput
     properties.insert::<TextInput, _>(Padding::from_vh(6.px(), 12.px()));
     properties.insert::<TextInput, _>(CornerRadius { radius: 4.px() });
@@ -301,33 +332,8 @@ pub fn default_property_set() -> DefaultProperties {
         properties.insert_stack::<TextInput>(stack);
     }
 
-    // TextArea
-    properties.insert::<TextArea<false>, _>(ContentColor::new(TEXT_COLOR));
-    properties.insert::<TextArea<false>, _>(CaretColor { color: TEXT_COLOR });
-    properties.insert::<TextArea<false>, _>(SelectionColor {
-        color: ACCENT_COLOR,
-    });
-    {
-        let mut stack = PropertyStack::new();
-        stack.push_layer(
-            Selector::new().with_disabled(true),
-            ContentColor::new(DISABLED_TEXT_COLOR),
-        );
-        properties.insert_stack::<TextArea<false>>(stack);
-    }
-    properties.insert::<TextArea<true>, _>(ContentColor::new(TEXT_COLOR));
-    properties.insert::<TextArea<true>, _>(CaretColor { color: TEXT_COLOR });
-    properties.insert::<TextArea<true>, _>(SelectionColor {
-        color: ACCENT_COLOR,
-    });
-    {
-        let mut stack = PropertyStack::new();
-        stack.push_layer(
-            Selector::new().with_disabled(true),
-            ContentColor::new(DISABLED_TEXT_COLOR),
-        );
-        properties.insert_stack::<TextArea<true>>(stack);
-    }
+    text_area_theme::<false>(properties);
+    text_area_theme::<true>(properties);
 
     // Prose
     properties.insert::<Prose, _>(CaretColor { color: TEXT_COLOR });
@@ -356,7 +362,9 @@ pub fn default_property_set() -> DefaultProperties {
         );
         properties.insert_stack::<Label>(stack);
     }
+}
 
+fn numeric_theme(properties: &mut DefaultProperties) {
     // ProgressBar
     properties.insert::<ProgressBar, _>(CornerRadius { radius: 2.px() });
     properties.insert::<ProgressBar, _>(BorderWidth {
@@ -427,22 +435,6 @@ pub fn default_property_set() -> DefaultProperties {
     });
     properties.insert::<Spinner, _>(TrackThickness(8.px()));
     properties.insert::<Spinner, _>(AnimationDuration { seconds: 1.2 });
-
-    // StepInput
-    default_step_input_style::<u8>(&mut properties);
-    default_step_input_style::<i8>(&mut properties);
-    default_step_input_style::<u16>(&mut properties);
-    default_step_input_style::<i16>(&mut properties);
-    default_step_input_style::<u32>(&mut properties);
-    default_step_input_style::<i32>(&mut properties);
-    default_step_input_style::<u64>(&mut properties);
-    default_step_input_style::<i64>(&mut properties);
-    default_step_input_style::<usize>(&mut properties);
-    default_step_input_style::<isize>(&mut properties);
-    default_step_input_style::<f32>(&mut properties);
-    default_step_input_style::<f64>(&mut properties);
-
-    properties
 }
 
 /// Applies the default text styles for Masonry into `styles`.
@@ -491,4 +483,20 @@ fn default_step_input_style<T: Steppable>(properties: &mut DefaultProperties) {
 #[cfg(test)]
 pub(crate) fn test_property_set() -> DefaultProperties {
     default_property_set()
+}
+
+fn text_area_theme<const EDITABLE: bool>(properties: &mut DefaultProperties) {
+    properties.insert::<TextArea<EDITABLE>, _>(ContentColor::new(TEXT_COLOR));
+    properties.insert::<TextArea<EDITABLE>, _>(CaretColor { color: TEXT_COLOR });
+    properties.insert::<TextArea<EDITABLE>, _>(SelectionColor {
+        color: ACCENT_COLOR,
+    });
+    {
+        let mut stack = PropertyStack::new();
+        stack.push_layer(
+            Selector::new().with_disabled(true),
+            ContentColor::new(DISABLED_TEXT_COLOR),
+        );
+        properties.insert_stack::<TextArea<EDITABLE>>(stack);
+    }
 }

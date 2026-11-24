@@ -1,16 +1,10 @@
 // Copyright 2025 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use accesskit::{Node, Role};
+use accesskit::Role;
 use tracing::{Span, trace_span};
 
-use crate::core::{
-    AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesRef,
-    RegisterCtx, Widget, WidgetId, WidgetPod,
-};
-use crate::imaging::Painter;
-use crate::kurbo::{Axis, Point, Size};
-use crate::layout::{LenReq, Length};
+use crate::core::{NewWidget, NoAction, Widget, WidgetId, WidgetPod};
 
 /// A pass-through container that hosts exactly one child, which may be replaced dynamically.
 ///
@@ -76,49 +70,10 @@ impl Passthrough {
 impl Widget for Passthrough {
     type Action = NoAction;
 
-    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.inner);
-    }
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        axis: Axis,
-        _len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        ctx.redirect_measurement(&self.inner, axis, cross_length)
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        ctx.run_layout(&self.inner, size);
-        ctx.place_child(&self.inner, Point::ORIGIN);
-        ctx.derive_baselines(&self.inner);
-    }
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-    }
+    masonry_core::single_child_container!(inner, fill);
 
     fn accessibility_role(&self) -> Role {
         Role::GenericContainer
-    }
-
-    fn accessibility(
-        &mut self,
-        _ctx: &mut AccessCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _node: &mut Node,
-    ) {
-    }
-
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.inner.id()])
     }
 
     fn make_trace_span(&self, id: WidgetId) -> Span {

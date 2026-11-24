@@ -27,8 +27,40 @@ use crate::layout::{LenReq, Length};
 /// pre-paint pass still draws its background and border.
 /// The widget implements its own accessibility role, attributes, and events.
 /// Optionally, specify minimum horizontal and vertical lengths.
+/// Use the `fill` form to redirect measurement and fill the entire content box.
 #[macro_export]
 macro_rules! single_child_container {
+    ($child:ident, fill $(,)?) => {
+        fn register_children(&mut self, ctx: &mut $crate::core::RegisterCtx<'_>) {
+            ctx.register_child(&mut self.$child);
+        }
+
+        fn measure(
+            &mut self,
+            ctx: &mut $crate::core::MeasureCtx<'_>,
+            _props: &$crate::core::PropertiesRef<'_>,
+            axis: $crate::kurbo::Axis,
+            _len_req: $crate::layout::LenReq,
+            cross_length: Option<$crate::layout::Length>,
+        ) -> $crate::layout::Length {
+            ctx.redirect_measurement(&self.$child, axis, cross_length)
+        }
+
+        fn layout(
+            &mut self,
+            ctx: &mut $crate::core::LayoutCtx<'_>,
+            _props: &$crate::core::PropertiesRef<'_>,
+            size: $crate::kurbo::Size,
+        ) {
+            ctx.run_layout(&self.$child, size);
+            ctx.place_child(&self.$child, $crate::kurbo::Point::ORIGIN);
+            ctx.derive_baselines(&self.$child);
+        }
+
+        fn children_ids(&self) -> $crate::core::ChildrenIds {
+            $crate::core::ChildrenIds::from_slice(&[self.$child.id()])
+        }
+    };
     ($child:ident, $alignment:expr $(, min = ($width:expr, $height:expr $(,)?))? $(,)?) => {
         fn register_children(&mut self, ctx: &mut $crate::core::RegisterCtx<'_>) {
             ctx.register_child(&mut self.$child);
@@ -59,13 +91,6 @@ macro_rules! single_child_container {
             ctx.layout_child(&mut self.$child, size, $alignment);
         }
 
-        fn paint(
-            &mut self,
-            _ctx: &mut $crate::core::PaintCtx<'_>,
-            _props: &$crate::core::PropertiesRef<'_>,
-            _painter: &mut $crate::imaging::Painter<'_>,
-        ) {
-        }
 
         fn children_ids(&self) -> $crate::core::ChildrenIds {
             $crate::core::ChildrenIds::from_slice(&[self.$child.id()])
@@ -451,10 +476,11 @@ pub trait Widget: AsDynWidget + Any {
     /// To draw on top of children, see [`Widget::post_paint`].
     fn paint(
         &mut self,
-        ctx: &mut PaintCtx<'_>,
-        props: &PropertiesRef<'_>,
-        painter: &mut Painter<'_>,
-    );
+        _ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        _painter: &mut Painter<'_>,
+    ) {
+    }
 
     /// Final paint method, which paints on top of the widget's children.
     ///
@@ -482,10 +508,11 @@ pub trait Widget: AsDynWidget + Any {
     /// be re-applied by this method every time it's called.
     fn accessibility(
         &mut self,
-        ctx: &mut AccessCtx<'_>,
-        props: &PropertiesRef<'_>,
-        node: &mut Node,
-    );
+        _ctx: &mut AccessCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        _node: &mut Node,
+    ) {
+    }
 
     /// Returns ids of this widget's children.
     ///

@@ -5,6 +5,39 @@
 //!
 //! See [properties documentation](crate::doc::widget_properties) for details.
 
+// Each color has its own property identity while sharing its value representation.
+macro_rules! color_property {
+    ($(#[$meta:meta])* $name:ident) => {
+        $(#[$meta])*
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        pub struct $name {
+            /// Resolved color.
+            pub color: crate::peniko::color::AlphaColor<crate::peniko::color::Srgb>,
+        }
+
+        impl crate::core::Property for $name {
+            fn static_default() -> &'static Self {
+                static DEFAULT: $name = $name::new(crate::peniko::color::AlphaColor::BLACK);
+                &DEFAULT
+            }
+        }
+
+        impl $name {
+            /// Creates this property with the supplied color.
+            #[must_use = "Use the returned property."]
+            pub const fn new(color: crate::peniko::color::AlphaColor<crate::peniko::color::Srgb>) -> Self {
+                Self { color }
+            }
+        }
+
+        impl Default for $name {
+            fn default() -> Self {
+                *<Self as crate::core::Property>::static_default()
+            }
+        }
+    };
+}
+
 mod animation;
 mod checkmark;
 mod content_color;

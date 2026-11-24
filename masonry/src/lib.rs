@@ -317,7 +317,7 @@ fn swap_slots<T>(slots: &mut [T], a: usize, b: usize) -> Result<(), core::Collec
     clippy::cast_precision_loss,
     reason = "Layout coordinates use floating-point logical pixels, not exact integer counts."
 )]
-fn layout_count(count: usize) -> f64 {
+const fn layout_count(count: usize) -> f64 {
     count as f64
 }
 

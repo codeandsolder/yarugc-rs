@@ -1,17 +1,13 @@
 // Copyright 2019 the Xilem Authors and the Druid Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use accesskit::{Node, Role};
+use accesskit::Role;
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, ArcStr, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
-    PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, Update, UpdateCtx, Widget, WidgetId,
+    ArcStr, NewWidget, NoAction, PropertiesMut, StyleProperty, Update, UpdateCtx, Widget, WidgetId,
     WidgetMut, WidgetPod,
 };
-use crate::imaging::Painter;
-use crate::kurbo::{Axis, Point, Size};
-use crate::layout::{LenReq, Length};
 use crate::parley::style::FontWeight;
 use crate::widgets::Label;
 
@@ -168,7 +164,7 @@ impl VariableLabel {
 
     /// Sets the initial font weight for this text.
     #[must_use = "Use the returned value."]
-    pub fn with_initial_weight(mut self, weight: f32) -> Self {
+    pub const fn with_initial_weight(mut self, weight: f32) -> Self {
         self.weight = AnimatedF32::stable(weight);
         self
     }
@@ -212,9 +208,7 @@ impl Widget for VariableLabel {
     ) {
     }
 
-    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.label);
-    }
+    masonry_core::single_child_container!(label, fill);
 
     fn on_anim_frame(
         &mut self,
@@ -243,45 +237,8 @@ impl Widget for VariableLabel {
         }
     }
 
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        axis: Axis,
-        _len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        ctx.redirect_measurement(&self.label, axis, cross_length)
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        ctx.run_layout(&self.label, size);
-        ctx.place_child(&self.label, Point::ORIGIN);
-        ctx.derive_baselines(&self.label);
-    }
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-    }
-
     fn accessibility_role(&self) -> Role {
         Role::GenericContainer
-    }
-
-    fn accessibility(
-        &mut self,
-        _ctx: &mut AccessCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _node: &mut Node,
-    ) {
-    }
-
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.label.id()])
     }
 
     fn make_trace_span(&self, id: WidgetId) -> Span {

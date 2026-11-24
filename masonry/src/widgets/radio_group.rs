@@ -1,16 +1,10 @@
 // Copyright 2026 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use accesskit::{Node, Role};
+use accesskit::Role;
 use tracing::{Span, trace_span};
 
-use crate::core::{
-    AccessCtx, ChildrenIds, FromDynWidget, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
-    PropertiesRef, RegisterCtx, Widget, WidgetId, WidgetMut, WidgetPod,
-};
-use crate::imaging::Painter;
-use crate::kurbo::{Axis, Point, Size};
-use crate::layout::{LenReq, Length};
+use crate::core::{FromDynWidget, NewWidget, NoAction, Widget, WidgetId, WidgetMut, WidgetPod};
 
 /// A radio group container that holds radio buttons.
 pub struct RadioGroup {
@@ -45,49 +39,10 @@ impl Widget for RadioGroup {
 
     // TODO: navigation shortcuts.
 
-    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.child);
-    }
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        axis: Axis,
-        _len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        ctx.redirect_measurement(&self.child, axis, cross_length)
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        ctx.run_layout(&self.child, size);
-        ctx.place_child(&self.child, Point::ORIGIN);
-        ctx.derive_baselines(&self.child);
-    }
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-    }
+    masonry_core::single_child_container!(child, fill);
 
     fn accessibility_role(&self) -> Role {
         Role::RadioGroup
-    }
-
-    fn accessibility(
-        &mut self,
-        _ctx: &mut AccessCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _node: &mut Node,
-    ) {
-    }
-
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.child.id()])
     }
 
     fn make_trace_span(&self, id: WidgetId) -> Span {

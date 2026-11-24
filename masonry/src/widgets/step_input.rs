@@ -862,7 +862,7 @@ impl<T: Steppable> StepInput<T> {
     /// Increments ticks by one step's worth.
     ///
     /// Returns `true` if the active value changed.
-    #[inline(always)]
+    #[inline]
     fn next_step(&mut self) -> bool {
         self.update_ticks(TICKS_PER_STEP, false).1
     }
@@ -870,7 +870,7 @@ impl<T: Steppable> StepInput<T> {
     /// Decrements ticks by one step's worth.
     ///
     /// Returns `true` if the active value changed.
-    #[inline(always)]
+    #[inline]
     fn prev_step(&mut self) -> bool {
         self.update_ticks(TICKS_PER_STEP.wrapping_neg(), false).1
     }
@@ -1516,7 +1516,7 @@ impl<T: Steppable> StepInput<T> {
     /// Returns `(length, edge_pad)` of a basic button given the `vertical_space`.
     ///
     /// If total horizontal space is know it will help prevent awkwardly large results.
-    #[inline(always)]
+    #[inline]
     fn basic_button_length(vertical_space: f64, horizontal_space: Option<f64>) -> (f64, f64) {
         Self::button_length(vertical_space, horizontal_space, 0.15)
     }
@@ -1524,7 +1524,7 @@ impl<T: Steppable> StepInput<T> {
     /// Returns `(width, height, edge_pad)` of a flow arrow given the `vertical_space`.
     ///
     /// If total horizontal space is know it will help prevent awkwardly large results.
-    #[inline(always)]
+    #[inline]
     fn flow_button_length(vertical_space: f64, horizontal_space: Option<f64>) -> (f64, f64, f64) {
         let (height, edge_pad) = Self::button_length(vertical_space, horizontal_space, 0.1);
         // The arrow is slightly taller than it is wider for artistic reasons.
@@ -1653,7 +1653,7 @@ impl<T: Steppable> StepInput<T> {
         // measured from the outer edge of the widget's content-box.
         let arrow_offset_base = f64::mul_add(arrow_width, arrow_move_range, arrow_edge_pad);
         // Active offset is closer to the edge based on the visual speed factor.
-        let arrow_move_active = f64::mul_add((arrow_move_range - 1.), -speed, arrow_move_range);
+        let arrow_move_active = f64::mul_add(arrow_move_range - 1., -speed, arrow_move_range);
         let arrow_offset_active = f64::mul_add(arrow_width, arrow_move_active, arrow_edge_pad);
         // Keep the offset within available space bounds if possible,
         // and favor overflowing towards the middle content not the widget bounds.

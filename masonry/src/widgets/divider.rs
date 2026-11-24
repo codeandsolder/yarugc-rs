@@ -455,20 +455,16 @@ impl Divider {
 fn length_with_whole_dashes(space: f64, dashes: &[f64]) -> (f64, SmallVec<[f64; 3]>) {
     let n = dashes.len();
 
-    let mut return_zero = false;
     if n < 2 || !n.is_multiple_of(2) {
         debug_panic!("Can only calculate whole dashes for actual dash pattern pairs");
-        return_zero = true;
+        return (0., SmallVec::from_elem(0., n / 2));
     }
-    if dashes.iter().any(|&v| v < 0.) {
-        debug_panic!("Negative dash lengths are not allowed");
-        return_zero = true;
+    if dashes.iter().any(|&v| !v.is_finite() || v < 0.) {
+        debug_panic!("Dash lengths must be finite and nonnegative");
+        return (0., SmallVec::from_elem(0., n / 2));
     }
     let cycle_length: f64 = dashes.iter().sum();
-    if cycle_length <= 0. || space <= 0. {
-        return_zero = true;
-    }
-    if return_zero {
+    if !cycle_length.is_finite() || cycle_length <= 0. || !space.is_finite() || space <= 0. {
         return (0., SmallVec::from_elem(0., n / 2));
     }
 
@@ -483,7 +479,7 @@ fn length_with_whole_dashes(space: f64, dashes: &[f64]) -> (f64, SmallVec<[f64; 
 
     // Add as many (dash, gap) pairs as possible to form the final partial cycle.
     for (i, pair) in dashes.as_chunks::<2>().0.iter().enumerate() {
-        let (dash, gap) = (pair[0], pair[1]);
+        let &[dash, gap] = pair;
         if dash > space_free {
             break;
         }
@@ -630,13 +626,11 @@ impl Widget for Divider {
         const DEFAULT_LENGTH: Length = crate::layout::length!(100.);
         let thickness = self.thickness.unwrap_or(crate::layout::length!(1.));
 
-        let content_length = if let Some(content) = &mut self.content {
+        let content_length = self.content.as_mut().map_or(Length::ZERO, |content| {
             let auto_length = len_req.into();
             let context_size = LayoutSize::maybe(axis.cross(), cross_length);
             ctx.compute_length(content, auto_length, context_size, axis, cross_length)
-        } else {
-            Length::ZERO
-        };
+        });
 
         if axis == self.axis {
             match len_req {
@@ -650,9 +644,6 @@ impl Widget for Divider {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        // Clear any previously laid out lines.
-        self.lines.clear();
-
         /// Stores the line layout info for painting.
         fn lay_out_line(
             this: &mut Divider,
@@ -674,7 +665,9 @@ impl Widget for Divider {
             });
         }
 
-        let thickness = self.thickness.map_or(1., masonry_core::layout::Length::get);
+        // Clear any previously laid out lines.
+        self.lines.clear();
+        let thickness = self.thickness.map_or(1., Length::get);
         let cross_pos = size.get_coord(self.axis.cross()) * 0.5;
         let mut dashes: SmallVec<[f64; 4]> = self.dash_pattern.iter().map(|l| l.get()).collect();
 
@@ -760,9 +753,7 @@ impl Widget for Divider {
 
         let cache = ctx.property_cache();
         let color = props.get::<ContentColor>(cache);
-        let thickness = self
-            .thickness
-            .map_or(one_dp, masonry_core::layout::Length::get);
+        let thickness = self.thickness.map_or(one_dp, Length::get);
 
         for line in &self.lines {
             let style = Stroke {

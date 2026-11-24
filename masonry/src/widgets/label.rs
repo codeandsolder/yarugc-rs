@@ -590,9 +590,10 @@ impl Widget for Label {
         layout.align(self.text_alignment, inline_space);
 
         let line_count = layout.layout.len();
-        if line_count > 0 {
-            let line_first = layout.layout.get(0).unwrap();
-            let line_last = layout.layout.get(line_count - 1).unwrap();
+        if let (Some(line_first), Some(line_last)) = (
+            layout.layout.get(0),
+            layout.layout.get(line_count.saturating_sub(1)),
+        ) {
             let first_baseline = f64::from(line_first.metrics().baseline);
             let last_baseline = f64::from(line_last.metrics().baseline);
             ctx.set_baselines(first_baseline, last_baseline);
