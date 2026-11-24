@@ -1279,8 +1279,7 @@ impl<T: Steppable> Widget for StepInput<T> {
 
         // TODO: Find more elegant way to propagate property to child.
         if ContentColor::matches(property_type) {
-            ctx.mutate_self_later(|mut this| {
-                let mut this = this.downcast::<Self>();
+            ctx.mutate_self_later::<Self>(|mut this| {
                 let prop = *this.get_prop::<ContentColor>();
                 let Some(label) = this.widget.label.as_mut() else {
                     return;

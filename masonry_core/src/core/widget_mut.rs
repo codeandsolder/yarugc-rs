@@ -185,29 +185,6 @@ impl<W: Widget + ?Sized> WidgetMut<'_, W> {
             widget: W2::from_dyn_mut(self.widget.as_mut_dyn())?,
         })
     }
-
-    /// Downcasts to `WidgetMut` of concrete widget type.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the downcast fails, with an error message that shows the
-    /// discrepancy between the expected and actual types.
-    pub fn downcast<W2: Widget + FromDynWidget + ?Sized>(&mut self) -> WidgetMut<'_, W2> {
-        let w1_name = self.widget.type_name();
-        match W2::from_dyn_mut(self.widget.as_mut_dyn()) {
-            Some(widget) => WidgetMut {
-                widget,
-                ctx: self.ctx.reborrow_mut(),
-            },
-            None => {
-                panic!(
-                    "failed to downcast widget: expected widget of type `{}`, found `{}`",
-                    std::any::type_name::<W2>(),
-                    w1_name,
-                );
-            }
-        }
-    }
 }
 
 // TODO - unit tests

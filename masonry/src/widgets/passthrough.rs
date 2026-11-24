@@ -147,7 +147,7 @@ mod tests {
             let mut child = Passthrough::child_mut::<dyn Widget>(&mut host).unwrap();
 
             // Test that child_mut returns a pointer to the child label
-            let _ = child.downcast::<Label>();
+            assert!(child.try_downcast::<Label>().is_some());
         });
 
         // Replace with a label with different text

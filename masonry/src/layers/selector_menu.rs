@@ -168,9 +168,10 @@ impl Widget for SelectorMenu {
 
                 // FIXME - This might be subject to TOCTOU.
                 // Fix this once associated layers are implemented.
-                ctx.mutate_later(self.creator, move |mut selector| {
-                    let mut selector = selector.downcast::<Selector>();
-                    let selected_content = selector.widget.options[index].clone();
+                ctx.mutate_later::<Selector>(self.creator, move |mut selector| {
+                    let Some(selected_content) = selector.widget.options.get(index).cloned() else {
+                        return;
+                    };
 
                     selector
                         .ctx
@@ -225,8 +226,7 @@ impl Widget for SelectorMenu {
         // Fix this once associated layers are implemented.
         if let Update::WidgetAdded = event {
             let id = ctx.widget_id();
-            ctx.mutate_later(self.creator, move |mut selector| {
-                let selector = selector.downcast::<Selector>();
+            ctx.mutate_later::<Selector>(self.creator, move |selector| {
                 selector.widget.menu_layer_id = Some(id);
             });
         }
@@ -370,8 +370,7 @@ impl Layer for SelectorMenu {
             // FIXME - This might be subject to TOCTOU.
             // Fix this once associated layers are implemented.
             ctx.remove_layer(ctx.widget_id());
-            ctx.mutate_later(self.creator, move |mut selector| {
-                let selector = selector.downcast::<Selector>();
+            ctx.mutate_later::<Selector>(self.creator, move |selector| {
                 selector.widget.menu_layer_id = None;
             });
         }

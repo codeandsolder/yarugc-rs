@@ -1739,54 +1739,45 @@ impl_context_method!(
             }
         }
 
-        // TODO - Remove from MutateCtx?
-        /// Queues a callback that will be called with a [`WidgetMut`] for this widget.
+        /// Queues a typed callback for this widget.
         ///
-        /// The callbacks will be run in the order they were submitted during the mutate pass.
-        pub fn mutate_self_later(
+        /// Callbacks run in submission order during the mutate pass and are skipped
+        /// if the target is absent or does not have the requested type.
+        pub fn mutate_self_later<W: Widget + FromDynWidget + ?Sized>(
             &mut self,
-            f: impl FnOnce(WidgetMut<'_, dyn Widget>) + Send + 'static,
-        ) {
-            let callback = MutateCallback {
-                id: self.widget_state.id,
-                callback: Box::new(f),
-            };
-            self.global_state.mutate_callbacks.push(callback);
-        }
-
-        /// Queues a callback that will be called with a [`WidgetMut`] for the given child widget.
-        ///
-        /// The callbacks will be run in the order they were submitted during the mutate pass.
-        pub fn mutate_child_later<W: Widget + FromDynWidget + ?Sized>(
-            &mut self,
-            child: &mut WidgetPod<W>,
             f: impl FnOnce(WidgetMut<'_, W>) + Send + 'static,
         ) {
-            let callback = MutateCallback {
-                id: child.id(),
-                callback: Box::new(|mut widget_mut| {
-                    if let Some(widget) = widget_mut.try_downcast() {
+            self.mutate_later(self.widget_id(), f);
+        }
+
+        /// Queues a typed callback for the given child widget.
+        ///
+        /// The same ordering and target validation as [Self::mutate_later] apply.
+        pub fn mutate_child_later<W: Widget + FromDynWidget + ?Sized>(
+            &mut self,
+            child: &WidgetPod<W>,
+            f: impl FnOnce(WidgetMut<'_, W>) + Send + 'static,
+        ) {
+            self.mutate_later(child.id(), f);
+        }
+
+        /// Queues a typed callback for the widget with the given id.
+        ///
+        /// Callbacks run in submission order during the mutate pass and are skipped
+        /// if the target is absent or does not have the requested type.
+        pub fn mutate_later<W: Widget + FromDynWidget + ?Sized>(
+            &mut self,
+            target: WidgetId,
+            f: impl FnOnce(WidgetMut<'_, W>) + Send + 'static,
+        ) {
+            self.global_state.mutate_callbacks.push(MutateCallback {
+                id: target,
+                callback: Box::new(|mut widget| {
+                    if let Some(widget) = widget.try_downcast() {
                         f(widget);
                     }
                 }),
-            };
-            self.global_state.mutate_callbacks.push(callback);
-        }
-
-        /// Queues a callback that will be called with a [`WidgetMut`] for the widget with the given id.
-        ///
-        /// The callbacks will be run in the order they were submitted during the mutate pass.
-        pub fn mutate_later(
-            &mut self,
-            // TODO - Use WidgetTag instead?
-            target: WidgetId,
-            f: impl FnOnce(WidgetMut<'_, dyn Widget>) + Send + 'static,
-        ) {
-            let callback = MutateCallback {
-                id: target,
-                callback: Box::new(f),
-            };
-            self.global_state.mutate_callbacks.push(callback);
+            });
         }
 
         /// Returns a shared typed reference to a registered child, if present.

@@ -225,7 +225,7 @@ impl Pagination {
             if button.page_idx != page_idx {
                 button.page_idx = page_idx;
                 let new_text = format!("{}", page_idx + 1);
-                ctx.mutate_child_later(&mut button.widget, move |mut button| {
+                ctx.mutate_child_later(&button.widget, move |mut button| {
                     let Some(mut btn_label) = Button::child_mut::<Label>(&mut button) else {
                         return;
                     };
@@ -235,7 +235,7 @@ impl Pagination {
             let disabled = button.page_idx == self.active_page;
             if button.disabled != disabled {
                 button.disabled = disabled;
-                ctx.mutate_child_later(&mut button.widget, move |mut button| {
+                ctx.mutate_child_later(&button.widget, move |mut button| {
                     button.ctx.set_disabled(disabled);
                 });
             }
@@ -400,7 +400,7 @@ trait SyncCtx {
     fn remove_child(&mut self, child: WidgetPod<impl Widget + ?Sized>);
     fn mutate_child_later<W: Widget + FromDynWidget + ?Sized>(
         &mut self,
-        child: &mut WidgetPod<W>,
+        child: &WidgetPod<W>,
         f: impl FnOnce(WidgetMut<'_, W>) + Send + 'static,
     );
 }
@@ -420,7 +420,7 @@ impl SyncCtx for MutateCtx<'_> {
 
     fn mutate_child_later<W: Widget + FromDynWidget + ?Sized>(
         &mut self,
-        child: &mut WidgetPod<W>,
+        child: &WidgetPod<W>,
         f: impl FnOnce(WidgetMut<'_, W>) + Send + 'static,
     ) {
         self.mutate_child_later(child, f);
@@ -442,7 +442,7 @@ impl SyncCtx for ActionCtx<'_> {
 
     fn mutate_child_later<W: Widget + FromDynWidget + ?Sized>(
         &mut self,
-        child: &mut WidgetPod<W>,
+        child: &WidgetPod<W>,
         f: impl FnOnce(WidgetMut<'_, W>) + Send + 'static,
     ) {
         self.mutate_child_later(child, f);
@@ -464,7 +464,7 @@ impl SyncCtx for UpdateCtx<'_> {
 
     fn mutate_child_later<W: Widget + FromDynWidget + ?Sized>(
         &mut self,
-        child: &mut WidgetPod<W>,
+        child: &WidgetPod<W>,
         f: impl FnOnce(WidgetMut<'_, W>) + Send + 'static,
     ) {
         self.mutate_child_later(child, f);

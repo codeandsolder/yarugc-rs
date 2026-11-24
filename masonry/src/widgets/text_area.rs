@@ -35,7 +35,7 @@ pub(crate) fn inherit_property<
     child: WidgetId,
     map: impl FnOnce(P) -> Q + Send + 'static,
 ) {
-    ctx.mutate_self_later(move |mut parent| {
+    ctx.mutate_self_later::<dyn Widget>(move |mut parent| {
         let property = map(parent.get_prop::<P>().clone());
         if let Some(mut child) = parent.ctx.get_mut::<W>(child) {
             child.insert_prop(property);

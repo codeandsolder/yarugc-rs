@@ -250,8 +250,7 @@ impl Widget for TextInput {
                 self.property_changed(ctx, TypeId::of::<CaretColor>());
                 self.property_changed(ctx, TypeId::of::<SelectionColor>());
                 self.property_changed(ctx, TypeId::of::<PlaceholderColor>());
-                ctx.mutate_self_later(|mut input| {
-                    let mut input = input.downcast::<Self>();
+                ctx.mutate_self_later::<Self>(|mut input| {
                     let placeholder_text = input.widget.placeholder_text.clone();
                     if let Some(mut child) = Self::text_mut(&mut input) {
                         TextArea::set_placeholder(&mut child, placeholder_text);

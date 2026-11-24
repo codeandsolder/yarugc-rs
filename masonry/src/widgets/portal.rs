@@ -451,8 +451,8 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
                         bar.ctx.request_anim_frame();
                     }
                 };
-                ctx.mutate_child_later(&mut self.scrollbar_horizontal, f);
-                ctx.mutate_child_later(&mut self.scrollbar_vertical, f);
+                ctx.mutate_child_later(&self.scrollbar_horizontal, f);
+                ctx.mutate_child_later(&self.scrollbar_vertical, f);
 
                 self.nanos_since_last_pointer_move = Some(0);
                 ctx.request_anim_frame();
@@ -643,8 +643,8 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
                 let f = move |bar: WidgetMut<'_, ScrollBar>| {
                     bar.widget.opacity.move_to(rest_opacity, 0.);
                 };
-                ctx.mutate_child_later(&mut self.scrollbar_horizontal, f);
-                ctx.mutate_child_later(&mut self.scrollbar_vertical, f);
+                ctx.mutate_child_later(&self.scrollbar_horizontal, f);
+                ctx.mutate_child_later(&self.scrollbar_vertical, f);
             }
             Some(mut since_last_move) if auto_hide_scroll_bar => {
                 since_last_move += interval;
@@ -656,8 +656,8 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
                         bar.widget.opacity.move_to(0., SCROLLBAR_ANIM_OVER_MILLIS);
                         bar.ctx.request_anim_frame();
                     };
-                    ctx.mutate_child_later(&mut self.scrollbar_horizontal, f);
-                    ctx.mutate_child_later(&mut self.scrollbar_vertical, f);
+                    ctx.mutate_child_later(&self.scrollbar_horizontal, f);
+                    ctx.mutate_child_later(&self.scrollbar_vertical, f);
                 } else {
                     self.nanos_since_last_pointer_move = Some(since_last_move);
                     ctx.request_anim_frame();

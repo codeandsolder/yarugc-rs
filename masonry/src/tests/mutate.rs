@@ -23,13 +23,13 @@ fn mutate_order() {
 
     let mut harness = TestHarness::create(test_property_set(), grandparent);
     harness.edit_widget(parent_tag, move |mut parent| {
-        parent.ctx.mutate_self_later(move |_| {
+        parent.ctx.mutate_self_later::<dyn Widget>(move |_| {
             sender2.send(2).unwrap();
         });
 
         parent
             .ctx
-            .mutate_child_later(&mut parent.widget.state, move |_| {
+            .mutate_child_later(&parent.widget.state, move |_| {
                 sender3.send(3).unwrap();
             });
 
@@ -51,7 +51,7 @@ fn cancel_mutate() {
         {
             let mut child = SizedBox::child_mut::<dyn Widget>(&mut parent).unwrap();
 
-            child.ctx.mutate_self_later(move |_| {
+            child.ctx.mutate_self_later::<dyn Widget>(move |_| {
                 panic!("This function should never get called");
             });
         }
@@ -96,6 +96,19 @@ fn absent_or_mismatched_mutation_targets_do_not_run_callbacks() {
         ))
         .is_none()
     );
+
+    let missing = NewWidget::new(SizedBox::empty()).id();
+    let (send, recv) = mpsc::channel();
+    harness.edit_root_widget(|mut root| {
+        root.ctx
+            .mutate_later::<Label>(id, |_| panic!("wrong deferred type"));
+        root.ctx
+            .mutate_later::<SizedBox>(missing, |_| panic!("absent deferred target"));
+        root.ctx.mutate_later::<SizedBox>(id, move |widget| {
+            send.send(widget.id()).unwrap();
+        });
+    });
+    assert_eq!(recv.try_recv().unwrap(), id);
 
     harness.edit_root_widget(|mut root| SizedBox::remove_child(&mut root));
     assert!(

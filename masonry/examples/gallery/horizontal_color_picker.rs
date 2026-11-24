@@ -102,14 +102,13 @@ impl HorizontalColorPicker {
     pub(crate) fn set_color(this: &mut WidgetMut<'_, Self>, color: Color) {
         for (component, wid) in this.widget.sliders.iter() {
             let value = component.get(&color);
-            this.ctx.mutate_later(*wid, move |mut widget| {
-                if let Some(mut slider_widget) = widget.try_downcast::<Slider>() {
-                    Slider::set_value(&mut slider_widget, value as f64);
-                }
-            });
+            this.ctx
+                .mutate_later::<Slider>(*wid, move |mut slider_widget| {
+                    Slider::set_value(&mut slider_widget, f64::from(value));
+                });
         }
         this.ctx
-            .mutate_later(this.widget.preview_id, move |mut widget| {
+            .mutate_later::<dyn Widget>(this.widget.preview_id, move |mut widget| {
                 widget.insert_prop(Background::Color(color));
             });
     }
@@ -162,7 +161,7 @@ impl Widget for HorizontalColorPicker {
             component.update(&mut self.color, *value as f32);
             ctx.submit_action::<Self::Action>(ColorSelected { color: self.color });
             let color = self.color;
-            ctx.mutate_later(self.preview_id, move |mut widget| {
+            ctx.mutate_later::<dyn Widget>(self.preview_id, move |mut widget| {
                 widget.insert_prop(Background::Color(color));
             });
             ctx.set_handled();
