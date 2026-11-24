@@ -13,13 +13,13 @@ struct AppState {
 }
 
 impl AppState {
-    fn increment(&mut self) {
+    const fn increment(&mut self) {
         self.clicks += 1;
     }
-    fn decrement(&mut self) {
+    const fn decrement(&mut self) {
         self.clicks -= 1;
     }
-    fn reset(&mut self) {
+    const fn reset(&mut self) {
         self.clicks = 0;
     }
 }

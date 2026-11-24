@@ -16,7 +16,7 @@ struct Model {
     count: i32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 enum Message {
     Increment,
     Decrement,

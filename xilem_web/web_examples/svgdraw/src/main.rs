@@ -5,7 +5,6 @@
 
 use std::rc::Rc;
 
-use wasm_bindgen::UnwrapThrowExt;
 use xilem_web::elements::html::{div, input, label, span};
 use xilem_web::elements::svg::{g, svg};
 use xilem_web::interfaces::{Element, HtmlInputElement, SvgElement, SvgPathElement};
@@ -61,7 +60,7 @@ struct Draw {
     active_line: Option<SplineLine>,
     cursor_position: Point,
     canvas_position: Point,
-    draw_position: Point,
+    drawing_position: Point,
     memoized_line_views: Vec<Rc<AnyDomView<Self>>>,
     new_line_width: f64,
     is_panning: bool,
@@ -74,15 +73,15 @@ impl Draw {
         self.cursor_position = cursor;
         let cursor_delta = self.cursor_position - last_cursor_position;
         let zoom_corrected_delta = cursor_delta / self.zoom;
-        self.draw_position += zoom_corrected_delta;
+        self.drawing_position += zoom_corrected_delta;
         if self.is_panning {
             self.canvas_position -= zoom_corrected_delta;
-            self.draw_position -= zoom_corrected_delta;
+            self.drawing_position -= zoom_corrected_delta;
         }
     }
 
     // TODO support pinch as well
-    fn zoom_with_wheel_event(&mut self, event: web_sys::WheelEvent) {
+    fn zoom_with_wheel_event(&mut self, event: &web_sys::WheelEvent) {
         let delta_mode_factor = match event.delta_mode() {
             2 => 100.0, // Pages
             1 => 16.0,  // Lines
@@ -91,15 +90,17 @@ impl Draw {
         let mut delta = event.delta_y() * delta_mode_factor;
 
         let delta_sign = delta.signum();
-        let factor = 1.0 + 0.001 * delta.abs();
+        let factor = 0.001_f64.mul_add(delta.abs(), 1.0);
         delta = if delta_sign < 0.0 {
             factor
         } else {
             1.0 / factor
         };
 
-        self.zoom *= delta;
-        self.canvas_position -= (self.cursor_position.to_vec2() * (1.0 - delta)) / self.zoom;
+        let next_zoom = (self.zoom * delta).clamp(1e-6, 1e6);
+        let ratio = next_zoom / self.zoom;
+        self.zoom = next_zoom;
+        self.canvas_position -= (self.cursor_position.to_vec2() * (1.0 - ratio)) / self.zoom;
     }
 
     fn start_new_line(&mut self) {
@@ -107,18 +108,21 @@ impl Draw {
             self.active_line.is_none(),
             "There shouldn't be an active line when starting a new one"
         );
-        let color = RAINBOW_COLORS[self.selected_color];
-        let line = SplineLine::new(self.draw_position, color, self.new_line_width);
+        let Some(&color) = RAINBOW_COLORS.get(self.selected_color) else {
+            return;
+        };
+        let line = SplineLine::new(self.drawing_position, color, self.new_line_width);
         self.memoized_line_views
             .push(Rc::new(line.view()) as Rc<AnyDomView<Self>>);
         self.active_line = Some(line);
     }
 
     fn extend_active_line(&mut self) {
-        if let Some(cur_line) = &mut self.active_line {
-            cur_line.points.push(self.draw_position);
-            *self.memoized_line_views.last_mut().unwrap() =
-                Rc::new(cur_line.view()) as Rc<AnyDomView<Self>>;
+        if let (Some(cur_line), Some(view)) =
+            (&mut self.active_line, self.memoized_line_views.last_mut())
+        {
+            cur_line.points.push(self.drawing_position);
+            *view = Rc::new(cur_line.view()) as Rc<AnyDomView<Self>>;
         }
     }
 
@@ -128,8 +132,10 @@ impl Draw {
 
     fn toggle_button(&mut self, button: i16) {
         // ignore exotic amount of buttons
-        if (0..8).contains(&button) {
-            self.pressed_buttons[button as usize] = !self.pressed_buttons[button as usize];
+        if let Ok(index) = usize::try_from(button)
+            && let Some(pressed) = self.pressed_buttons.get_mut(index)
+        {
+            *pressed = !*pressed;
         }
     }
 
@@ -163,8 +169,8 @@ impl Draw {
                 }
             })
             .style([s("width", "100vw"), s("height", "100vh")])
-            .on_wheel(|state, event| state.zoom_with_wheel_event(event))
-            .on_click(|_, event| event.prevent_default())
+            .on_wheel(|state, event| state.zoom_with_wheel_event(&event))
+            .on_click(|_, event: web_sys::PointerEvent| event.prevent_default())
             .passive(false)
             .on_contextmenu(|_, event| event.prevent_default())
             .passive(false);
@@ -194,11 +200,12 @@ impl Draw {
                     .attr("step", 0.01)
                     .attr("value", self.new_line_width.ln())
                     .on_input(|state: &mut Self, event| {
-                        state.new_line_width = input_event_target_value(&event)
-                            .unwrap_throw()
-                            .parse()
-                            .unwrap_throw();
-                        state.new_line_width = state.new_line_width.exp();
+                        if let Some(width) = input_event_target_value(&event)
+                            .and_then(|value| value.parse::<f64>().ok())
+                            .filter(|width| width.is_finite())
+                        {
+                            state.new_line_width = width.exp().clamp(0.1, 1000.0);
+                        }
                     }))
                 .class("value-range"),
             )),

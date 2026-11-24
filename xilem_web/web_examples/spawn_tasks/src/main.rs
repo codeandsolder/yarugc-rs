@@ -28,6 +28,10 @@ enum Message {
 /// This is just to simulate some async behavior.
 /// If you just need an interval, you should use
 /// [`interval`](xilem_web::concurrent::interval) instead.
+#[expect(
+    clippy::future_not_send,
+    reason = "Browser tasks run on the local JS event loop and contain non-Send handles."
+)]
 async fn create_ping_task(proxy: TaskProxy, shutdown_signal: ShutdownSignal) {
     log::debug!("Start ping task");
     let mut abort = shutdown_signal.into_future().fuse();
@@ -36,11 +40,10 @@ async fn create_ping_task(proxy: TaskProxy, shutdown_signal: ShutdownSignal) {
         let mut timeout = TimeoutFuture::new(1_000).fuse();
 
         select! {
-            _  = timeout => {
+            () = timeout => {
                 proxy.send_message(Message::Ping);
-                continue;
             }
-            _ = abort => {
+            () = abort => {
                 // The view no longer exists so
                 // we can do e.g. a graceful shutdown here.
                 break;
