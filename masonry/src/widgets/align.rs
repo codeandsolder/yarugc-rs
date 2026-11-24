@@ -29,7 +29,7 @@ use crate::layout::{AsUnit, LenReq, Length, SizeDef, UnitPoint};
     ")",
 )]
 pub struct Align {
-    align: UnitPoint,
+    alignment: UnitPoint,
     child: WidgetPod<dyn Widget>,
     width_factor: Option<f64>,
     height_factor: Option<f64>,
@@ -42,9 +42,10 @@ impl Align {
     /// Note that the `align` parameter is specified as a `UnitPoint` in
     /// terms of left and right. This is inadequate for bidi-aware layout
     /// and thus the API will change when Masonry gains bidi capability.
+    #[must_use = "Use the returned value."]
     pub fn new(align: UnitPoint, child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
-            align,
+            alignment: align,
             child: child.erased().into_pod(),
             width_factor: None,
             height_factor: None,
@@ -52,24 +53,28 @@ impl Align {
     }
 
     /// Creates centered widget.
+    #[must_use = "Use the returned value."]
     pub fn centered(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self::new(UnitPoint::CENTER, child)
     }
 
     /// Creates right-aligned widget.
+    #[must_use = "Use the returned value."]
     pub fn right(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self::new(UnitPoint::RIGHT, child)
     }
 
     /// Creates left-aligned widget.
+    #[must_use = "Use the returned value."]
     pub fn left(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self::new(UnitPoint::LEFT, child)
     }
 
     /// Aligns only in the horizontal axis, keeping the child's size in the vertical.
+    #[must_use = "Use the returned value."]
     pub fn horizontal(align: UnitPoint, child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
-            align,
+            alignment: align,
             child: child.erased().into_pod(),
             width_factor: None,
             height_factor: Some(1.0),
@@ -77,9 +82,10 @@ impl Align {
     }
 
     /// Aligns only in the vertical axis, keeping the child's size in the horizontal.
+    #[must_use = "Use the returned value."]
     pub fn vertical(align: UnitPoint, child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
-            align,
+            alignment: align,
             child: child.erased().into_pod(),
             width_factor: Some(1.0),
             height_factor: None,
@@ -91,8 +97,8 @@ impl Align {
 impl Align {
     /// Sets the alignment of the child.
     pub fn set_alignment(this: &mut WidgetMut<'_, Self>, alignment: UnitPoint) {
-        if this.widget.align != alignment {
-            this.widget.align = alignment;
+        if this.widget.alignment != alignment {
+            this.widget.alignment = alignment;
             this.ctx.request_layout();
         }
     }
@@ -116,15 +122,14 @@ impl Widget for Align {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        let child_length = ctx.measure_child(&mut self.child, axis, len_req, cross_length);
+        let child_length = ctx.measure_child(&self.child, axis, len_req, cross_length);
 
         // Default to child length
-        let mut length = child_length;
-
-        // If the parent specified space bounds, use all of it
-        if let LenReq::Fit(space) = len_req {
-            length = space;
-        }
+        let mut length = if let LenReq::Fit(space) = len_req {
+            space
+        } else {
+            child_length
+        };
 
         // Potentially override with a multiple of child length,
         // which could be less than the parent specified bounds.
@@ -150,7 +155,7 @@ impl Widget for Align {
         let extra_width = size.width - child_size.width;
         let extra_height = size.height - child_size.height;
         let child_origin = self
-            .align
+            .alignment
             .resolve(Rect::new(0., 0., extra_width, extra_height));
         ctx.place_child(&self.child, child_origin);
 

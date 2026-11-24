@@ -12,8 +12,15 @@ use crate::parley::{GenericFamily, LineHeight};
 use crate::peniko::Color;
 
 // We use glob imports here to avoid frequent merge conflicts.
-use crate::properties::*;
-use crate::widgets::*;
+use crate::properties::{
+    AnimationDuration, Background, BarColor, BorderColor, BorderWidth, CaretColor, CheckmarkColor,
+    CheckmarkStrokeWidth, ContentColor, CornerRadius, Dimensions, Gap, Padding, PlaceholderColor,
+    SelectionColor, ThumbColor, ThumbRadius, TrackColor, TrackThickness,
+};
+use crate::widgets::{
+    Badge, Button, Checkbox, DisclosureButton, Divider, Flex, Grid, Label, ProgressBar, Prose,
+    RadioButton, SelectorItem, Slider, Spinner, StepInput, Steppable, Switch, TextArea, TextInput,
+};
 
 /// Default color for the app background.
 ///

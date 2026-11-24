@@ -46,6 +46,7 @@ pub struct VerticalStack {
 }
 
 impl VerticalStack {
+    #[must_use = "Use the returned value."]
     pub fn new(gap: f64) -> Self {
         Self {
             children: Vec::new(),
@@ -117,7 +118,7 @@ impl Widget for VerticalStack {
         }
 
         if axis == Axis::Vertical {
-            let gap_count = (self.children.len() - 1) as f64;
+            let gap_count = crate::layout_count(self.children.len().saturating_sub(1));
             let gaps_length = gap_count * self.gap;
             length = length.saturating_add(gaps_length.px());
         }
@@ -131,9 +132,13 @@ impl Widget for VerticalStack {
         _props: &PropertiesRef<'_>,
         size: Size,
     ) {
-        let gap_count = (self.children.len() - 1) as f64;
-        let total_child_vertical_space = size.height - self.gap * gap_count;
-        let child_vertical_space = total_child_vertical_space / self.children.len() as f64;
+        if self.children.is_empty() {
+            ctx.clear_baselines();
+            return;
+        }
+        let gap_count = crate::layout_count(self.children.len().saturating_sub(1));
+        let total_child_vertical_space = self.gap.mul_add(-gap_count, size.height);
+        let child_vertical_space = total_child_vertical_space / crate::layout_count(self.children.len());
 
         let width_def = LenDef::FitContent(size.width.px());
         let height_def = LenDef::FitContent(child_vertical_space.max(0.).px());
@@ -181,6 +186,6 @@ impl Widget for VerticalStack {
     // ---
 
     fn children_ids(&self) -> ChildrenIds {
-        self.children.iter().map(|child| child.id()).collect()
+        self.children.iter().map(WidgetPod::id).collect()
     }
 }

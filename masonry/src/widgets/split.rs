@@ -66,6 +66,7 @@ where
 // --- MARK: BUILDERS
 impl<ChildA: Widget + ?Sized, ChildB: Widget + ?Sized> Split<ChildA, ChildB> {
     /// Creates a new split panel.
+    #[must_use = "Use the returned value."]
     pub fn new(child1: NewWidget<ChildA>, child2: NewWidget<ChildB>) -> Self {
         Self {
             split_axis: Axis::Horizontal,
@@ -88,7 +89,8 @@ impl<ChildA: Widget + ?Sized, ChildB: Widget + ?Sized> Split<ChildA, ChildB> {
     /// Vertical split axis means that the children are up and down.
     ///
     /// The default split point is horizontal.
-    pub fn split_axis(mut self, split_axis: Axis) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn split_axis(mut self, split_axis: Axis) -> Self {
         self.split_axis = split_axis;
         self
     }
@@ -98,13 +100,15 @@ impl<ChildA: Widget + ?Sized, ChildB: Widget + ?Sized> Split<ChildA, ChildB> {
     /// The value is clamped to `0.0..=1.0`.
     ///
     /// The default split point is `0.5`.
-    pub fn split_fraction(mut self, split_point: f64) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn split_fraction(mut self, split_point: f64) -> Self {
         self.split_point_chosen = SplitPoint::Fraction(split_point.clamp(0.0, 1.0));
         self
     }
 
     /// Builder-style method to set the split point.
-    pub fn split_point(mut self, split_point: SplitPoint) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn split_point(mut self, split_point: SplitPoint) -> Self {
         self.split_point_chosen = match split_point {
             SplitPoint::Fraction(frac) => SplitPoint::Fraction(frac.clamp(0.0, 1.0)),
             other => other,
@@ -117,7 +121,8 @@ impl<ChildA: Widget + ?Sized, ChildB: Widget + ?Sized> Split<ChildA, ChildB> {
     /// This is the size of the first child along the split axis.
     /// This can be useful when one side should have a stable pixel size, even when the split
     /// container is resized.
-    pub fn split_point_from_start(mut self, split_point: Length) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn split_point_from_start(mut self, split_point: Length) -> Self {
         self.split_point_chosen = SplitPoint::FromStart(split_point);
         self
     }
@@ -127,13 +132,15 @@ impl<ChildA: Widget + ?Sized, ChildB: Widget + ?Sized> Split<ChildA, ChildB> {
     /// This is the size of the second child along the split axis.
     /// This can be useful when one side should have a stable pixel size, even when the split
     /// container is resized.
-    pub fn split_point_from_end(mut self, split_point: Length) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn split_point_from_end(mut self, split_point: Length) -> Self {
         self.split_point_chosen = SplitPoint::FromEnd(split_point);
         self
     }
 
     /// Builder-style method to set the minimum length for both sides of the split axis.
-    pub fn min_lengths(mut self, first: Length, second: Length) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn min_lengths(mut self, first: Length, second: Length) -> Self {
         self.min_lengths = (first, second);
         self
     }
@@ -141,7 +148,8 @@ impl<ChildA: Widget + ?Sized, ChildB: Widget + ?Sized> Split<ChildA, ChildB> {
     /// Builder-style method to set the thickness of the splitter bar.
     ///
     /// The default splitter bar thickness is `6.0`.
-    pub fn bar_thickness(mut self, bar_thickness: Length) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn bar_thickness(mut self, bar_thickness: Length) -> Self {
         self.bar_thickness = bar_thickness;
         self
     }
@@ -157,13 +165,15 @@ impl<ChildA: Widget + ?Sized, ChildB: Widget + ?Sized> Split<ChildA, ChildB> {
     /// but don't want to sacrifice user experience by making it hard to click on.
     ///
     /// The default minimum splitter bar area thickness is `6.0`.
-    pub fn min_bar_area(mut self, min_bar_area: Length) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn min_bar_area(mut self, min_bar_area: Length) -> Self {
         self.min_bar_area = min_bar_area;
         self
     }
 
     /// Builder-style method to set whether the split point can be changed by dragging.
-    pub fn draggable(mut self, draggable: bool) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn draggable(mut self, draggable: bool) -> Self {
         self.draggable = draggable;
         self
     }
@@ -171,7 +181,8 @@ impl<ChildA: Widget + ?Sized, ChildB: Widget + ?Sized> Split<ChildA, ChildB> {
     /// Builder-style method to set whether the splitter bar is drawn as a solid rectangle.
     ///
     /// If this is `false` (the default), the bar will be drawn as two parallel lines.
-    pub fn solid_bar(mut self, solid: bool) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn solid_bar(mut self, solid: bool) -> Self {
         self.solid = solid;
         self
     }
@@ -181,14 +192,14 @@ impl<ChildA: Widget + ?Sized, ChildB: Widget + ?Sized> Split<ChildA, ChildB> {
 impl<ChildA: Widget + ?Sized, ChildB: Widget + ?Sized> Split<ChildA, ChildB> {
     /// Returns the thickness of the splitter bar area.
     #[inline]
-    fn bar_area(&self) -> f64 {
+    const fn bar_area(&self) -> f64 {
         self.bar_thickness.max(self.min_bar_area).get()
     }
 
     /// Returns the splitter bar center point.
     fn bar_center(&self, length: f64) -> f64 {
         let (edge1, edge2) = self.bar_edges(length);
-        (edge1 + edge2) * 0.5
+        f64::midpoint(edge1, edge2)
     }
 
     /// Returns the location of the edges of the splitter bar,
@@ -230,7 +241,7 @@ impl<ChildA: Widget + ?Sized, ChildB: Widget + ?Sized> Split<ChildA, ChildB> {
         let mut max_limit = (length - min_child2.get()).max(0.0);
 
         if min_limit > max_limit {
-            min_limit = 0.5 * (min_limit + max_limit);
+            min_limit = f64::midpoint(min_limit, max_limit);
             max_limit = min_limit;
         }
 
@@ -276,7 +287,7 @@ impl<ChildA: Widget + ?Sized, ChildB: Widget + ?Sized> Split<ChildA, ChildB> {
     fn update_split_point_from_bar_center(&mut self, total_length: f64, bar_center: f64) {
         let bar_thickness = self.bar_thickness.get();
         let split_space = (total_length - bar_thickness).max(0.0);
-        let child1_len = bar_center - bar_thickness * 0.5;
+        let child1_len = bar_thickness.mul_add(-0.5, bar_center);
         self.set_chosen_from_child1_len(split_space, child1_len);
     }
 

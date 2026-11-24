@@ -47,6 +47,7 @@ impl RadioButton {
     }
 
     /// Create a new `RadioButton` with the given label.
+    #[must_use = "Use the returned value."]
     pub fn from_label(checked: bool, label: NewWidget<Label>) -> Self {
         Self {
             selected: checked,
@@ -232,12 +233,12 @@ impl Widget for RadioButton {
         let border_width = *props.get::<BorderWidth>(cache);
         let brush = *props.get::<CheckmarkColor>(cache);
 
-        let check_side = theme::BASIC_WIDGET_HEIGHT.get();
-        let check_size = Size::new(check_side, check_side);
+        let side = theme::BASIC_WIDGET_HEIGHT.get();
+        let check_size = Size::new(side, side);
 
         let border_circle = Circle::new(
             check_size.to_rect().center(),
-            (check_side - border_width.width.get()) * 0.5,
+            (side - border_width.width.get()) * 0.5,
         );
 
         // Paint the radio button border
@@ -249,7 +250,7 @@ impl Widget for RadioButton {
         // Paint the checkmark if checked
         if self.selected {
             // TODO: Create a prop for ellipse size. Default: 50% of border size
-            let check_circle = Circle::new(check_size.to_rect().center(), check_side * 0.25);
+            let check_circle = Circle::new(check_size.to_rect().center(), side * 0.25);
             painter.fill(check_circle, brush.color).draw();
         }
     }

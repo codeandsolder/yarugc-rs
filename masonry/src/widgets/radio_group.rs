@@ -20,6 +20,7 @@ pub struct RadioGroup {
 
 impl RadioGroup {
     /// Create a new `RadioGroup`.
+    #[must_use = "Use the returned value."]
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
             child: child.erased().into_pod(),
@@ -56,7 +57,7 @@ impl Widget for RadioGroup {
         _len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        ctx.redirect_measurement(&mut self.child, axis, cross_length)
+        ctx.redirect_measurement(&self.child, axis, cross_length)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {

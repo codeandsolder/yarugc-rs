@@ -45,7 +45,8 @@ struct PageButton {
 /// --- MARK: BUILDERS
 impl Pagination {
     /// Creates a new [`Pagination`] with the given `page_count`.
-    pub fn new(page_count: usize) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn new(page_count: usize) -> Self {
         Self {
             page_count,
             active_page: 0,
@@ -61,6 +62,7 @@ impl Pagination {
     /// This is a 0-based index and defaults to `0`.
     ///
     /// It is clamped to the total page count.
+    #[must_use = "Use the returned value."]
     pub fn active_page(mut self, active_page: usize) -> Self {
         self.active_page = if self.page_count == 0 {
             0
@@ -73,7 +75,8 @@ impl Pagination {
     /// Sets the maximum number of buttons to always show for the first pages.
     ///
     /// This defaults to `1`.
-    pub fn buttons_start(mut self, buttons_start: u8) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn buttons_start(mut self, buttons_start: u8) -> Self {
         self.buttons_start = buttons_start;
         self
     }
@@ -81,7 +84,8 @@ impl Pagination {
     /// Sets the maximum number of buttons to always show for the last pages.
     ///
     /// This defaults to `1`.
-    pub fn buttons_end(mut self, buttons_end: u8) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn buttons_end(mut self, buttons_end: u8) -> Self {
         self.buttons_end = buttons_end;
         self
     }
@@ -91,7 +95,8 @@ impl Pagination {
     /// The effective button limit also depends on the total page count.
     ///
     /// This defaults to `9`.
-    pub fn buttons_total(mut self, buttons_total: u8) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn buttons_total(mut self, buttons_total: u8) -> Self {
         self.buttons_total = buttons_total;
         self
     }
@@ -195,7 +200,7 @@ impl Pagination {
         }
 
         // Make sure the chosen page indices are in ascending order.
-        button_pages.sort();
+        button_pages.sort_unstable();
 
         button_pages
     }
@@ -206,8 +211,10 @@ impl Pagination {
         let button_pages = self.derive_button_pages();
 
         // Remove any excess buttons that were created before the total limit was reduced.
-        while self.buttons.len() > self.buttons_total as usize {
-            let button = self.buttons.pop().unwrap();
+        for button in self
+            .buttons
+            .drain(usize::from(self.buttons_total).min(self.buttons.len())..)
+        {
             ctx.remove_child(button.widget);
         }
         // Stash all buttons that are within the limit but not in use.

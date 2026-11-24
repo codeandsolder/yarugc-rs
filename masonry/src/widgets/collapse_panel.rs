@@ -51,6 +51,7 @@ impl CollapsePanel {
     }
 
     /// Create a new [`CollapsePanel`] with a header label widget and a child widget.
+    #[must_use = "Use the returned value."]
     pub fn from_label(
         collapse: bool,
         header_label: NewWidget<Label>,
@@ -180,7 +181,9 @@ impl Widget for CollapsePanel {
             .get_child(&self.disclosure_button)
             .is_none_or(|button| !button.is_disclosed());
 
-        let child_length = if !is_collapsed {
+        let child_length = if is_collapsed {
+            Length::ZERO
+        } else {
             let child_cross_space = match cross {
                 // If we know the horizontal space, then that is also the child's horizontal space.
                 Axis::Horizontal => cross_length,
@@ -201,8 +204,6 @@ impl Widget for CollapsePanel {
                 axis,
                 child_cross_space,
             )
-        } else {
-            Length::ZERO
         };
 
         match axis {
@@ -236,7 +237,7 @@ impl Widget for CollapsePanel {
 
         let label_auto_size = SizeDef::new(
             LenDef::FitContent(
-                (size.width - header_padding_width * 2. - button_size.width)
+                (header_padding_width.mul_add(-2., size.width) - button_size.width)
                     .max(0.)
                     .px(),
             ),
@@ -255,7 +256,7 @@ impl Widget for CollapsePanel {
         );
         ctx.place_child(&self.disclosure_button, btn_origin);
 
-        let label_origin = Point::new(button_size.width + header_padding_width * 2.0, 0.0);
+        let label_origin = Point::new(header_padding_width.mul_add(2.0, button_size.width), 0.0);
         ctx.place_child(&self.header_label, label_origin);
 
         // Collapsed = !Disclosed
@@ -266,7 +267,9 @@ impl Widget for CollapsePanel {
         // Only render child if it's not collapsed.
         ctx.set_stashed(&self.child, is_collapsed);
 
-        if !is_collapsed {
+        if is_collapsed {
+            self.separator_line_y = None;
+        } else {
             let child_space = Size::new(
                 size.width,
                 (size.height - header_height - separator_height).max(0.),
@@ -284,8 +287,6 @@ impl Widget for CollapsePanel {
 
             self.separator_line_y =
                 Some(header_height + SEPARATOR_PAD.top.get() + border_width * 0.5);
-        } else {
-            self.separator_line_y = None;
         }
 
         ctx.derive_baselines(&self.header_label);

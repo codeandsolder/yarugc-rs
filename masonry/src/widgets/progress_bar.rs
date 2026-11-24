@@ -46,6 +46,7 @@ impl ProgressBar {
     /// The progress value will be clamped to [0, 1].
     ///
     /// A `None` value (or NaN) will show an indeterminate progress bar.
+    #[must_use = "Use the returned value."]
     pub fn new(progress: Option<f64>) -> Self {
         let progress = clamp_progress(progress);
         let label_props = PropertySet::one(LineBreaking::Overflow);
@@ -203,7 +204,7 @@ impl Widget for ProgressBar {
         let progress = self.progress.unwrap_or(1.);
         if progress > 0. {
             // The bar width is without the borders.
-            let bar_width = border_box.width() - 2. * border_width.width.get();
+            let bar_width = 2.0_f64.mul_add(-border_width.width.get(), border_box.width());
             if bar_width > 0. {
                 let bar_color = props.get::<BarColor>(cache).0;
                 // Paint with a gradient so we get a straight line slice of the rounded rect.

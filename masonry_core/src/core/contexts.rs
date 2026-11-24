@@ -452,6 +452,15 @@ impl EventCtx<'_> {
         self.target
     }
 
+    /// Whether the original event target belongs to the subtree of a direct child.
+    /// This includes events targeted at the child itself.
+    #[must_use = "Use the result to route the event to the appropriate child."]
+    pub fn target_in_child(&self, child: &WidgetPod<impl Widget + ?Sized>) -> bool {
+        self.children.item(child.id()).is_some_and(|node| {
+            child.id() == self.target || node.children.find(self.target).is_some()
+        })
+    }
+
     /// Converts the given position from the window's coordinate space
     /// to this widget's content-box coordinate space.
     #[must_use = "Use the transformed event position."]

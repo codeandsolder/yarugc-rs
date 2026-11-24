@@ -40,7 +40,7 @@ const GEAR_2_END: f64 = 200.; // 100px .. 200px
 
 // Calculate total steps at the end of the lower gears
 const GEAR_1_END_STEPS: f64 = GEAR_1_RATIO * GEAR_1_END;
-const GEAR_2_END_STEPS: f64 = GEAR_2_RATIO * (GEAR_2_END - GEAR_1_END) + GEAR_1_END_STEPS;
+const GEAR_2_END_STEPS: f64 = GEAR_2_RATIO.mul_add(GEAR_2_END - GEAR_1_END, GEAR_1_END_STEPS);
 
 /// Defines how many ticks there are per a single step.
 ///
@@ -140,7 +140,7 @@ pub struct StepInput<T> {
 }
 
 /// The [`StepInput`] context.
-#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd)]
 pub struct StepState<T> {
     /// The currently active value.
     pub value: T,
@@ -169,6 +169,7 @@ pub trait Steppable: Debug + Copy + Clone + PartialEq + PartialOrd + Send + Sync
     /// If `snap` is present then the returned value should be snapped to it.
     /// Which is to say, `result % snap` should be zero. With the exception
     /// of min/max boundaries of the data type being reached.
+    #[must_use = "Use the configured value."]
     fn add_steps(&self, step: Self, count: i64, snap: Option<Self>) -> Self;
 
     /// Returns the number of steps required to reach `target` from `self`.
@@ -359,7 +360,7 @@ macro_rules! impl_steppable_float {
     };
 }
 
-fn narrow_step_float(value: f64) -> f32 {
+const fn narrow_step_float(value: f64) -> f32 {
     value as f32
 }
 
@@ -446,6 +447,7 @@ impl<T: Steppable> StepInput<T> {
     /// # Panics
     ///
     /// Panics if `snap` is zero or less and debug assertions are enabled.
+    #[must_use = "Use the configured value."]
     pub fn with_snap(mut self, snap: T) -> Self {
         if snap >= T::min_step() {
             self.snap = Some(snap);
@@ -460,7 +462,8 @@ impl<T: Steppable> StepInput<T> {
     /// Wrap determines whether the values should form an infinite circle,
     /// where increasing above `max` results in `min` and
     /// decreasing below `min` results in `max`.
-    pub fn with_wrap(mut self, wrap: bool) -> Self {
+    #[must_use = "Use the configured value."]
+    pub const fn with_wrap(mut self, wrap: bool) -> Self {
         self.wrap = wrap;
         self
     }
@@ -473,6 +476,7 @@ impl<T: Steppable> StepInput<T> {
     /// This is useful for showing units (1 ft, 2 GB) or for doing visual-only rounding, etc.
     ///
     /// [`StepState`]: StepState
+    #[must_use = "Use the configured value."]
     pub fn with_display<F>(mut self, display: F) -> Self
     where
         F: Fn(StepState<T>) -> String + 'static,
@@ -575,7 +579,7 @@ impl<T: Steppable> StepInput<T> {
     /// Wrap determines whether the values should form an infinite circle,
     /// where increasing above `max` results in `min` and
     /// decreasing below `min` results in `max`.
-    pub fn set_wrap(this: &mut WidgetMut<'_, Self>, wrap: bool) {
+    pub const fn set_wrap(this: &mut WidgetMut<'_, Self>, wrap: bool) {
         this.widget.wrap = wrap;
     }
 
@@ -667,14 +671,13 @@ impl<T: Steppable> StepInput<T> {
     fn steps_to_negative_ticks(steps: u64) -> i64 {
         steps
             .checked_mul(TICKS_PER_STEP as u64)
-            .map(|t| {
+            .map_or(i64::MIN, |t| {
                 if t >= i64::MIN as u64 {
                     i64::MIN
                 } else {
                     t.wrapping_neg().cast_signed()
                 }
             })
-            .unwrap_or(i64::MIN)
     }
 
     /// Calculates `min_ticks`/`max_ticks` for reaching `min`/`max` from `base` with `step`.
@@ -933,7 +936,7 @@ impl<T: Steppable> StepInput<T> {
             (GEAR_2_END, GEAR_2_END_STEPS, GEAR_3_RATIO)
         };
 
-        let steps_raw = base_steps + (distance - start_distance) * ratio;
+        let steps_raw = (distance - start_distance).mul_add(ratio, base_steps);
         let steps = steps_raw.round();
         let drift = (steps_raw - steps) * ratio.recip();
 
@@ -965,7 +968,7 @@ impl<T: Steppable> StepInput<T> {
 }
 
 /// The latest active value of [`StepInput`].
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Step<T> {
     /// Currently active value.
     pub value: T,
@@ -1035,7 +1038,7 @@ impl<T: Steppable> Widget for StepInput<T> {
                             ctx.request_paint_only();
                         }
                     }
-                    Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::ArrowDown) => {
+                    Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowDown) => {
                         if ke.state.is_down() {
                             value_changed = if snap {
                                 self.prev_snap()
@@ -1044,7 +1047,7 @@ impl<T: Steppable> Widget for StepInput<T> {
                             }
                         }
                     }
-                    Key::Named(NamedKey::ArrowRight) | Key::Named(NamedKey::ArrowUp) => {
+                    Key::Named(NamedKey::ArrowRight | NamedKey::ArrowUp) => {
                         if ke.state.is_down() {
                             value_changed = if snap {
                                 self.next_snap()
@@ -1347,7 +1350,7 @@ impl<T: Steppable> Widget for StepInput<T> {
                     let (btn_length, btn_edge_pad) =
                         Self::basic_button_length(vertical_space.get(), None);
                     match len_req {
-                        LenReq::Min => 2. * (btn_length + 2. * btn_edge_pad),
+                        LenReq::Min => 2. * 2.0_f64.mul_add(btn_edge_pad, btn_length),
                         LenReq::Max => 2. * (btn_length * 3.),
                         LenReq::Fit(_) => unreachable!(),
                     }
@@ -1357,8 +1360,8 @@ impl<T: Steppable> Widget for StepInput<T> {
                     let (arrow_width, _, arrow_edge_pad) =
                         Self::flow_button_length(vertical_space.get(), None);
                     match len_req {
-                        LenReq::Min => 2. * (2. * arrow_width + arrow_edge_pad),
-                        LenReq::Max => 2. * (4. * arrow_width + arrow_edge_pad),
+                        LenReq::Min => 2. * 2.0_f64.mul_add(arrow_width, arrow_edge_pad),
+                        LenReq::Max => 2. * 4.0_f64.mul_add(arrow_width, arrow_edge_pad),
                         LenReq::Fit(_) => unreachable!(),
                     }
                 }
@@ -1408,12 +1411,12 @@ impl<T: Steppable> Widget for StepInput<T> {
             StepInputStyle::Basic => {
                 let (btn_length, btn_edge_pad) =
                     Self::basic_button_length(size.height, Some(size.width));
-                2. * (btn_length + 2. * btn_edge_pad)
+                2. * 2.0_f64.mul_add(btn_edge_pad, btn_length)
             }
             StepInputStyle::Flow => {
                 let (arrow_width, _, arrow_edge_pad) =
                     Self::flow_button_length(size.height, Some(size.width));
-                2. * (2. * arrow_width + arrow_edge_pad)
+                2. * 2.0_f64.mul_add(arrow_width, arrow_edge_pad)
             }
         };
 
@@ -1469,7 +1472,7 @@ impl<T: Steppable> Widget for StepInput<T> {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_iter(self.label.as_ref().map(|label| label.id()))
+        ChildrenIds::from_iter(self.label.as_ref().map(WidgetPod::id))
     }
 
     fn accepts_focus(&self) -> bool {
@@ -1497,14 +1500,14 @@ impl<T: Steppable> StepInput<T> {
         // so it won't touch the border even when there is no extra padding in the widget.
         // We base both the padding and the button size itself on the available content-box height.
         let mut edge_pad = pad * vertical_space;
-        let mut length = vertical_space - 2. * edge_pad;
+        let mut length = 2.0_f64.mul_add(-edge_pad, vertical_space);
         // If we know the total horizontal space, make sure the button length is not over 20% of it.
         // This helps prevent overflow and other awkward results given narrow but tall constraints.
         if let Some(horizontal_space) = horizontal_space {
             let max_length = 0.2 * horizontal_space;
             if length > max_length {
                 length = max_length;
-                edge_pad = length / (1. - 2. * pad) * pad;
+                edge_pad = length / 2.0_f64.mul_add(-pad, 1.) * pad;
             }
         }
         (length, edge_pad)
@@ -1567,12 +1570,12 @@ impl<T: Steppable> StepInput<T> {
         );
         let plus_v = Line::new(
             Point::new(
-                size.width - btn_length * 0.5 - btn_x_pad,
+                f64::mul_add(btn_length, -0.5, size.width) - btn_x_pad,
                 (size.height - btn_length) * 0.5,
             ),
             Point::new(
-                size.width - btn_length * 0.5 - btn_x_pad,
-                size.height - (size.height - btn_length) * 0.5,
+                f64::mul_add(btn_length, -0.5, size.width) - btn_x_pad,
+                (size.height - btn_length).mul_add(-0.5, size.height),
             ),
         );
 
@@ -1620,10 +1623,10 @@ impl<T: Steppable> StepInput<T> {
 
         let (arrow_width, arrow_height, arrow_edge_pad) =
             Self::flow_button_length(size.height, Some(size.width));
-        let extra_y_pad = (size.height - arrow_height - 2. * arrow_edge_pad) * 0.5;
+        let extra_y_pad = 2.0_f64.mul_add(-arrow_edge_pad, size.height - arrow_height) * 0.5;
 
         // Define the various points that form a hollow-base arrow facing right.
-        let arrow_y_center = extra_y_pad + arrow_edge_pad + 0.5 * arrow_height;
+        let arrow_y_center = 0.5_f64.mul_add(arrow_height, extra_y_pad + arrow_edge_pad);
         let arrow_tip = Point::new(arrow_width, arrow_y_center);
         let arrow_base_x = 0.575 * arrow_width;
         let arrow_base = Point::new(arrow_base_x, arrow_y_center);
@@ -1643,13 +1646,15 @@ impl<T: Steppable> StepInput<T> {
         let arrow_move_range = 3.;
         // Actual available space for arrow movement depends on the label and our total size.
         let label_width = self.label_x_end - self.label_x_start;
-        let arrow_space = ((size.width - label_width) * 0.5 - arrow_edge_pad).max(0.);
+        let arrow_space = (size.width - label_width)
+            .mul_add(0.5, -arrow_edge_pad)
+            .max(0.);
         // Base offset is the stationary arrow location,
         // measured from the outer edge of the widget's content-box.
-        let arrow_offset_base = arrow_edge_pad + arrow_width * arrow_move_range;
+        let arrow_offset_base = f64::mul_add(arrow_width, arrow_move_range, arrow_edge_pad);
         // Active offset is closer to the edge based on the visual speed factor.
-        let arrow_move_active = arrow_move_range - (arrow_move_range - 1.) * speed;
-        let arrow_offset_active = arrow_edge_pad + arrow_width * arrow_move_active;
+        let arrow_move_active = f64::mul_add((arrow_move_range - 1.), -speed, arrow_move_range);
+        let arrow_offset_active = f64::mul_add(arrow_width, arrow_move_active, arrow_edge_pad);
         // Keep the offset within available space bounds if possible,
         // and favor overflowing towards the middle content not the widget bounds.
         // Note that arrow_width > arrow_space is possible, so this can't be f64::clamp.
@@ -1697,18 +1702,18 @@ impl<T: Steppable> StepInput<T> {
             };
 
             // End the outer lines exactly underneath the arrow shoulder tip.
-            let style1_x_end = size.width - arrow_offset_active + arrow_width * 0.11;
+            let style1_x_end = f64::mul_add(arrow_width, 0.11, size.width - arrow_offset_active);
             // Keep the outer line length at 80% of the inner lines.
-            let style1_x_start = self.label_x_end + (style1_x_end - self.label_x_end) * 0.2;
+            let style1_x_start = (style1_x_end - self.label_x_end).mul_add(0.2, self.label_x_end);
             // Keep the outer line just barely following the arrow at the outer edge.
-            let style1_y_offset = style1.width * 0.5 + arrow_height * 0.05;
+            let style1_y_offset = f64::mul_add(arrow_height, 0.05, style1.width * 0.5);
 
             // End the inner lines underneath the arrow base.
             let style2_x_end = size.width - arrow_offset_active + arrow_base_x;
             // Start from the content.
             let style2_x_start = self.label_x_end;
             // Keep the inner lines following the base of the arrow, with a slight center gap.
-            let style2_y_offset = style2.width * 0.5 + arrow_height * 0.06;
+            let style2_y_offset = f64::mul_add(arrow_height, 0.06, style2.width * 0.5);
 
             // Top outer line.
             let line1_y = extra_y_pad + arrow_edge_pad + style1_y_offset;
@@ -1718,14 +1723,14 @@ impl<T: Steppable> StepInput<T> {
             );
 
             // Top inner line.
-            let line2_y = 0.5 * size.height - style2_y_offset;
+            let line2_y = 0.5_f64.mul_add(size.height, -style2_y_offset);
             let line2 = Line::new(
                 Point::new(style2_x_start, line2_y),
                 Point::new(style2_x_end, line2_y),
             );
 
             // Bottom inner line.
-            let line3_y = 0.5 * size.height + style2_y_offset;
+            let line3_y = 0.5_f64.mul_add(size.height, style2_y_offset);
             let line3 = Line::new(
                 Point::new(style2_x_start, line3_y),
                 Point::new(style2_x_end, line3_y),

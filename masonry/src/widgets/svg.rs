@@ -31,6 +31,20 @@ use crate::properties::ObjectFit;
 /// That way the SVG looks good at any scale and doesn't shift the layout around.
 const SVG_SCALE: f64 = 1.0;
 
+// Convert a validated, positive logical extent to an integer raster dimension.
+#[expect(
+    clippy::cast_sign_loss,
+    reason = "Bounds and finiteness are checked before conversion."
+)]
+fn raster_dimension(extent: f64) -> Option<u32> {
+    let rounded = extent.ceil();
+    if rounded > 0. && rounded <= f64::from(u32::MAX) {
+        Some(rounded as u32)
+    } else {
+        None
+    }
+}
+
 /// A widget that renders an SVG.
 ///
 /// You can change the sizing of the SVG with the [`ObjectFit`] property.
@@ -47,7 +61,8 @@ impl Svg {
     ///
     /// By default, the SVG will be scaled to fully fit within the container.
     /// ([`ObjectFit::Contain`]).
-    pub fn new(tree: Arc<Tree>) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn new(tree: Arc<Tree>) -> Self {
         Self {
             tree,
             rasterized: None,
@@ -60,7 +75,8 @@ impl Svg {
     /// and is only for visual presentation.
     ///
     /// If `is_decorative` is `true`, the SVG will be ignored by screen readers.
-    pub fn decorative(mut self, is_decorative: bool) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn decorative(mut self, is_decorative: bool) -> Self {
         self.decorative = is_decorative;
         self
     }
@@ -73,6 +89,7 @@ impl Svg {
     /// If the SVG is decorative users should set alt text to `""`.
     /// If it's too hard to describe through text, the alt text should be left unset.
     /// This allows accessibility clients to know that there is no accessible description of the SVG content.
+    #[must_use = "Use the configured value."]
     pub fn with_alt_text(mut self, alt_text: impl Into<ArcStr>) -> Self {
         self.alt_text = Some(alt_text.into());
         self
@@ -84,6 +101,7 @@ impl Svg {
     /// Sets a new inner SVG.
     pub fn set_tree(this: &mut WidgetMut<'_, Self>, tree: Arc<Tree>) {
         this.widget.tree = tree;
+        this.widget.rasterized = None;
         this.ctx.request_layout();
     }
 
@@ -115,8 +133,8 @@ impl Svg {
     fn preferred_size(&self) -> Size {
         let size = self.tree.size();
         Size::new(
-            size.width() as f64 / SVG_SCALE,
-            size.height() as f64 / SVG_SCALE,
+            f64::from(size.width()) / SVG_SCALE,
+            f64::from(size.height()) / SVG_SCALE,
         )
     }
 }
@@ -174,12 +192,15 @@ impl Widget for Svg {
         //       However, until Vello API is a thing and Resvg gains that ability,
         //       we'll just have to rasterize it using Tiny Skia and then draw the image.
         if self.rasterized.is_none() {
-            let pixmap_width = content_box.width().ceil() as u32;
-            let pixmap_height = content_box.height().ceil() as u32;
-            if pixmap_width == 0 || pixmap_height == 0 {
+            let (Some(pixmap_width), Some(pixmap_height)) = (
+                raster_dimension(content_box.width()),
+                raster_dimension(content_box.height()),
+            ) else {
                 return;
-            }
-            let mut pixmap = tiny_skia::Pixmap::new(pixmap_width, pixmap_height).unwrap();
+            };
+            let Some(mut pixmap) = tiny_skia::Pixmap::new(pixmap_width, pixmap_height) else {
+                return;
+            };
 
             let cache = ctx.property_cache();
             let object_fit = props.get::<ObjectFit>(cache);
@@ -187,7 +208,7 @@ impl Widget for Svg {
             // For drawing we want to scale the actual SVG data lengths, which means
             // we need to avoid using Svg::preferred_size which does not match the data.
             let svg_size = self.tree.size();
-            let svg_size = Size::new(svg_size.width() as f64, svg_size.height() as f64);
+            let svg_size = Size::new(f64::from(svg_size.width()), f64::from(svg_size.height()));
 
             let coeffs = object_fit
                 .affine(content_box.size().to_rect(), svg_size.to_rect())
@@ -214,7 +235,9 @@ impl Widget for Svg {
             self.rasterized = Some(image);
         }
 
-        let image = self.rasterized.as_ref().unwrap();
+        let Some(image) = self.rasterized.as_ref() else {
+            return;
+        };
 
         painter.with_fill_clip(content_box, |painter| {
             painter.draw_image(image, Affine::IDENTITY);

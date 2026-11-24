@@ -47,7 +47,8 @@ pub struct ColorRectangle {
 }
 
 impl ColorRectangle {
-    pub fn new(color: Color) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn new(color: Color) -> Self {
         Self { color }
     }
 }

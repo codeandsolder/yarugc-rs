@@ -4,7 +4,7 @@
 use crate::core::Property;
 
 /// Declares if the scroll bar collapses when not being hovered.
-#[derive(Default, Clone, Copy, Debug, PartialEq)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Collapsible(pub bool);
 
 impl Property for Collapsible {

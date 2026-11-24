@@ -50,11 +50,13 @@ impl Prose {
     /// Creates a new `Prose` with the given text.
     ///
     /// To use non-default text properties, use [`from_text_area`](Self::from_text_area) instead.
+    #[must_use = "Use the returned value."]
     pub fn new(text: &str) -> Self {
         Self::from_text_area(TextArea::new_immutable(text).prepare())
     }
 
     /// Creates a new `Prose` from a styled text area.
+    #[must_use = "Use the returned value."]
     pub fn from_text_area(text: NewWidget<TextArea<false>>) -> Self {
         Self {
             text: text.into_pod(),
@@ -68,7 +70,8 @@ impl Prose {
     /// wraps a text area with [word wrapping](TextArea::with_word_wrap) enabled.
     ///
     /// To modify this on active prose, use [`set_clip`](Self::set_clip).
-    pub fn with_clip(mut self, clip: bool) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_clip(mut self, clip: bool) -> Self {
         self.clip = clip;
         self
     }
@@ -79,7 +82,8 @@ impl Prose {
     /// Returns the `WidgetPod` of the underlying text area. Useful for getting its ID.
     // This is a bit of a hack, to work around `from_text_area_pod` not being
     // able to set padding.
-    pub fn text_area_pod(&self) -> &WidgetPod<TextArea<false>> {
+    #[must_use = "Use the returned value."]
+    pub const fn text_area_pod(&self) -> &WidgetPod<TextArea<false>> {
         &self.text
     }
 }
@@ -194,7 +198,7 @@ impl Widget for Prose {
         _len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        ctx.redirect_measurement(&mut self.text, axis, cross_length)
+        ctx.redirect_measurement(&self.text, axis, cross_length)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {

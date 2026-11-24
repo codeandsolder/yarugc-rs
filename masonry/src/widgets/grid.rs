@@ -76,7 +76,7 @@ pub enum GridTrackSize {
 }
 
 /// Parameters required when adding an item to a [`Grid`] container.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct GridParams {
     /// Defines which column in the grid the item should start.
     pub col: Option<u16>,
@@ -94,12 +94,14 @@ pub struct GridParams {
 // --- MARK: BUILDERS
 impl Grid {
     /// Creates a new grid with no columns or rows.
+    #[must_use = "Use the returned value."]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Creates a new grid with the given number of columns and rows,
     /// with each row and column sized with [`GridTrackSize::FRACTION`].
+    #[must_use = "Use the returned value."]
     pub fn with_dimensions(columns: usize, rows: usize) -> Self {
         Self {
             columns: vec![GridTrackSize::FRACTION; columns],
@@ -109,24 +111,28 @@ impl Grid {
     }
 
     /// Builder-style method to add a row to the grid.
+    #[must_use = "Use the returned value."]
     pub fn with_row(mut self, row: GridTrackSize) -> Self {
         self.rows.push(row);
         self
     }
 
     /// Builder-style method to add a column to the grid.
+    #[must_use = "Use the returned value."]
     pub fn with_column(mut self, column: GridTrackSize) -> Self {
         self.columns.push(column);
         self
     }
 
     /// Builder-style method to add multiple rows to the grid.
+    #[must_use = "Use the configured value."]
     pub fn with_rows(mut self, rows: impl IntoIterator<Item = GridTrackSize>) -> Self {
         self.rows.extend(rows);
         self
     }
 
     /// Builder-style method to add multiple columns to the grid.
+    #[must_use = "Use the configured value."]
     pub fn with_columns(mut self, columns: impl IntoIterator<Item = GridTrackSize>) -> Self {
         self.columns.extend(columns);
         self
@@ -140,6 +146,7 @@ impl Grid {
     /// to CSS grid's would try to assign an appropriate position to it.
     /// If the algorithm fails, `measure`/`layout` pass would panic in debug mode
     /// and silently ignore this child in release mode.
+    #[must_use = "Use the returned value."]
     pub fn with(mut self, child: NewWidget<impl Widget + ?Sized>, params: GridParams) -> Self {
         let child = Child::new(child, params);
         self.children.push(child);
@@ -194,7 +201,7 @@ impl Grid {
                 place(occupied, child, col, row);
 
                 *cursor_col = (col + child.params.width) as usize % n_col;
-                *cursor_row = row as usize + (*cursor_col == 0) as usize;
+                *cursor_row = row as usize + usize::from(*cursor_col == 0);
             };
 
         let mut prefix = Vec::new();
@@ -264,7 +271,7 @@ impl Grid {
                     prefix.resize(occupied.len(), 0);
                     for col in 0..self.columns.len() {
                         for row in 0..self.rows.len() {
-                            let cell = occupied[idx(col, row)] as u32;
+                            let cell = u32::from(occupied[idx(col, row)]);
                             let top = (row.checked_sub(1)).map_or(0, |r| prefix[idx(col, r)]);
                             let left = (col.checked_sub(1)).map_or(0, |c| prefix[idx(c, row)]);
                             let diag = (col.checked_sub(1))
@@ -347,8 +354,12 @@ impl Grid {
 
         // available length for distribution
         // = total_length - gap * (#tracks - 1)
-        let context_length = context_length
-            .and_then(|l| Length::try_px(l.get() - gap.get() * (tracks.len() - 1) as f64));
+        let context_length = context_length.and_then(|l| {
+            Length::try_px(gap.get().mul_add(
+                -crate::layout_count(tracks.len().saturating_sub(1)),
+                l.get(),
+            ))
+        });
 
         // step 1: auto lengths and initial lengths of tracks
         let (track_auto_lengths, mut track_lengths): (Vec<_>, Vec<_>) = tracks
@@ -393,7 +404,7 @@ impl Grid {
                         cross_length,
                     );
                     track_lengths[track] = computed.get().max(track_lengths[track]);
-                };
+                }
             } else {
                 let pos = child.pos(axis);
                 let span = child.span(axis);
@@ -446,11 +457,13 @@ impl Grid {
                 })
                 .reduce(|[a, b], [c, d]| [a + c, b + d])
                 .unwrap_or([0, 0]);
-            let length_by_itself = track_lengths[start_track..end_track]
-                .iter()
-                .copied()
-                .sum::<f64>()
-                + gap.get() * (span - 1) as f64;
+            let length_by_itself = gap.get().mul_add(
+                f64::from(span.saturating_sub(1)),
+                track_lengths[start_track..end_track]
+                    .iter()
+                    .copied()
+                    .sum::<f64>(),
+            );
 
             // min_contrib is how much should be added to the already existing length to align it
             // to the min length of the tracks computed in the previous step (2).
@@ -458,9 +471,9 @@ impl Grid {
 
             // if the tracks are already longer than the min length there is nothing to do.
             while min_contrib > 0. {
-                let per_track_min_contrib = min_contrib / n_intrinsic as f64;
+                let per_track_min_contrib = min_contrib / crate::layout_count(n_intrinsic);
                 let per_track_max_contrib =
-                    per_track_min_contrib + (max_length - min_length) / n_max as f64;
+                    per_track_min_contrib + (max_length - min_length) / crate::layout_count(n_max);
 
                 for (auto_length, length) in track_auto_lengths[start_track..end_track]
                     .iter()
@@ -536,7 +549,7 @@ impl Grid {
                     .filter(|t| matches!(t, GridTrackSize::Auto))
                     .count();
                 if n_auto != 0 {
-                    let per_auto_track_ext = leftover_length / n_auto as f64;
+                    let per_auto_track_ext = leftover_length / crate::layout_count(n_auto);
                     tracks
                         .iter()
                         .zip(track_lengths)
@@ -584,14 +597,14 @@ impl Child {
     }
 
     /// Returns the number of cells the child's area spans on the given `axis`.
-    fn span(&self, axis: Axis) -> u16 {
+    const fn span(&self, axis: Axis) -> u16 {
         match axis {
             Axis::Horizontal => self.params.width,
             Axis::Vertical => self.params.height,
         }
     }
 
-    fn pos(&self, axis: Axis) -> u16 {
+    const fn pos(&self, axis: Axis) -> u16 {
         match axis {
             Axis::Horizontal => self.x,
             Axis::Vertical => self.y,
@@ -616,7 +629,8 @@ impl GridParams {
     /// Creates grid parameters with the defaulted values.
     ///
     /// It sets the cell span to 1×1.
-    pub fn new() -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn new() -> Self {
         Self {
             col: None,
             row: None,
@@ -628,23 +642,27 @@ impl GridParams {
     /// Creates grid parameters for the given position.
     ///
     /// It sets the cell span to 1×1.
+    #[must_use = "Use the returned value."]
     pub fn pos(col: u16, row: u16) -> Self {
         Self::new().with_col(col).with_row(row)
     }
 
     /// Builder-style method to define at which column in the grid the item should start.
-    pub fn with_col(mut self, col: u16) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_col(mut self, col: u16) -> Self {
         self.col = Some(col);
         self
     }
 
     /// Builder-style method to define at which row in the grid the item should start.
-    pub fn with_row(mut self, row: u16) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_row(mut self, row: u16) -> Self {
         self.row = Some(row);
         self
     }
 
     /// Builder-style method to define at which column and row in the grid the item should start.
+    #[must_use = "Use the returned value."]
     pub fn with_pos(self, col: u16, row: u16) -> Self {
         self.with_col(col).with_row(row)
     }
@@ -654,6 +672,7 @@ impl GridParams {
     /// # Panics
     ///
     /// When debug assertions are on, panics if the width is zero.
+    #[must_use = "Use the configured value."]
     pub fn with_width(mut self, mut width: u16) -> Self {
         if width == 0 {
             debug_panic!(
@@ -671,6 +690,7 @@ impl GridParams {
     /// # Panics
     ///
     /// When debug assertions are on, panics if the height is zero.
+    #[must_use = "Use the configured value."]
     pub fn with_height(mut self, mut height: u16) -> Self {
         if height == 0 {
             debug_panic!(
@@ -688,6 +708,7 @@ impl GridParams {
     /// # Panics
     ///
     /// When debug assertions are on, panics if either the width or the height is zero.
+    #[must_use = "Use the returned value."]
     pub fn with_span(self, width: u16, height: u16) -> Self {
         self.with_width(width).with_height(height)
     }
@@ -847,7 +868,7 @@ impl Widget for Grid {
     type Action = NoAction;
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        for child in self.children.iter_mut() {
+        for child in &mut self.children {
             ctx.register_child(&mut child.widget);
         }
     }
@@ -887,9 +908,10 @@ impl Widget for Grid {
             return 0.px();
         }
 
-        let computed = Length::px(
-            gap_length * (track_lengths.len() - 1) as f64 + track_lengths.into_iter().sum::<f64>(),
-        );
+        let computed = Length::px(gap_length.mul_add(
+            crate::layout_count(track_lengths.len().saturating_sub(1)),
+            track_lengths.into_iter().sum::<f64>(),
+        ));
 
         match len_req {
             LenReq::Fit(space) => computed.min(space),

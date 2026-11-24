@@ -6,7 +6,7 @@ use std::any::TypeId;
 use crate::core::{Property, UpdateCtx};
 
 /// Options for handling lines of text that are too wide for the available space.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LineBreaking {
     /// Lines are broken at word boundaries.
     WordWrap,

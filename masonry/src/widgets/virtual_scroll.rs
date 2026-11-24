@@ -248,6 +248,7 @@ impl VirtualScroll {
     /// Note that it is not possible to add children before the widget is "live".
     /// This is for simplicity, as the set of the children which should be loaded has
     /// not yet been determined.
+    #[must_use = "Use the returned value."]
     pub fn new(initial_anchor: usize, len: usize) -> Self {
         let mut virtual_list = VirtualList::new(
             SparsePrefixSumExtentModel::new(DEFAULT_MEAN_ITEM_LENGTH, len),
@@ -274,6 +275,7 @@ impl VirtualScroll {
 
     /// Sets the number of child ids which are valid.
     #[track_caller]
+    #[must_use = "Use the returned value."]
     pub fn with_len(mut self, len: usize) -> Self {
         self.virtual_list.set_len(len);
         self
@@ -281,14 +283,16 @@ impl VirtualScroll {
 
     /// Sets the points (as ratios of the main-axis length) where the first item starts and
     /// the last item ends in the viewport.
-    pub fn with_start_end(mut self, start_at: f64, end_at: f64) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_start_end(mut self, start_at: f64, end_at: f64) -> Self {
         self.start_at = start_at;
         self.end_at = end_at;
         self
     }
 
     /// Sets the direction in which children are laid out.
-    pub fn with_direction(mut self, direction: ScrollDirection) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_direction(mut self, direction: ScrollDirection) -> Self {
         self.direction = direction;
         self
     }
@@ -296,7 +300,8 @@ impl VirtualScroll {
     /// Sets scrolling state.
     ///
     /// Adjusts pixel snapping for animations.
-    pub fn with_scrolling(mut self, scrolling: bool) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_scrolling(mut self, scrolling: bool) -> Self {
         self.scrolling = scrolling;
         self
     }
@@ -311,6 +316,7 @@ impl VirtualScroll {
         clippy::len_without_is_empty,
         reason = "The only time the VirtualScroll unloads all children is when given an empty valid range."
     )]
+    #[must_use = "Use the returned value."]
     pub fn len(&self) -> usize {
         self.items.len()
     }
@@ -347,7 +353,8 @@ impl VirtualScrollFetchAction {
     /// That is, the items which the driver wanted to have available, to properly load what it needs.
     /// Note that many of these items will likely still be active even after this event;
     /// only those which aren't also in `target` must be removed.
-    pub fn old_active(&self) -> &Range<usize> {
+    #[must_use = "Use the returned value."]
+    pub const fn old_active(&self) -> &Range<usize> {
         &self.old_active
     }
 
@@ -355,27 +362,29 @@ impl VirtualScrollFetchAction {
     ///
     /// Note that many of these items will have previously been active before this event (and so require no action);
     /// only those which aren't also in `target` must be removed.
-    pub fn target(&self) -> &Range<usize> {
+    #[must_use = "Use the returned value."]
+    pub const fn target(&self) -> &Range<usize> {
         &self.target
     }
 }
 
 impl VirtualScrollScrollAction {
     /// Provides the IDs of the range of children in viewport.
-    pub fn range_in_viewport(&self) -> &Range<usize> {
+    #[must_use = "Use the returned value."]
+    pub const fn range_in_viewport(&self) -> &Range<usize> {
         &self.range_in_viewport
     }
 }
 
 impl ScrollDirection {
-    fn axis(self) -> Axis {
+    const fn axis(self) -> Axis {
         match self {
             Self::TopToBottom | Self::BottomToTop => Axis::Vertical,
             Self::LeftToRight | Self::RightToLeft => Axis::Horizontal,
         }
     }
 
-    fn is_reverse(self) -> bool {
+    const fn is_reverse(self) -> bool {
         matches!(self, Self::BottomToTop | Self::RightToLeft)
     }
 
@@ -432,7 +441,7 @@ impl VirtualScroll {
         this.ctx.children_changed();
         if this.widget.items.insert(idx, child.into_pod()).is_some() {
             tracing::warn!("Tried to add child {idx} twice to VirtualScroll");
-        };
+        }
     }
 
     /// Removes the child widget with id `idx`.
@@ -716,17 +725,19 @@ impl Widget for VirtualScroll {
         }
 
         if total_children_length != 0. && total_children_count != 0 {
-            self.virtual_list
-                .model_mut()
-                .set_default_extent(total_children_length / total_children_count as f64);
+            self.virtual_list.model_mut().set_default_extent(
+                total_children_length / crate::layout_count(total_children_count),
+            );
         }
 
         let main_axis_length = size.get_coord(self.direction.axis());
         let start_at = self.start_at * main_axis_length;
         let end_at = self.end_at * main_axis_length;
         self.virtual_list.set_viewport_extent(end_at - start_at);
-        self.virtual_list
-            .set_overscan(main_axis_length + start_at, main_axis_length * 3. - end_at);
+        self.virtual_list.set_overscan(
+            main_axis_length + start_at,
+            main_axis_length.mul_add(3., -end_at),
+        );
 
         let offset_of_anchor = self.virtual_list.offset_of(self.anchor_index);
         self.virtual_list
@@ -765,7 +776,9 @@ impl Widget for VirtualScroll {
 
     fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {
         let content_length = ctx.content_box().size().get_coord(self.direction.axis());
-        let offset = self.scroll_offset_from_anchor() - self.start_at * content_length;
+        let offset = self
+            .start_at
+            .mul_add(-content_length, self.scroll_offset_from_anchor());
         let offset = if self.direction.is_reverse() {
             content_length - self.direction.appropriate(offset)
         } else {
@@ -841,8 +854,10 @@ impl Widget for VirtualScroll {
         // in practice, the anchor index is in range for an f64.
         // TBD: Is there a better way to do this?
         if self.anchor_index != 0 && self.anchor_index != usize::MAX {
-            let pos = (self.anchor_index as f64) * self.virtual_list.model().default_extent()
-                + self.scroll_offset_from_anchor();
+            let pos = crate::layout_count(self.anchor_index).mul_add(
+                self.virtual_list.model().default_extent(),
+                self.scroll_offset_from_anchor(),
+            );
             match self.direction.axis() {
                 Axis::Horizontal => node.set_scroll_x(pos),
                 Axis::Vertical => node.set_scroll_y(pos),
@@ -876,7 +891,7 @@ impl Widget for VirtualScroll {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        self.items.values().map(|pod| pod.id()).collect()
+        self.items.values().map(WidgetPod::id).collect()
     }
 
     fn accepts_text_input(&self) -> bool {

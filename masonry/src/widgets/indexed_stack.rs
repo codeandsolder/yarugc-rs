@@ -40,11 +40,13 @@ pub struct IndexedStack {
 // --- MARK: BUILDERS
 impl IndexedStack {
     /// Creates a new stack with no children.
+    #[must_use = "Use the returned value."]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Builder-style method to add a child widget.
+    #[must_use = "Use the returned value."]
     pub fn with(mut self, child: NewWidget<impl Widget + ?Sized>) -> Self {
         self.children.push(child.erased().into_pod());
         self
@@ -52,22 +54,10 @@ impl IndexedStack {
 
     /// Builder-style method to set the active child.
     ///
-    /// Index must be a valid index into the stack's children, or 0
-    /// if there are no children.
+    /// Clamps the index to the last child, or zero for an empty stack.
+    #[must_use = "Use the returned value."]
     pub fn with_active_child(mut self, idx: usize) -> Self {
-        if self.children.is_empty() {
-            assert!(
-                idx == 0,
-                "Called set_active on empty IndexedStack with non-zero index {idx}"
-            );
-        } else {
-            assert!(
-                idx < self.children.len(),
-                "Called set_active with invalid index {idx}"
-            );
-        }
-
-        self.active_child = idx;
+        self.active_child = idx.min(self.children.len().saturating_sub(1));
         self
     }
 }
@@ -75,7 +65,8 @@ impl IndexedStack {
 // --- MARK: METHODS
 impl IndexedStack {
     /// Returns the index of the currently active child.
-    pub fn active_child(&self) -> usize {
+    #[must_use = "Use the returned value."]
+    pub const fn active_child(&self) -> usize {
         self.active_child
     }
 }
@@ -222,7 +213,7 @@ impl Widget for IndexedStack {
     type Action = NoAction;
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        for child in self.children.iter_mut() {
+        for child in &mut self.children {
             ctx.register_child(child);
         }
     }
@@ -237,7 +228,9 @@ impl Widget for IndexedStack {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        if !self.children.is_empty() {
+        if self.children.is_empty() {
+            Length::ZERO
+        } else {
             let auto_length = len_req.into();
             let context_size = LayoutSize::maybe(axis.cross(), cross_length);
 
@@ -248,8 +241,6 @@ impl Widget for IndexedStack {
                 axis,
                 cross_length,
             )
-        } else {
-            Length::ZERO
         }
     }
 

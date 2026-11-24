@@ -24,6 +24,7 @@ impl Property for PlaceholderColor {
 
 impl PlaceholderColor {
     /// Creates new `PlaceholderColor` with given value.
+    #[must_use = "Use the returned value."]
     pub const fn new(color: AlphaColor<Srgb>) -> Self {
         Self { color }
     }

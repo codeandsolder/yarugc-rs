@@ -58,7 +58,7 @@ pub struct Flex {
 ///
 /// Children are ensured this initial size and if there is any extra space left,
 /// that remaining space gets divided among the children based on their flex factors.
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum FlexBasis {
     /// Automatically determine the basis based on how the child wants to be sized.
     ///
@@ -137,7 +137,8 @@ enum Child {
 // --- MARK: BUILDERS
 impl Flex {
     /// Creates a new `Flex` oriented along the provided axis.
-    pub fn for_axis(axis: Axis) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn for_axis(axis: Axis) -> Self {
         Self {
             direction: axis,
             children: Vec::new(),
@@ -150,6 +151,7 @@ impl Flex {
     ///
     /// The child widgets are laid out horizontally, from left to right.
     ///
+    #[must_use = "Use the returned value."]
     pub fn row() -> Self {
         Self::for_axis(Axis::Horizontal)
     }
@@ -157,18 +159,21 @@ impl Flex {
     /// Creates a new vertical container.
     ///
     /// The child widgets are laid out vertically, from top to bottom.
+    #[must_use = "Use the returned value."]
     pub fn column() -> Self {
         Self::for_axis(Axis::Vertical)
     }
 
     /// Builder-style method for specifying the children's [`CrossAxisAlignment`].
-    pub fn cross_axis_alignment(mut self, alignment: CrossAxisAlignment) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn cross_axis_alignment(mut self, alignment: CrossAxisAlignment) -> Self {
         self.cross_alignment = alignment;
         self
     }
 
     /// Builder-style method for specifying the children's [`MainAxisAlignment`].
-    pub fn main_axis_alignment(mut self, alignment: MainAxisAlignment) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn main_axis_alignment(mut self, alignment: MainAxisAlignment) -> Self {
         self.main_alignment = alignment;
         self
     }
@@ -176,6 +181,7 @@ impl Flex {
     /// Builder-style variant of [`Flex::add_fixed`].
     ///
     /// Convenient for assembling a group of widgets in a single expression.
+    #[must_use = "Use the returned value."]
     pub fn with_fixed(mut self, child: NewWidget<impl Widget + ?Sized>) -> Self {
         let child = new_child(0., child.erased().into_pod());
         self.children.push(child);
@@ -183,6 +189,7 @@ impl Flex {
     }
 
     /// Builder-style method to add a flexible child to the container.
+    #[must_use = "Use the configured value."]
     pub fn with(
         mut self,
         child: NewWidget<impl Widget + ?Sized>,
@@ -196,6 +203,7 @@ impl Flex {
     /// Builder-style method for adding a fixed-size spacer child to the container.
     ///
     /// A good default is [`DEFAULT_SPACER_LEN`](crate::theme::DEFAULT_SPACER_LEN).
+    #[must_use = "Use the returned value."]
     pub fn with_fixed_spacer(mut self, len: Length) -> Self {
         let new_child = Child::Spacer {
             flex: 0.,
@@ -215,6 +223,7 @@ impl Flex {
     /// # Panics
     ///
     /// Panics if `flex` is non-finite or negative and debug assertions are enabled.
+    #[must_use = "Use the returned value."]
     pub fn with_spacer(mut self, flex: f64) -> Self {
         let flex = flex.sanitize("spacer flex factor");
         let new_child = Child::Spacer {
@@ -624,7 +633,7 @@ impl From<CrossAxisAlignment> for FlexParams {
 }
 
 impl Child {
-    fn is_widget(&self) -> bool {
+    const fn is_widget(&self) -> bool {
         matches!(self, Self::Widget { .. })
     }
 
@@ -677,17 +686,17 @@ fn get_spacing(alignment: MainAxisAlignment, extra: f64, child_count: usize) -> 
             space_between = 0.;
         }
         MainAxisAlignment::SpaceBetween => {
-            let equal_space = extra / (child_count - 1).max(1) as f64;
+            let equal_space = extra / crate::layout_count(child_count.saturating_sub(1).max(1));
             space_before = 0.;
             space_between = equal_space;
         }
         MainAxisAlignment::SpaceEvenly => {
-            let equal_space = extra / (child_count + 1) as f64;
+            let equal_space = extra / (crate::layout_count(child_count) + 1.);
             space_before = equal_space;
             space_between = equal_space;
         }
         MainAxisAlignment::SpaceAround => {
-            let equal_space = extra / (2 * child_count) as f64;
+            let equal_space = extra / (2. * crate::layout_count(child_count));
             space_before = equal_space;
             space_between = equal_space * 2.;
         }
@@ -856,13 +865,13 @@ impl Widget for Flex {
                         flex,
                         basis_resolved,
                         ..
-                    } => basis_resolved.get() + *flex * flex_fraction,
+                    } => f64::mul_add((*flex), flex_fraction, basis_resolved.get()),
                 })
                 .sum::<f64>();
             length = length.saturating_add(total_space_needed.px());
 
             // Add all the gap lengths
-            let gap_lengths = gap_count as f64 * gap_length;
+            let gap_lengths = crate::layout_count(gap_count) * gap_length;
             length = length.saturating_add(gap_lengths.px());
         } else {
             // Calculate the cross axis length
@@ -892,7 +901,7 @@ impl Widget for Flex {
                 }
 
                 // Subtract gap lengths
-                let gap_lengths = gap_count as f64 * gap_length;
+                let gap_lengths = crate::layout_count(gap_count) * gap_length;
                 main_space = main_space.saturating_sub(gap_lengths.px());
 
                 // Calculate the flex fraction, i.e. the amount of space per one flex factor
@@ -948,7 +957,8 @@ impl Widget for Flex {
         let cross = main.cross();
         let cross_space = size.get_coord(cross).px();
 
-        let mut main_space = (size.get_coord(main) - gap_count as f64 * gap_length)
+        let mut main_space = (crate::layout_count(gap_count))
+            .mul_add(-gap_length, size.get_coord(main))
             .max(0.)
             .px();
         let mut flex_sum = 0.;
@@ -1245,7 +1255,7 @@ impl Widget for Flex {
         self.children
             .iter()
             .filter_map(|child| child.widget())
-            .map(|widget_pod| widget_pod.id())
+            .map(WidgetPod::id)
             .collect()
     }
 
@@ -1271,8 +1281,9 @@ mod tests {
     fn test_main_axis_alignment_spacing() {
         let apply_align = |align, extra, child_count| {
             let (space_before, space_between) = get_spacing(align, extra, child_count);
-            let space_after =
-                extra - space_before - space_between * child_count.saturating_sub(1) as f64;
+            let space_after = extra
+                - space_before
+                - space_between * crate::layout_count(child_count.saturating_sub(1));
             (space_before, space_between, space_after)
         };
 

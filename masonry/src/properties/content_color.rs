@@ -38,6 +38,7 @@ impl Property for ContentColor {
 
 impl ContentColor {
     /// Creates new `ContentColor` with given value.
+    #[must_use = "Use the returned value."]
     pub const fn new(color: AlphaColor<Srgb>) -> Self {
         Self { color }
     }

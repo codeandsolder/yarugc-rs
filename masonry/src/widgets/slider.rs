@@ -40,7 +40,8 @@ pub struct Slider {
 // --- MARK: BUILDERS
 impl Slider {
     /// Creates a new `Slider`.
-    pub fn new(min: f64, max: f64, value: f64) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn new(min: f64, max: f64, value: f64) -> Self {
         Self {
             min,
             max,
@@ -50,6 +51,7 @@ impl Slider {
     }
 
     /// Configures the stepping interval of the slider.
+    #[must_use = "Use the returned value."]
     pub fn with_step(mut self, step: f64) -> Self {
         self.set_step_internal(Some(step));
         self
@@ -70,7 +72,7 @@ impl Slider {
 
     fn update_value_from_position(&mut self, x: f64, width: f64) -> bool {
         let progress = (x / width).clamp(0.0, 1.0);
-        let new_value = self.min + progress * (self.max - self.min);
+        let new_value = progress.mul_add(self.max - self.min, self.min);
         let old_value = self.value;
         let final_value = if let Some(step) = self.step {
             ((new_value / step).round() * step).clamp(self.min, self.max)
@@ -113,7 +115,8 @@ impl Slider {
 
     /// Sets the range (min and max) of the slider.
     pub fn set_range(this: &mut WidgetMut<'_, Self>, min: f64, max: f64) {
-        if this.widget.min != min || this.widget.max != max {
+        if this.widget.min.to_bits() != min.to_bits() || this.widget.max.to_bits() != max.to_bits()
+        {
             this.widget.min = min;
             this.widget.max = max;
             Self::set_value(this, this.widget.value);
@@ -199,14 +202,14 @@ impl Widget for Slider {
             let big_step = step * 10.0;
 
             match &key_event.key {
-                Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::ArrowDown) => {
+                Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowDown) => {
                     new_value -= if key_event.modifiers.shift() {
                         big_step
                     } else {
                         step
                     }
                 }
-                Key::Named(NamedKey::ArrowRight) | Key::Named(NamedKey::ArrowUp) => {
+                Key::Named(NamedKey::ArrowRight | NamedKey::ArrowUp) => {
                     new_value += if key_event.modifiers.shift() {
                         big_step
                     } else {
@@ -218,7 +221,7 @@ impl Widget for Slider {
                 _ => return,
             }
 
-            if new_value != self.value {
+            if new_value.to_bits() != self.value.to_bits() {
                 let clamped_value = new_value.clamp(self.min, self.max);
                 let final_value = if let Some(s) = self.step {
                     ((clamped_value / s).round() * s).clamp(self.min, self.max)
@@ -406,8 +409,10 @@ impl Widget for Slider {
         let progress = (self.value - self.min) / (self.max - self.min).max(0.);
         let track_rect = Rect::new(0., track_y, size.width, track_y + track_thickness)
             .to_rounded_rect(track_thickness / 2.);
-        let track_active_frac =
-            progress * (1. - thumb_radius * 2. / size.width) + thumb_radius / size.width;
+        let track_active_frac = progress.mul_add(
+            1. - thumb_radius * 2. / size.width,
+            thumb_radius / size.width,
+        );
 
         // Paint with a gradient so we get a straight line slice of the rounded rect.
         let gradient = peniko::Gradient::new_linear((0., 0.), (size.width, 0.)).with_stops([
@@ -419,7 +424,10 @@ impl Widget for Slider {
         painter.fill(track_rect, &gradient).draw();
 
         // Paint thumb
-        let thumb_x = thumb_radius + progress * (size.width - thumb_radius * 2.).max(0.);
+        let thumb_x = progress.mul_add(
+            (thumb_radius.mul_add(-2., size.width)).max(0.),
+            thumb_radius,
+        );
         let thumb_y = size.height / 2.;
         let thumb_circle = Circle::new((thumb_x, thumb_y), thumb_radius - thumb_border_width / 2.);
 

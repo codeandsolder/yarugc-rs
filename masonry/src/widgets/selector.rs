@@ -51,6 +51,7 @@ impl Selector {
     }
 
     /// Builder method to pre-set the widget's initial option.
+    #[must_use = "Use the configured value."]
     pub fn with_selected_option(mut self, mut selected_option: usize) -> Self {
         if selected_option >= self.options.len() {
             debug_panic!("invalid selector option index");
@@ -74,6 +75,10 @@ impl Selector {
         if options.is_empty() {
             debug_panic!("cannot create selector with no option");
             options = vec![String::new()];
+        }
+        // An open menu describes the old list and cannot be reused after replacement.
+        if let Some(id) = this.widget.menu_layer_id.take() {
+            this.ctx.remove_layer(id);
         }
         this.widget.options = options;
         Self::select_option(this, 0);
@@ -105,7 +110,7 @@ impl Selector {
 }
 
 /// A [`Selector`]'s option was picked.
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct SelectionChanged {
     /// The content of the picked selection.
     pub selected_content: String,
@@ -132,7 +137,7 @@ impl Selector {
         };
 
         let mut menu = SelectorMenu::new(ctx.widget_id());
-        for option in self.options.iter() {
+        for option in &self.options {
             let item = SelectorItem::new(option.clone());
             menu = menu.with(NewWidget::new(item));
         }

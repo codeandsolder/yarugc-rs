@@ -50,6 +50,7 @@ impl Default for BackwardColor {
 
 impl BackwardColor {
     /// Creates a new `BackwardColor` with the given `color`.
+    #[must_use = "Use the returned value."]
     pub const fn new(color: AlphaColor<Srgb>) -> Self {
         Self(color)
     }
@@ -75,6 +76,7 @@ impl Default for ForwardColor {
 
 impl ForwardColor {
     /// Creates a new `ForwardColor` with the given `color`.
+    #[must_use = "Use the returned value."]
     pub const fn new(color: AlphaColor<Srgb>) -> Self {
         Self(color)
     }
@@ -101,6 +103,7 @@ impl Default for HeatColor {
 
 impl HeatColor {
     /// Creates a new `ForwardColor` with the given `color`.
+    #[must_use = "Use the returned value."]
     pub const fn new(color: AlphaColor<Srgb>) -> Self {
         Self(color)
     }

@@ -52,12 +52,14 @@ pub struct Switch {
 // --- MARK: BUILDERS
 impl Switch {
     /// Creates a new `Switch` with the given initial state.
-    pub fn new(on: bool) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn new(on: bool) -> Self {
         Self { on }
     }
 
     /// Returns whether the switch is currently on.
-    pub fn is_on(&self) -> bool {
+    #[must_use = "Use the returned value."]
+    pub const fn is_on(&self) -> bool {
         self.on
     }
 }
@@ -80,7 +82,7 @@ impl Switch {
     /// Calculates the track dimensions based on properties.
     ///
     /// Returns `(track_width, track_height)`.
-    fn track_dimensions(track_thickness: Length, thumb_radius: Length) -> (Length, Length) {
+    const fn track_dimensions(track_thickness: Length, thumb_radius: Length) -> (Length, Length) {
         // The track height is the larger of track_thickness or thumb diameter
         let track_height = track_thickness.max(thumb_radius.saturating_add(thumb_radius));
         // The track width is approximately 2x the height (pill shape)

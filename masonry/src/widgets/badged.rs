@@ -27,7 +27,7 @@ pub enum BadgePlacement {
 }
 
 impl BadgePlacement {
-    fn resolve(self, content_size: Size) -> Point {
+    const fn resolve(self, content_size: Size) -> Point {
         match self {
             Self::TopLeft => Point::new(0.0, 0.0),
             Self::TopRight => Point::new(content_size.width, 0.0),
@@ -65,6 +65,7 @@ impl Badged {
     ///
     /// By default, the badge is placed at the content's top-right corner, with the badge's center
     /// anchored to that corner (so it overlaps the content by about half).
+    #[must_use = "Use the returned value."]
     pub fn new(
         content: NewWidget<impl Widget + ?Sized>,
         badge: NewWidget<impl Widget + ?Sized>,
@@ -80,25 +81,28 @@ impl Badged {
     /// Creates a new `Badged` widget that may omit the badge entirely.
     ///
     /// This is useful for conditional badges, e.g. hiding an unread-count badge when the count is 0.
+    #[must_use = "Use the returned value."]
     pub fn new_optional(
         content: NewWidget<impl Widget + ?Sized>,
         badge: Option<NewWidget<dyn Widget>>,
     ) -> Self {
         Self {
             content: content.erased().into_pod(),
-            badge: badge.map(|b| b.into_pod()),
+            badge: badge.map(NewWidget::into_pod),
             placement: BadgePlacement::TopRight,
             offset: Vec2::ZERO,
         }
     }
 
     /// Returns whether a badge is currently present.
+    #[must_use = "Use the returned value."]
     pub fn has_badge(&self) -> bool {
         self.badge.is_some()
     }
 
     /// Sets where the badge is placed relative to the content.
-    pub fn with_badge_placement(mut self, placement: BadgePlacement) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_badge_placement(mut self, placement: BadgePlacement) -> Self {
         self.placement = placement;
         self
     }
@@ -106,7 +110,8 @@ impl Badged {
     /// Sets an additional offset applied after placing the badge.
     ///
     /// This can be used to nudge the badge further outside or inside the content bounds.
-    pub fn with_badge_offset(mut self, offset: Vec2) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_badge_offset(mut self, offset: Vec2) -> Self {
         self.offset = offset;
         self
     }
@@ -237,10 +242,9 @@ impl Widget for Badged {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        match &self.badge {
-            Some(badge) => ChildrenIds::from_slice(&[self.content.id(), badge.id()]),
-            None => ChildrenIds::from_slice(&[self.content.id()]),
-        }
+        let mut ids = ChildrenIds::from_slice(&[self.content.id()]);
+        ids.extend(self.badge.iter().map(WidgetPod::id));
+        ids
     }
 
     fn make_trace_span(&self, id: WidgetId) -> Span {

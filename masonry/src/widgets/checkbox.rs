@@ -54,6 +54,7 @@ impl Checkbox {
     }
 
     /// Creates a new `Checkbox` with the given label.
+    #[must_use = "Use the returned value."]
     pub fn from_label(checked: bool, label: NewWidget<Label>) -> Self {
         Self {
             checked,
@@ -178,8 +179,8 @@ impl Widget for Checkbox {
         props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
-        let check_side = theme::BASIC_WIDGET_HEIGHT.get();
-        let check_size = Size::new(check_side, check_side);
+        let side = theme::BASIC_WIDGET_HEIGHT.get();
+        let check_size = Size::new(side, side);
 
         let cache = ctx.property_cache();
         let border_width = *props.get::<BorderWidth>(cache);

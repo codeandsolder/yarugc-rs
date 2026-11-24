@@ -10,7 +10,7 @@ use crate::util::Sanitize;
 /// Strategies for inscribing a rectangle inside another rectangle.
 ///
 /// Default value is [`Self::Contain`].
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ObjectFit {
     /// The content is scaled to fully fit within the container.
     ///
@@ -79,6 +79,7 @@ impl ObjectFit {
     ///
     /// Panics if either `content` or `container` has non-finite or negative size
     /// and debug assertions are enabled.
+    #[must_use = "Use the returned value."]
     pub fn affine(self, container: Rect, content: Rect) -> Affine {
         // Guard against invalid input
         let container_width = container.width().sanitize("container width");
@@ -91,38 +92,28 @@ impl ObjectFit {
             return Affine::IDENTITY;
         }
 
-        let raw_scalex = container_width / content_width;
-        let raw_scaley = container_height / content_height;
-
-        let (scalex, scaley) = match self {
-            Self::Contain => {
-                let scale = raw_scalex.min(raw_scaley);
-                (scale, scale)
-            }
-            Self::Cover => {
-                let scale = raw_scalex.max(raw_scaley);
-                (scale, scale)
-            }
-            Self::FitHeight => (raw_scaley, raw_scaley),
-            Self::FitWidth => (raw_scalex, raw_scalex),
-            Self::None => (1.0, 1.0),
-            Self::ScaleDown => {
-                let scale = raw_scalex.min(raw_scaley).min(1.0);
-                (scale, scale)
-            }
-            Self::Stretch => (raw_scalex, raw_scaley),
+        let horizontal = container_width / content_width;
+        let vertical = container_height / content_height;
+        let uniform = |scale| (scale, scale);
+        let (sx, sy) = match self {
+            Self::Contain => uniform(horizontal.min(vertical)),
+            Self::Cover => uniform(horizontal.max(vertical)),
+            Self::FitHeight => uniform(vertical),
+            Self::FitWidth => uniform(horizontal),
+            Self::None => (1., 1.),
+            Self::ScaleDown => uniform(horizontal.min(vertical).min(1.)),
+            Self::Stretch => (horizontal, vertical),
         };
-
-        let origin_x = container.x0 + (container_width - (content_width * scalex)) * 0.5;
-        let origin_y = container.y0 + (container_height - (content_height * scaley)) * 0.5;
-
+        // Map the content centre to the container centre, including nonzero origins.
+        let center = container.center();
+        let source = content.center();
         Affine::new([
-            scalex,
+            sx,
             0.,
             0.,
-            scaley,
-            origin_x - content.x0 * scalex,
-            origin_y - content.y0 * scaley,
+            sy,
+            sx.mul_add(-source.x, center.x),
+            sy.mul_add(-source.y, center.y),
         ])
     }
 
@@ -153,33 +144,32 @@ impl ObjectFit {
         let length = match self {
             // Use all available space or if cross is known attempt to maintain AR,
             // but don't exceed available space (will letterbox cross).
-            Self::Contain => cross_length
-                .map(|cl| (cl.get() * ar).min(space))
-                .unwrap_or(space_or_preferred),
+            Self::Contain => {
+                cross_length.map_or(space_or_preferred, |cl| (cl.get() * ar).min(space))
+            }
             // Always use all available space.
             Self::Cover | Self::Stretch => space_or_preferred,
             // Always use all available vertical space.
             // Greedily take all horizontal space unless cross is known.
             Self::FitHeight => match axis {
-                Axis::Horizontal => cross_length
-                    .map(|cl| (cl.get() * ar).min(space))
-                    .unwrap_or(space_or_preferred),
+                Axis::Horizontal => {
+                    cross_length.map_or(space_or_preferred, |cl| (cl.get() * ar).min(space))
+                }
                 Axis::Vertical => space_or_preferred,
             },
             // Always use all available horizontal space.
             // Greedily take all vertical space unless cross is known.
             Self::FitWidth => match axis {
                 Axis::Horizontal => space_or_preferred,
-                Axis::Vertical => cross_length
-                    .map(|cl| (cl.get() * ar).min(space))
-                    .unwrap_or(space_or_preferred),
+                Axis::Vertical => {
+                    cross_length.map_or(space_or_preferred, |cl| (cl.get() * ar).min(space))
+                }
             },
             // None == preferred size
             Self::None => preferred_length,
             // ScaleDown == min(Contain, None)
             Self::ScaleDown => cross_length
-                .map(|cl| (cl.get() * ar).min(space))
-                .unwrap_or(space_or_preferred)
+                .map_or(space_or_preferred, |cl| (cl.get() * ar).min(space))
                 .min(preferred_length),
         };
 

@@ -57,11 +57,13 @@ impl TextInput {
     /// Creates a new `TextInput` with the given text.
     ///
     /// To use non-default text properties, use [`from_text_area`](Self::from_text_area) instead.
+    #[must_use = "Use the returned value."]
     pub fn new(text: &str) -> Self {
         Self::from_text_area(TextArea::new_editable(text).prepare())
     }
 
     /// Creates a new `TextInput` from a styled text area.
+    #[must_use = "Use the returned value."]
     pub fn from_text_area(text: NewWidget<TextArea<true>>) -> Self {
         Self {
             text: text.into_pod(),
@@ -77,7 +79,8 @@ impl TextInput {
     }
 
     /// Sets the text alignment for both the input text and placeholder.
-    pub fn with_text_alignment(mut self, text_alignment: TextAlign) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_text_alignment(mut self, text_alignment: TextAlign) -> Self {
         self.text_alignment = text_alignment;
         self
     }
@@ -85,6 +88,7 @@ impl TextInput {
     /// The text that will be displayed when this input is empty.
     ///
     /// To modify this on active text input, use [`set_placeholder`](Self::set_placeholder).
+    #[must_use = "Use the configured value."]
     pub fn with_placeholder(mut self, placeholder_text: impl Into<ArcStr>) -> Self {
         let placeholder_text = placeholder_text.into();
         let label = Label::new(placeholder_text.clone()).with_text_alignment(self.text_alignment);
@@ -103,7 +107,8 @@ impl TextInput {
     /// wraps a text area with [word wrapping](TextArea::with_word_wrap) enabled.
     ///
     /// To modify this on active text input, use [`set_clip`](Self::set_clip).
-    pub fn with_clip(mut self, clip: bool) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_clip(mut self, clip: bool) -> Self {
         self.clip = clip;
         self
     }
@@ -114,7 +119,8 @@ impl TextInput {
     /// Reads the underlying text area.
     ///
     /// Useful for getting its ID, as most actions from the text input will be sent by the child.
-    pub fn area_pod(&self) -> &WidgetPod<TextArea<true>> {
+    #[must_use = "Use the returned value."]
+    pub const fn area_pod(&self) -> &WidgetPod<TextArea<true>> {
         &self.text
     }
 }
@@ -297,7 +303,7 @@ impl Widget for TextInput {
 
         let text_is_empty = ctx
             .get_child(&self.text)
-            .is_some_and(|text| text.is_empty());
+            .is_some_and(super::text_area::TextArea::is_empty);
         ctx.set_stashed(&self.placeholder, !text_is_empty);
         if text_is_empty {
             ctx.run_layout(&self.placeholder, size);

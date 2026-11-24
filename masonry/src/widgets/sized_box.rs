@@ -66,6 +66,7 @@ pub struct SizedBox {
 // --- MARK: BUILDERS
 impl SizedBox {
     /// Creates container with child, and both width and height unset.
+    #[must_use = "Use the returned value."]
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
             child: Some(child.erased().into_pod()),
@@ -78,6 +79,7 @@ impl SizedBox {
     ///
     /// In this state it will render no content but will still render its border and padding.
     #[doc(alias = "null")]
+    #[must_use = "Use the returned value."]
     pub fn empty() -> Self {
         Self {
             child: None,
@@ -87,19 +89,22 @@ impl SizedBox {
     }
 
     /// Returns the container with `width`.
-    pub fn width(mut self, width: Length) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn width(mut self, width: Length) -> Self {
         self.width = Some(width);
         self
     }
 
     /// Returns the container with `height`.
-    pub fn height(mut self, height: Length) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn height(mut self, height: Length) -> Self {
         self.height = Some(height);
         self
     }
 
     /// Returns the container with `width` and `height`.
-    pub fn size(mut self, width: Length, height: Length) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn size(mut self, width: Length, height: Length) -> Self {
         self.width = Some(width);
         self.height = Some(height);
         self
@@ -108,7 +113,8 @@ impl SizedBox {
     /// Returns the container with `width`.
     ///
     /// `None` means that the width will be adopted from the child.
-    pub fn raw_width(mut self, width: Option<Length>) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn raw_width(mut self, width: Option<Length>) -> Self {
         self.width = width;
         self
     }
@@ -116,7 +122,8 @@ impl SizedBox {
     /// Returns the container with `height`.
     ///
     /// `None` means that the height will be adopted from the child.
-    pub fn raw_height(mut self, height: Option<Length>) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn raw_height(mut self, height: Option<Length>) -> Self {
         self.height = height;
         self
     }
@@ -125,6 +132,7 @@ impl SizedBox {
 // --- MARK: METHODS
 impl SizedBox {
     /// Returns the length of the given `axis`.
+    #[must_use = "Use the returned value."]
     pub const fn length(&self, axis: Axis) -> Option<Length> {
         match axis {
             Axis::Horizontal => self.width,

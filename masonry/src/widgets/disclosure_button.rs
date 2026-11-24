@@ -32,13 +32,15 @@ pub struct DisclosureButton {
 impl DisclosureButton {
     /// Create a new [`DisclosureButton`] with
     /// an initial disclosed state.
-    pub fn new(is_disclosed: bool) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn new(is_disclosed: bool) -> Self {
         Self { is_disclosed }
     }
 
     /// Get the disclosed state of the button.
     #[inline]
-    pub fn is_disclosed(&self) -> bool {
+    #[must_use = "Use the returned value."]
+    pub const fn is_disclosed(&self) -> bool {
         self.is_disclosed
     }
 }
@@ -55,7 +57,7 @@ impl DisclosureButton {
     #[inline]
     /// Switch the disclosed state of the button.
     /// True -> False | False -> True
-    fn switch_disclosed_state(&mut self) {
+    const fn switch_disclosed_state(&mut self) {
         self.is_disclosed = !self.is_disclosed;
     }
 }

@@ -18,6 +18,7 @@ pub struct Tooltip {
 // --- MARK: BUILDERS
 impl Tooltip {
     /// Creates a new `Tooltip`.
+    #[must_use = "Use the returned value."]
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
             child: child.erased().into_pod(),

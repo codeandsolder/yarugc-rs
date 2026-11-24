@@ -58,6 +58,7 @@ impl ScrollBar {
     ///
     /// - `portal_size`: Size of the scrolling container in the relevant axis.
     /// - `content_size`: Size of the child in the relevant axis. Usually exceeds `portal_size` in cases where the scrollbar is visible.
+    #[must_use = "Use the returned value."]
     pub fn new(axis: Axis, portal_size: f64, content_size: f64) -> Self {
         Self {
             axis,
@@ -76,7 +77,8 @@ impl ScrollBar {
     /// Returns how far the scrollbar is from its initial point.
     ///
     /// Values range from 0.0 (beginning) to 1.0 (end).
-    pub fn cursor_progress(&self) -> f64 {
+    #[must_use = "Use the returned value."]
+    pub const fn cursor_progress(&self) -> f64 {
         self.cursor_progress
     }
 
@@ -85,15 +87,16 @@ impl ScrollBar {
     /// `cursor_Length` is guaranteed to be at least `min_length`
     /// and the remainder of the layout length is `empty_space_length`.
     fn lengths(&self, layout_size: Size, min_length: f64) -> (f64, f64) {
-        let size_ratio = if self.content_size != 0. {
-            self.portal_size / self.content_size
-        } else {
+        let size_ratio = if self.content_size == 0. {
             1.
+        } else {
+            self.portal_size / self.content_size
         };
         let size_ratio = size_ratio.clamp(0.0, 1.0);
 
-        let cursor_length = (size_ratio * layout_size.get_coord(self.axis)).max(min_length);
-        let empty_space_length = layout_size.get_coord(self.axis) - cursor_length;
+        let track = layout_size.get_coord(self.axis).max(0.);
+        let cursor_length = (size_ratio * track).max(min_length).min(track);
+        let empty_space_length = track - cursor_length;
 
         (cursor_length, empty_space_length)
     }
@@ -120,7 +123,10 @@ impl ScrollBar {
         // TODO - handle invalid sizes
         let (cursor_length, empty_space_length) = self.lengths(layout_size, min_length);
 
-        let new_cursor_pos_major = mouse_pos.get_coord(self.axis) - anchor * cursor_length;
+        if empty_space_length <= 0. {
+            return self.cursor_progress;
+        }
+        let new_cursor_pos_major = anchor.mul_add(-cursor_length, mouse_pos.get_coord(self.axis));
         let new_cursor_progress = new_cursor_pos_major / empty_space_length;
 
         new_cursor_progress.clamp(0.0, 1.0)
@@ -131,6 +137,9 @@ impl ScrollBar {
     }
 
     fn set_cursor_progress(&mut self, new_progress: f64) -> bool {
+        if !new_progress.is_finite() {
+            return false;
+        }
         let new_progress = new_progress.clamp(0.0, 1.0);
         if (new_progress - self.cursor_progress).abs() > 1e-12 {
             self.cursor_progress = new_progress;
@@ -196,13 +205,17 @@ impl Widget for ScrollBar {
                 if cursor_rect.contains(mouse_pos) {
                     let (c0, c1) = cursor_rect.get_coords(self.axis);
                     let mouse_major = mouse_pos.get_coord(self.axis);
-                    self.grab_anchor = Some((mouse_major - c0) / (c1 - c0));
+                    self.grab_anchor = Some(if c1 > c0 {
+                        ((mouse_major - c0) / (c1 - c0)).clamp(0., 1.)
+                    } else {
+                        0.5
+                    });
                 } else {
                     let progress =
                         self.progress_from_mouse_pos(size, cursor_min_length, 0.5, mouse_pos);
                     changed |= self.set_cursor_progress(progress);
                     self.grab_anchor = Some(0.5);
-                };
+                }
                 if changed {
                     ctx.request_render();
                 }
@@ -246,39 +259,17 @@ impl Widget for ScrollBar {
         let line = 120.0;
         let page = self.portal_size;
 
-        let mut changed = false;
-        match (&event.key, self.axis) {
-            (Key::Named(NamedKey::ArrowUp), Axis::Vertical) => {
-                changed |= self.adjust_by_pixels(-line);
-            }
-            (Key::Named(NamedKey::ArrowDown), Axis::Vertical) => {
-                changed |= self.adjust_by_pixels(line);
-            }
-            (Key::Named(NamedKey::PageUp), Axis::Vertical) => {
-                changed |= self.adjust_by_pixels(-page);
-            }
-            (Key::Named(NamedKey::PageDown), Axis::Vertical) => {
-                changed |= self.adjust_by_pixels(page);
-            }
-            (Key::Named(NamedKey::Home), Axis::Vertical) => {
-                changed |= self.set_cursor_progress(0.0);
-            }
-            (Key::Named(NamedKey::End), Axis::Vertical) => changed |= self.set_cursor_progress(1.0),
-            (Key::Named(NamedKey::ArrowLeft), Axis::Horizontal) => {
-                changed |= self.adjust_by_pixels(-line);
-            }
-            (Key::Named(NamedKey::ArrowRight), Axis::Horizontal) => {
-                changed |= self.adjust_by_pixels(line);
-            }
-            (Key::Named(NamedKey::Home), Axis::Horizontal) => {
-                changed |= self.set_cursor_progress(0.0);
-            }
-            (Key::Named(NamedKey::End), Axis::Horizontal) => {
-                changed |= self.set_cursor_progress(1.0);
-            }
-            _ => {}
-        }
-
+        let changed = match (&event.key, self.axis) {
+            (Key::Named(NamedKey::ArrowUp), Axis::Vertical)
+            | (Key::Named(NamedKey::ArrowLeft), Axis::Horizontal) => self.adjust_by_pixels(-line),
+            (Key::Named(NamedKey::ArrowDown), Axis::Vertical)
+            | (Key::Named(NamedKey::ArrowRight), Axis::Horizontal) => self.adjust_by_pixels(line),
+            (Key::Named(NamedKey::PageUp), Axis::Vertical) => self.adjust_by_pixels(-page),
+            (Key::Named(NamedKey::PageDown), Axis::Vertical) => self.adjust_by_pixels(page),
+            (Key::Named(NamedKey::Home), _) => self.set_cursor_progress(0.),
+            (Key::Named(NamedKey::End), _) => self.set_cursor_progress(1.),
+            _ => false,
+        };
         if changed {
             ctx.request_render();
         }
@@ -350,8 +341,7 @@ impl Widget for ScrollBar {
             return;
         }
 
-        let millis = (interval as f64 * 1e-6) as f32;
-        let result = self.opacity.advance(millis);
+        let result = self.opacity.advance_nanos(interval);
         ctx.request_paint_only();
 
         if !result.is_completed() {
@@ -385,7 +375,7 @@ impl Widget for ScrollBar {
             let scrollbar_width = theme::SCROLLBAR_WIDTH;
             let cursor_padding = theme::SCROLLBAR_PAD;
 
-            (scrollbar_width + cursor_padding * 2.0).px()
+            cursor_padding.mul_add(2.0, scrollbar_width).px()
         }
     }
 
@@ -400,7 +390,7 @@ impl Widget for ScrollBar {
         let cache = ctx.property_cache();
         let collapsible = props.get::<Collapsible>(cache).0;
 
-        if self.opacity.value() != 1. {
+        if self.opacity.value() < 1. {
             painter.push_fill_clip(ctx.border_box());
             painter.push_group(GroupRef::new().with_composite(Composite::new(
                 crate::peniko::BlendMode::default(),
@@ -420,11 +410,11 @@ impl Widget for ScrollBar {
         } else {
             cursor_padding + scrollbar_width / 2.
         };
-        let (inset_x0, inset_y0) = self.axis.pack_xy(0.0, inset_start);
-        let (inset_x1, inset_y1) = self.axis.pack_xy(0.0, cursor_padding);
+        let (leading_x, leading_y) = self.axis.pack_xy(0.0, inset_start);
+        let (trailing_x, trailing_y) = self.axis.pack_xy(0.0, cursor_padding);
         let cursor_rect = self
             .cursor_rect(size, cursor_min_length)
-            .inset((-inset_x0, -inset_y0, -inset_x1, -inset_y1))
+            .inset((-leading_x, -leading_y, -trailing_x, -trailing_y))
             .to_rounded_rect(radius);
 
         painter.fill(cursor_rect, theme::SCROLLBAR_COLOR).draw();
@@ -436,7 +426,7 @@ impl Widget for ScrollBar {
             )
             .draw();
 
-        if self.opacity.value() != 1. {
+        if self.opacity.value() < 1. {
             painter.pop_group();
             painter.pop_clip();
         }

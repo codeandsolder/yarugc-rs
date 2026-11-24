@@ -46,6 +46,7 @@ impl Button {
     ///
     /// let button = Button::new(Label::new("Increment").prepare());
     /// ```
+    #[must_use = "Use the returned value."]
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
             child: child.erased().into_pod(),
@@ -73,7 +74,7 @@ impl Button {
 }
 
 /// A button was pressed.
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct ButtonPress {
     /// The pointer button that has been pressed.
     ///

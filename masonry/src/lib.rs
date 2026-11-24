@@ -273,7 +273,7 @@ macro_rules! collection_accessors {
 
 macro_rules! label_text_accessors {
     () => {
-        /// Sets the text. The allocation is explicit in the ArcStr argument.
+        /// Sets the text. The allocation is explicit in the `ArcStr` argument.
         pub fn set_text(this: &mut WidgetMut<'_, Self>, new_text: ArcStr) {
             if let Some(mut child) = Self::label_mut(this) {
                 Label::set_text(&mut child, new_text);
@@ -288,7 +288,7 @@ macro_rules! label_text_accessors {
 }
 
 // Validate before modifying a collection or converting its input.
-fn check_slot(index: usize, len: usize) -> Result<(), core::CollectionError> {
+const fn check_slot(index: usize, len: usize) -> Result<(), core::CollectionError> {
     if index < len {
         Ok(())
     } else {
@@ -296,7 +296,7 @@ fn check_slot(index: usize, len: usize) -> Result<(), core::CollectionError> {
     }
 }
 
-fn check_insert_slot(index: usize, len: usize) -> Result<(), core::CollectionError> {
+const fn check_insert_slot(index: usize, len: usize) -> Result<(), core::CollectionError> {
     if index <= len {
         Ok(())
     } else {
@@ -310,6 +310,15 @@ fn swap_slots<T>(slots: &mut [T], a: usize, b: usize) -> Result<(), core::Collec
     check_slot(b, slots.len())?;
     slots.swap(a, b);
     Ok(())
+}
+
+// Layout coordinates are f64 by design; huge child counts may be rounded.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "Layout coordinates use floating-point logical pixels, not exact integer counts."
+)]
+fn layout_count(count: usize) -> f64 {
+    count as f64
 }
 
 pub mod layers;

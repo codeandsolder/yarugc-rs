@@ -19,6 +19,7 @@ pub struct SelectorItem {
 // --- MARK: BUILDERS
 impl SelectorItem {
     /// Creates new selector item with the given text.
+    #[must_use = "Use the returned value."]
     pub fn new(text: String) -> Self {
         Self {
             child: WidgetPod::new(Label::new(text)),

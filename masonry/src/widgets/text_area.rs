@@ -110,6 +110,7 @@ impl TextArea<true> {
     /// Useful for creating a styled [`TextInput`](super::TextInput).
     // This is written out fully to appease rust-analyzer; StyleProperty is imported but not recognised.
     /// To change the font size, use `with_style`, setting [`StyleProperty::FontSize`](crate::parley::StyleProperty::FontSize).
+    #[must_use = "Use the returned value."]
     pub fn new_editable(text: &str) -> Self {
         Self::new(text)
     }
@@ -121,6 +122,7 @@ impl TextArea<false> {
     /// Useful for creating a styled [`Prose`](super::Prose).
     // This is written out fully to appease rust-analyzer; StyleProperty is imported but not recognised.
     /// To change the font size, use `with_style`, setting [`StyleProperty::FontSize`](crate::parley::StyleProperty::FontSize).
+    #[must_use = "Use the returned value."]
     pub fn new_immutable(text: &str) -> Self {
         Self::new(text)
     }
@@ -131,6 +133,7 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
     ///
     // This is written out fully to appease rust-analyzer; StyleProperty is imported but not recognised.
     /// To change the font size, use `with_style`, setting [`StyleProperty::FontSize`](crate::parley::StyleProperty::FontSize).
+    #[must_use = "Use the returned value."]
     pub fn new(text: &str) -> Self {
         let mut editor = PlainEditor::new(theme::TEXT_SIZE_NORMAL);
         default_text_styles(editor.edit_styles());
@@ -168,6 +171,7 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
     /// [variable font parameters]: crate::parley::StyleProperty::FontVariations
     /// [`StyleProperty::Brush`]: crate::parley::StyleProperty::Brush
     #[track_caller]
+    #[must_use = "Use the configured value."]
     pub fn with_style(mut self, property: impl Into<StyleProperty>) -> Self {
         self.insert_style_inner(property.into());
         self
@@ -194,7 +198,8 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
     /// so it is recommended to leave word wrapping enabled.
     ///
     /// To modify this on an active text area, use [`set_word_wrap`](Self::set_word_wrap).
-    pub fn with_word_wrap(mut self, wrap_words: bool) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_word_wrap(mut self, wrap_words: bool) -> Self {
         self.word_wrap = wrap_words;
         self
     }
@@ -202,6 +207,7 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
     /// Sets the [text alignment](https://en.wikipedia.org/wiki/Typographic_alignment) of the text.
     ///
     /// To modify this on an active text area, use [`set_text_alignment`](Self::set_text_alignment).
+    #[must_use = "Use the returned value."]
     pub fn with_text_alignment(mut self, text_alignment: TextAlign) -> Self {
         self.editor.set_alignment(text_alignment);
         self
@@ -222,13 +228,15 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
     /// You should do so as an animation starts and ends.
     // TODO: Should we tell each widget if smooth scrolling is ongoing so they can disable their hinting?
     // Alternatively, we should automate disabling hinting at the Vello layer when composing.
-    pub fn with_hint(mut self, hint: bool) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_hint(mut self, hint: bool) -> Self {
         self.hint = hint;
         self
     }
 
     /// Configures how this text area handles the user pressing Enter <kbd>↵</kbd>.
-    pub fn with_insert_newline(mut self, insert_newline: InsertNewline) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_insert_newline(mut self, insert_newline: InsertNewline) -> Self {
         self.insert_newline = insert_newline;
         self
     }
@@ -258,11 +266,13 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
     /// To update the text of an active text area, use [`reset_text`](Self::reset_text).
     ///
     /// The return value is not just `&str` to handle IME preedits.
+    #[must_use = "Use the returned value."]
     pub fn text(&self) -> SplitString<'_> {
         self.editor.text()
     }
 
     /// Check if this text area holds nothing, including IME preedit content.
+    #[must_use = "Use the returned value."]
     pub fn is_empty(&self) -> bool {
         self.editor.raw_text().is_empty()
     }
@@ -433,7 +443,7 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
 }
 
 /// Text in a text area has been changed or submitted with enter.
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 // TODO: Should this be two different structs?
 pub enum TextAction {
     /// The text has been changed.
@@ -916,34 +926,32 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
         //       so these could be more unified and share a single implementation.
 
         // Calculate the max advance for the inline axis, with None indicating unbounded.
-        let max_advance = match self.word_wrap {
-            true => {
-                if axis == inline {
-                    // Inline axis measurement ignores cross_length as a performance optimization.
-                    // The search complexity of dealing with it is just too prohibitive.
-                    // This is a common optimization also present on the web.
-                    match len_req {
-                        // Zero space will get us the length of longest unbreakable word
-                        LenReq::Min => Some(Length::ZERO),
-                        // Unbounded space will get us the length of the unwrapped string
-                        LenReq::Max => None,
-                        // Attempt to wrap according to the parent's request
-                        LenReq::Fit(space) => Some(space),
-                    }
-                } else {
-                    // Block axis is dependent on the inline axis, so cross_length dominates.
-                    // If there is no explicit cross_length present, we fall back to inline defaults.
-                    match len_req {
-                        // Fallback is inline axis MinContent
-                        LenReq::Min => cross_length.or(Some(Length::ZERO)),
-                        // Fallback is inline axis MaxContent, even for FitContent, because
-                        // as we don't have the inline space bound we'll consider it unbounded.
-                        LenReq::Max | LenReq::Fit(_) => cross_length,
-                    }
+        let max_advance = if self.word_wrap {
+            if axis == inline {
+                // Inline axis measurement ignores cross_length as a performance optimization.
+                // The search complexity of dealing with it is just too prohibitive.
+                // This is a common optimization also present on the web.
+                match len_req {
+                    // Zero space will get us the length of longest unbreakable word
+                    LenReq::Min => Some(Length::ZERO),
+                    // Unbounded space will get us the length of the unwrapped string
+                    LenReq::Max => None,
+                    // Attempt to wrap according to the parent's request
+                    LenReq::Fit(space) => Some(space),
+                }
+            } else {
+                // Block axis is dependent on the inline axis, so cross_length dominates.
+                // If there is no explicit cross_length present, we fall back to inline defaults.
+                match len_req {
+                    // Fallback is inline axis MinContent
+                    LenReq::Min => cross_length.or(Some(Length::ZERO)),
+                    // Fallback is inline axis MaxContent, even for FitContent, because
+                    // as we don't have the inline space bound we'll consider it unbounded.
+                    LenReq::Max | LenReq::Fit(_) => cross_length,
                 }
             }
-            // If we're never wrapping, then there's no max advance.
-            false => None,
+        } else {
+            None
         }
         .map(|v| v.get() as f32);
 
@@ -960,7 +968,7 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
 
         let (fctx, lctx) = ctx.text_contexts();
         let layout = self.editor.layout(fctx, lctx);
-        let text_width = max_advance.unwrap_or(layout.full_width());
+        let text_width = max_advance.unwrap_or_else(|| layout.full_width());
         let text_size = Size::new(text_width.into(), layout.height().into());
 
         let length = text_size.get_coord(axis);
@@ -984,9 +992,10 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
 
         let inline_space = size.get_coord(inline) as f32;
 
-        let max_advance = match self.word_wrap {
-            true => Some(inline_space),
-            false => None,
+        let max_advance = if self.word_wrap {
+            Some(inline_space)
+        } else {
+            None
         };
 
         if self.last_max_advance != max_advance {
@@ -1002,12 +1011,11 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
         let (fctx, lctx) = ctx.text_contexts();
         let layout = self.editor.layout(fctx, lctx);
 
-        let line_count = layout.len();
-        if line_count > 0 {
-            let line_first = layout.get(0).unwrap();
-            let line_last = layout.get(line_count - 1).unwrap();
-            let first_baseline = line_first.metrics().baseline as f64;
-            let last_baseline = line_last.metrics().baseline as f64;
+        if let (Some(line_first), Some(line_last)) =
+            (layout.get(0), layout.get(layout.len().saturating_sub(1)))
+        {
+            let first_baseline = f64::from(line_first.metrics().baseline);
+            let last_baseline = f64::from(line_last.metrics().baseline);
             ctx.set_baselines(first_baseline, last_baseline);
         } else {
             ctx.clear_baselines();
@@ -1029,7 +1037,10 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
             let (fctx, lctx) = ctx.text_contexts();
             // The `layout` method takes `&mut self`, so we get borrow-checker errors if we return it from this block.
             self.editor.refresh_layout(fctx, lctx);
-            self.editor.try_layout().unwrap()
+            let Some(layout) = self.editor.try_layout() else {
+                return;
+            };
+            layout
         };
         if ctx.is_focus_target() {
             let (caret_color, selection_color) = {
@@ -1039,7 +1050,7 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
                     props.get::<SelectionColor>(cache).color,
                 )
             };
-            for (rect, _) in self.editor.selection_geometry().iter() {
+            for (rect, _) in &self.editor.selection_geometry() {
                 let rect = bounding_box_to_rect(*rect);
                 painter.fill(rect, selection_color).draw();
             }
@@ -1049,7 +1060,7 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
             {
                 let rect = bounding_box_to_rect(cursor);
                 painter.fill(rect, caret_color).draw();
-            };
+            }
         }
 
         let cache = ctx.property_cache();

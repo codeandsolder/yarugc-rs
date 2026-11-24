@@ -50,6 +50,7 @@ pub struct Passthrough {
 // --- MARK: BUILDERS
 impl Passthrough {
     /// Creates a new `Passthrough` with the given initial child.
+    #[must_use = "Use the returned value."]
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
             inner: child.erased().into_pod(),
@@ -60,6 +61,7 @@ impl Passthrough {
 // --- MARK: METHODS
 impl Passthrough {
     /// Returns the [`WidgetId`] of the hosted child.
+    #[must_use = "Use the returned value."]
     pub fn inner_id(&self) -> WidgetId {
         self.inner.id()
     }
@@ -86,7 +88,7 @@ impl Widget for Passthrough {
         _len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        ctx.redirect_measurement(&mut self.inner, axis, cross_length)
+        ctx.redirect_measurement(&self.inner, axis, cross_length)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {

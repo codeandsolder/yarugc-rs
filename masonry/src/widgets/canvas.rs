@@ -38,6 +38,7 @@ impl Canvas {
     /// If the canvas is decorative users should set alt text to `""`.
     /// If it's too hard to describe through text, the alt text should be left unset.
     /// This allows accessibility clients to know that there is no accessible description of the canvas content.
+    #[must_use = "Use the configured value."]
     pub fn with_alt_text(mut self, alt_text: impl Into<ArcStr>) -> Self {
         self.alt_text = Some(alt_text.into());
         self
@@ -47,7 +48,8 @@ impl Canvas {
 // --- MARK: METHODS
 impl Canvas {
     /// Returns the current size of the canvas, which matches its content-box size.
-    pub fn size(&self) -> Size {
+    #[must_use = "Use the returned value."]
+    pub const fn size(&self) -> Size {
         self.size
     }
 }

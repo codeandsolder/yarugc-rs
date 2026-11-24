@@ -64,6 +64,7 @@ pub struct Portal<W: Widget + ?Sized> {
 // --- MARK: BUILDERS
 impl<W: Widget + ?Sized> Portal<W> {
     /// Creates a scrolling container the given child widget.
+    #[must_use = "Use the returned value."]
     pub fn new(child: NewWidget<W>) -> Self {
         Self {
             child: child.into_pod(),
@@ -93,7 +94,8 @@ impl<W: Widget + ?Sized> Portal<W> {
     /// - When it is `true`, the [`Portal`]'s height will be passed down as an upper bound
     ///   on the height of the child. There will be no vertical scrollbar and
     ///   the mouse wheel can't be used to vertically scroll either.
-    pub fn constrain_vertical(mut self, constrain: bool) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn constrain_vertical(mut self, constrain: bool) -> Self {
         self.constrain_vertical = constrain;
         self
     }
@@ -110,7 +112,8 @@ impl<W: Widget + ?Sized> Portal<W> {
     /// - When it is `true`, the [`Portal`]'s width will be passed down as an upper bound
     ///   on the width of the child. There will be no horizontal scrollbar and
     ///   the mouse wheel can't be used to horizontally scroll either.
-    pub fn constrain_horizontal(mut self, constrain: bool) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn constrain_horizontal(mut self, constrain: bool) -> Self {
         self.constrain_horizontal = constrain;
         self
     }
@@ -118,7 +121,8 @@ impl<W: Widget + ?Sized> Portal<W> {
     /// Builder-style method to set whether the child must fill the view.
     ///
     /// If `true`, the child size is guaranteed to be at least the size of the portal.
-    pub fn content_must_fill(mut self, must_fill: bool) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn content_must_fill(mut self, must_fill: bool) -> Self {
         self.must_fill = must_fill;
         self
     }
@@ -228,27 +232,27 @@ impl<W: Widget + ?Sized> Portal<W> {
         let mut changed = false;
         let scroll_range = (content_size - portal_size).max(Size::ZERO);
 
-        if let Some((scrollbar, _)) = ctx.get_raw_mut(&self.scrollbar_horizontal) {
-            if scrollbar.moved {
-                scrollbar.moved = false;
-                let x = scrollbar.cursor_progress * scroll_range.width;
-                changed |= self.set_viewport_pos_raw(
-                    portal_size,
-                    content_size,
-                    Point::new(x, self.viewport_pos.y),
-                );
-            }
+        if let Some((scrollbar, _)) = ctx.get_raw_mut(&self.scrollbar_horizontal)
+            && scrollbar.moved
+        {
+            scrollbar.moved = false;
+            let x = scrollbar.cursor_progress * scroll_range.width;
+            changed |= self.set_viewport_pos_raw(
+                portal_size,
+                content_size,
+                Point::new(x, self.viewport_pos.y),
+            );
         }
-        if let Some((scrollbar, _)) = ctx.get_raw_mut(&self.scrollbar_vertical) {
-            if scrollbar.moved {
-                scrollbar.moved = false;
-                let y = scrollbar.cursor_progress * scroll_range.height;
-                changed |= self.set_viewport_pos_raw(
-                    portal_size,
-                    content_size,
-                    Point::new(self.viewport_pos.x, y),
-                );
-            }
+        if let Some((scrollbar, _)) = ctx.get_raw_mut(&self.scrollbar_vertical)
+            && scrollbar.moved
+        {
+            scrollbar.moved = false;
+            let y = scrollbar.cursor_progress * scroll_range.height;
+            changed |= self.set_viewport_pos_raw(
+                portal_size,
+                content_size,
+                Point::new(self.viewport_pos.x, y),
+            );
         }
 
         if changed {
@@ -260,7 +264,8 @@ impl<W: Widget + ?Sized> Portal<W> {
     }
 
     /// Returns the scrolling "position" of the container.
-    pub fn get_viewport_pos(&self) -> Point {
+    #[must_use = "Use the returned value."]
+    pub const fn get_viewport_pos(&self) -> Point {
         self.viewport_pos
     }
 
@@ -442,7 +447,7 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
 
                 if self.pan_viewport_by_event_ctx(ctx, portal_size, content_size, delta) {
                     ctx.set_handled();
-                };
+                }
             }
             PointerEvent::Move(_) if auto_hide_scroll_bar => {
                 let f = |mut bar: WidgetMut<'_, ScrollBar>| {
@@ -730,13 +735,15 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let auto_size = SizeDef::new(
-            match self.constrain_horizontal {
-                true => LenDef::FitContent(size.width.px()),
-                false => LenDef::MaxContent,
+            if self.constrain_horizontal {
+                LenDef::FitContent(size.width.px())
+            } else {
+                LenDef::MaxContent
             },
-            match self.constrain_vertical {
-                true => LenDef::FitContent(size.height.px()),
-                false => LenDef::MaxContent,
+            if self.constrain_vertical {
+                LenDef::FitContent(size.height.px())
+            } else {
+                LenDef::MaxContent
             },
         );
         let content_size = {

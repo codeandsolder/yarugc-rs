@@ -38,7 +38,7 @@ impl Child {
         Self { widget, alignment }
     }
 
-    fn update_alignment(&mut self, alignment: ChildAlignment) {
+    const fn update_alignment(&mut self, alignment: ChildAlignment) {
         self.alignment = alignment;
     }
 }
@@ -71,17 +71,20 @@ impl Default for ZStack {
 // --- MARK: BUILDERS
 impl ZStack {
     /// Constructs a new empty `ZStack` widget.
+    #[must_use = "Use the returned value."]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Changes the alignment of the children.
+    #[must_use = "Use the configured value."]
     pub fn with_alignment(mut self, alignment: impl Into<UnitPoint>) -> Self {
         self.alignment = alignment.into();
         self
     }
 
     /// Appends a child widget to the `ZStack`.
+    #[must_use = "Use the configured value."]
     pub fn with(
         mut self,
         child: NewWidget<impl Widget + ?Sized>,
@@ -286,7 +289,7 @@ impl Widget for ZStack {
         self.children
             .iter()
             .map(|child| &child.widget)
-            .map(|widget_pod| widget_pod.id())
+            .map(WidgetPod::id)
             .collect()
     }
 

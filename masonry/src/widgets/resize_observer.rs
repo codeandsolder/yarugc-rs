@@ -63,6 +63,7 @@ impl ResizeObserver {
     /// It reports the child's length as its own in [`measure`], syncing its size with the child's.
     ///
     /// [`measure`]: Widget::measure
+    #[must_use = "Use the returned value."]
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
             child: child.erased().into_pod(),
@@ -117,7 +118,7 @@ impl Widget for ResizeObserver {
         _len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        ctx.redirect_measurement(&mut self.child, axis, cross_length)
+        ctx.redirect_measurement(&self.child, axis, cross_length)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {

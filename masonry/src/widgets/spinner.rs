@@ -43,6 +43,7 @@ impl Default for Spinner {
 // --- MARK: BUILDERS
 impl Spinner {
     /// Creates a spinner widget
+    #[must_use = "Use the returned value."]
     pub fn new() -> Self {
         Self::default()
     }
@@ -68,8 +69,13 @@ impl Widget for Spinner {
             "Animation duration must be non-zero positive and finite."
         );
 
-        let frame_secs = (interval as f64) * 1e-9;
-        self.rotation_progress += frame_secs / animation_duration_secs;
+        if !animation_duration_secs.is_finite() || animation_duration_secs <= 0. {
+            return;
+        }
+        let frame_secs = crate::util::Duration::from_nanos(interval).as_secs_f64();
+        self.rotation_progress = (self.rotation_progress
+            + (frame_secs % animation_duration_secs) / animation_duration_secs)
+            .fract();
         ctx.request_anim_frame();
         ctx.request_paint_only();
     }
@@ -112,15 +118,15 @@ impl Widget for Spinner {
         painter: &mut Painter<'_>,
     ) {
         let content_box = ctx.content_box();
-        let radio = content_box.size().min_side() / 2.0;
+        let radius = content_box.size().min_side() / 2.0;
         let center = content_box.center();
         let sweep_angle = PI * 5.0 / 8.0;
 
         let cache = ctx.property_cache();
         let colors = props.get::<TrackColor>(cache);
-        let thickness = props.get::<TrackThickness>(cache).0.get().min(radio);
+        let thickness = props.get::<TrackThickness>(cache).0.get().min(radius);
 
-        let radii = Vec2::splat(radio - (thickness / 2.0));
+        let radii = Vec2::splat(radius - (thickness / 2.0));
         painter
             .stroke(
                 Arc::new(center, radii, 0.0, PI * 2.0, 0.0),

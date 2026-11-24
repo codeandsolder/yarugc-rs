@@ -68,6 +68,7 @@ impl Default for BadgeCountOverflow {
 // --- MARK: BUILDERS
 impl Badge {
     /// Creates a new badge with the provided child.
+    #[must_use = "Use the returned value."]
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
             child: child.erased().into_pod(),
@@ -97,11 +98,13 @@ impl Badge {
     /// Creates a badge displaying a numeric count using the default overflow behavior.
     ///
     /// For a conditional badge that is hidden at `0`, see [`Badge::count_nonzero`].
+    #[must_use = "Use the returned value."]
     pub fn count(count: u32) -> Self {
         Self::count_with_overflow(count, BadgeCountOverflow::default())
     }
 
     /// Creates a badge displaying a numeric count, with explicit overflow formatting.
+    #[must_use = "Use the returned value."]
     pub fn count_with_overflow(count: u32, overflow: BadgeCountOverflow) -> Self {
         let text: Arc<str> = match overflow {
             BadgeCountOverflow::Exact => Arc::from(count.to_string().into_boxed_str()),
@@ -121,6 +124,7 @@ impl Badge {
     }
 
     /// Creates a numeric badge only when `count` is non-zero.
+    #[must_use = "Use the returned value."]
     pub fn count_nonzero(count: u32) -> Option<Self> {
         (count != 0).then(|| Self::count(count))
     }
