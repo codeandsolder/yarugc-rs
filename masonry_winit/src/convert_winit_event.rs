@@ -5,7 +5,9 @@ use masonry_core::core::{Ime, ResizeDirection};
 use winit::event::Ime as WinitIme;
 use winit::window::ResizeDirection as WinitResizeDirection;
 
-pub(crate) fn masonry_resize_direction_to_winit(dir: ResizeDirection) -> WinitResizeDirection {
+pub(crate) const fn masonry_resize_direction_to_winit(
+    dir: ResizeDirection,
+) -> WinitResizeDirection {
     match dir {
         ResizeDirection::East => WinitResizeDirection::East,
         ResizeDirection::North => WinitResizeDirection::North,

@@ -1,10 +1,10 @@
 // Copyright 2024 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
+use masonry_core::util::IdAllocator;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::num::NonZeroU64;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use masonry_core::app::RenderRoot;
 use masonry_core::core::{ErasedAction, WidgetId};
@@ -12,7 +12,7 @@ use tracing::field::DisplayValue;
 use winit::event_loop::ActiveEventLoop;
 
 use crate::app::MasonryState;
-use crate::event_loop_runner::{NewWindow, Window};
+use crate::event_loop_runner::{NewWindow, Window, WindowCreationError};
 
 /// A unique and persistent identifier for a window.
 ///
@@ -26,12 +26,12 @@ pub struct WindowId(pub(crate) NonZeroU64);
 impl WindowId {
     /// Allocate a new, unique `WindowId`.
     pub fn next() -> Self {
-        static WINDOW_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-        let id = WINDOW_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
-        Self(id.try_into().unwrap())
+        static WINDOW_ID_COUNTER: IdAllocator = IdAllocator::new();
+        Self(WINDOW_ID_COUNTER.allocate())
     }
 
     /// A serialized representation of the `WindowId` for debugging purposes.
+    #[must_use = "Use the identifier in a trace."]
     pub fn trace(self) -> DisplayValue<NonZeroU64> {
         tracing::field::display(self.0)
     }
@@ -45,7 +45,7 @@ pub struct DriverCtx<'a> {
 }
 
 impl<'a> DriverCtx<'a> {
-    pub(crate) fn new(state: &'a mut MasonryState, event_loop: &'a ActiveEventLoop) -> Self {
+    pub(crate) const fn new(state: &'a mut MasonryState, event_loop: &'a ActiveEventLoop) -> Self {
         Self { state, event_loop }
     }
 }
@@ -132,44 +132,31 @@ pub trait AppDriver {
 impl DriverCtx<'_> {
     // TODO - Add method to create timer
 
-    /// Access the [`RenderRoot`] of the given window.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the window cannot be found.
-    pub fn render_root(&mut self, window_id: WindowId) -> &mut RenderRoot {
-        &mut self.window(window_id).render_root
+    /// Access the render root of a live window, if present.
+    pub fn render_root(&mut self, window_id: WindowId) -> Option<&mut RenderRoot> {
+        Some(&mut self.window(window_id)?.render_root)
     }
 
-    /// Access the [`Window`] state of the given window.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the window cannot be found.
-    pub fn window(&mut self, window_id: WindowId) -> &mut Window {
+    /// Access the state of a live window, if present.
+    pub fn window(&mut self, window_id: WindowId) -> Option<&mut Window> {
         self.state.window_mut(window_id)
     }
 
-    /// Creates a new window.
+    /// Creates a new window, or queues it while suspended.
     ///
-    /// # Panics
-    ///
-    /// Panics if the window id is already used by another window.
-    pub fn create_window(&mut self, new_window: NewWindow) {
-        self.state.create_window(self.event_loop, new_window);
+    /// # Errors
+    /// Returns an error for a duplicate identifier or platform window creation failure.
+    pub fn create_window(&mut self, new_window: NewWindow) -> Result<(), WindowCreationError> {
+        self.state.create_window(self.event_loop, new_window)
     }
 
-    /// Closes the given window.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the window cannot be found.
-    pub fn close_window(&mut self, window_id: WindowId) {
-        self.state.close_window(window_id);
+    /// Closes a live or queued window. Returns whether the window existed.
+    pub fn close_window(&mut self, window_id: WindowId) -> bool {
+        self.state.close_window(window_id)
     }
 
     /// Exits the application (stops the event loop).
-    pub fn exit(&mut self) {
+    pub const fn exit(&mut self) {
         self.state.exit = true;
     }
 }

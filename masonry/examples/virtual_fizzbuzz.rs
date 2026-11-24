@@ -40,8 +40,10 @@ impl AppDriver for Driver {
     ) {
         debug_assert_eq!(window_id, self.window_id, "unknown window");
 
-        let scroll_id = ctx
-            .render_root(window_id)
+        let Some(render_root) = ctx.render_root(window_id) else {
+            return;
+        };
+        let scroll_id = render_root
             .get_widget_with_tag(self.scroll_tag)
             .map(|w| w.id());
 
@@ -55,7 +57,7 @@ impl AppDriver for Driver {
                 tracing::trace!("Got scroll action {action:?}");
                 return;
             };
-            let _ = ctx.render_root(window_id).edit_base_layer(
+            let _ = render_root.edit_base_layer(
                 |mut scroll: masonry::core::WidgetMut<'_, VirtualScroll>| {
                     // We need to tell the `VirtualScroll` which request this is associated with
                     // This is so that the controller knows which actions have been handled.

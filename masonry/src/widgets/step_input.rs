@@ -283,9 +283,8 @@ macro_rules! impl_steppable_int {
                 }
 
                 fn steps_to(&self, target: Self, step: Self) -> u64 {
-                    let step = unsigned_step!(step, $s);
                     let delta = self.abs_diff(target);
-                    let steps = delta.div_ceil(step);
+                    let steps = delta.div_ceil(unsigned_step!(step, $s));
                     u64::try_from(steps).unwrap_or(u64::MAX)
                 }
 

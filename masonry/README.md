@@ -100,7 +100,7 @@ impl AppDriver for Driver {
         debug_assert_eq!(window_id, self.window_id, "unknown window");
 
         if action.is::<ButtonPress>() {
-            let render_root = ctx.render_root(window_id);
+            let Some(render_root) = ctx.render_root(window_id) else { return; };
 
             let _ = render_root.edit_widget_with_tag(TEXT_INPUT_TAG, |mut text_input| {
                 let Some(mut text_area) = TextInput::text_mut(&mut text_input) else { return; };

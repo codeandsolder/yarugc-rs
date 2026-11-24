@@ -41,7 +41,9 @@ impl Driver {
     fn set_mode(&mut self, ctx: &mut DriverCtx<'_>, mode: SplitPointMode) {
         self.mode = mode;
 
-        let render_root = ctx.render_root(self.window_id);
+        let Some(render_root) = ctx.render_root(self.window_id) else {
+            return;
+        };
         let _ = render_root.edit_widget_with_tag(SPLIT_TAG, |mut split| {
             let split_point = match mode {
                 SplitPointMode::Fraction => SplitPoint::Fraction(0.5),
@@ -75,7 +77,9 @@ impl AppDriver for Driver {
             return;
         }
 
-        let render_root = ctx.render_root(window_id);
+        let Some(render_root) = ctx.render_root(window_id) else {
+            return;
+        };
         let fraction_id = render_root.get_widget_with_tag(FRACTION_BTN).unwrap().id();
         let start_id = render_root.get_widget_with_tag(START_BTN).unwrap().id();
         let end_id = render_root.get_widget_with_tag(END_BTN).unwrap().id();

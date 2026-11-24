@@ -4,7 +4,6 @@
 use std::any::{Any, TypeId};
 use std::fmt::{Debug, Display};
 use std::num::NonZeroU64;
-use std::sync::atomic::AtomicU64;
 
 use accesskit::{Node, Role};
 use kurbo::{Axis, Point, Size};
@@ -710,8 +709,8 @@ impl WidgetId {
     /// You must ensure that a given `WidgetId` is only ever used for one
     /// widget at a time.
     pub(crate) fn next() -> Self {
-        static WIDGET_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-        Self(crate::util::allocate_id(&WIDGET_ID_COUNTER))
+        static WIDGET_ID_COUNTER: crate::util::IdAllocator = crate::util::IdAllocator::new();
+        Self(WIDGET_ID_COUNTER.allocate())
     }
 
     /// Returns the integer value of the `WidgetId`.

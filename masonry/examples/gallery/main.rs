@@ -76,7 +76,9 @@ impl Driver {
     ) {
         let shell = self.demos[demo_idx].shell_tags();
 
-        let render_root = ctx.render_root(window_id);
+        let Some(render_root) = ctx.render_root(window_id) else {
+            return;
+        };
         let _ = render_root.edit_widget_with_tag(shell.disabled_toggle, |mut checkbox| {
             Checkbox::set_checked(&mut checkbox, disabled);
         });
@@ -94,7 +96,9 @@ impl Driver {
 
         {
             let name = self.demos[idx].name();
-            let render_root = ctx.render_root(window_id);
+            let Some(render_root) = ctx.render_root(window_id) else {
+                return;
+            };
             let _ = render_root.edit_widget_with_tag(self.title_tag, |mut label| {
                 Label::set_text(&mut label, name);
             });
@@ -109,7 +113,9 @@ impl Driver {
         self.apply_demo_disabled(ctx, window_id, idx, disabled);
 
         {
-            let render_root = ctx.render_root(window_id);
+            let Some(render_root) = ctx.render_root(window_id) else {
+                return;
+            };
             self.demos[idx].on_selected(render_root);
         }
     }
@@ -129,7 +135,9 @@ impl AppDriver for Driver {
         if action.is::<ButtonPress>() {
             // Sidebar: match by tagged ids.
             let selected_idx = {
-                let render_root = ctx.render_root(window_id);
+                let Some(render_root) = ctx.render_root(window_id) else {
+                    return;
+                };
                 self.sidebar_buttons
                     .iter()
                     .enumerate()
@@ -149,7 +157,9 @@ impl AppDriver for Driver {
         if let Some(toggled) = action.downcast_ref::<CheckboxToggled>() {
             let toggled = toggled.0;
             let disabled_demo = {
-                let render_root = ctx.render_root(window_id);
+                let Some(render_root) = ctx.render_root(window_id) else {
+                    return;
+                };
                 self.demos.iter().enumerate().find_map(|(idx, demo)| {
                     let shell = demo.shell_tags();
                     let id = render_root
@@ -168,7 +178,9 @@ impl AppDriver for Driver {
         }
 
         // Forward everything else to demos.
-        let render_root = ctx.render_root(window_id);
+        let Some(render_root) = ctx.render_root(window_id) else {
+            return;
+        };
         for demo in &mut self.demos {
             if demo.on_action(render_root, &action, widget_id).is_handled() {
                 return;

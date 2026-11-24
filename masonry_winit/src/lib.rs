@@ -86,8 +86,16 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod app_driver;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Conversion helpers remain private to the crate under unreachable_pub."
+)]
 mod convert_winit_event;
 mod event_loop_runner;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Surface internals remain private to the crate under unreachable_pub."
+)]
 mod vello_util;
 
 pub use winit;
@@ -97,7 +105,7 @@ pub mod app {
     pub use super::app_driver::{AppDriver, DriverCtx, WgpuContext, WgpuLimits, WindowId};
     pub use super::event_loop_runner::{
         EventLoop, EventLoopBuilder, EventLoopProxy, MasonryState, MasonryUserEvent, NewWindow,
-        Window, run, run_with,
+        Window, WindowCreationError, run, run_with,
     };
 
     pub(crate) use super::convert_winit_event::{

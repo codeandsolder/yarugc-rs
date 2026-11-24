@@ -42,11 +42,12 @@ impl AppDriver for Driver {
                 _ => 0.5,
             };
 
-            let _ = ctx.render_root(window_id).edit_base_layer(
-                |mut grid: masonry::core::WidgetMut<'_, Grid>| {
-                    grid.insert_prop(Gap::new(Length::px(self.grid_gap)));
-                },
-            );
+            let Some(render_root) = ctx.render_root(window_id) else {
+                return;
+            };
+            let _ = render_root.edit_base_layer(|mut grid: masonry::core::WidgetMut<'_, Grid>| {
+                grid.insert_prop(Gap::new(Length::px(self.grid_gap)));
+            });
         }
     }
 }

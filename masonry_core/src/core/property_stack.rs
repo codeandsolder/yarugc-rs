@@ -4,7 +4,6 @@
 use std::any::TypeId;
 use std::fmt::Display;
 use std::num::NonZeroU64;
-use std::sync::atomic::AtomicU64;
 
 use crate::core::{CachedResolution, ClassSet, Property, PropertyCache, PropertySet, Selector};
 
@@ -29,8 +28,9 @@ impl PropertyStackId {
     /// Allocates a new, unique `PropertyStackId`.
     #[must_use = "Use the allocated property stack identifier."]
     pub fn next() -> Self {
-        static PROPERTY_STACK_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-        Self(crate::util::allocate_id(&PROPERTY_STACK_ID_COUNTER))
+        static PROPERTY_STACK_ID_COUNTER: crate::util::IdAllocator =
+            crate::util::IdAllocator::new();
+        Self(PROPERTY_STACK_ID_COUNTER.allocate())
     }
 
     /// Returns the integer value of the `PropertyStackId`.

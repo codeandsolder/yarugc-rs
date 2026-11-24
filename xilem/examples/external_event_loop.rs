@@ -56,10 +56,6 @@ impl ApplicationHandler<MasonryUserEvent> for ExternalApp {
         self.masonry_state.handle_suspended(event_loop);
     }
 
-    fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        self.masonry_state.handle_about_to_wait(event_loop);
-    }
-
     fn window_event(
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
@@ -81,45 +77,6 @@ impl ApplicationHandler<MasonryUserEvent> for ExternalApp {
     ) {
         self.masonry_state
             .handle_user_event(event_loop, event, self.app_driver.as_mut());
-    }
-
-    fn device_event(
-        &mut self,
-        event_loop: &winit::event_loop::ActiveEventLoop,
-        device_id: winit::event::DeviceId,
-        event: winit::event::DeviceEvent,
-    ) {
-        // Handle the escape key to exit the app outside of masonry/xilem
-        if let winit::event::DeviceEvent::Key(key) = &event
-            && key.state == ElementState::Pressed
-            && key.physical_key == PhysicalKey::Code(KeyCode::Escape)
-        {
-            event_loop.exit();
-            return;
-        }
-
-        self.masonry_state.handle_device_event(
-            event_loop,
-            device_id,
-            event,
-            self.app_driver.as_mut(),
-        );
-    }
-
-    fn new_events(
-        &mut self,
-        event_loop: &winit::event_loop::ActiveEventLoop,
-        cause: winit::event::StartCause,
-    ) {
-        self.masonry_state.handle_new_events(event_loop, cause);
-    }
-
-    fn exiting(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        self.masonry_state.handle_exiting(event_loop);
-    }
-
-    fn memory_warning(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        self.masonry_state.handle_memory_warning(event_loop);
     }
 }
 

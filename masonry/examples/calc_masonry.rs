@@ -194,7 +194,9 @@ impl AppDriver for CalcState {
     ) {
         debug_assert_eq!(window_id, self.window_id, "unknown window");
 
-        self.ui_update(ctx.render_root(window_id), widget_id, action);
+        if let Some(render_root) = ctx.render_root(window_id) {
+            self.ui_update(render_root, widget_id, action);
+        }
     }
 }
 

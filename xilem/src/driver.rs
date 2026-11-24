@@ -162,17 +162,21 @@ where
         driver_ctx: &mut DriverCtx<'_>,
         view: WindowView<State>,
     ) {
-        driver_ctx.create_window(self.build_window(view));
+        let id = view.id;
+        if let Err(err) = driver_ctx.create_window(self.build_window(view)) {
+            tracing::error!(%err, "Could not create Xilem window");
+            self.windows.remove(&id);
+        }
     }
 
     fn close_window(&mut self, window_id: WindowId, ctx: &mut DriverCtx<'_>) {
-        let window = self.windows.get_mut(&window_id).unwrap();
-        window.view.teardown(
-            &mut window.view_state,
-            &mut window.view_ctx,
-            ctx.window(window_id),
-        );
-        self.windows.remove(&window_id);
+        if let Some(mut window) = self.windows.remove(&window_id)
+            && let Some(element) = ctx.window(window_id)
+        {
+            window
+                .view
+                .teardown(&mut window.view_state, &mut window.view_ctx, element);
+        }
         ctx.close_window(window_id);
     }
 
@@ -193,13 +197,10 @@ where
                     view_ctx,
                     view_state,
                 }) => {
-                    next_view.rebuild(
-                        view,
-                        view_state,
-                        view_ctx,
-                        driver_ctx.window(next_view.id),
-                        &mut self.state,
-                    );
+                    let Some(element) = driver_ctx.window(next_view.id) else {
+                        continue;
+                    };
+                    next_view.rebuild(view, view_state, view_ctx, element, &mut self.state);
                     *view = next_view;
                 }
                 None => self.create_window(driver_ctx, next_view),
@@ -232,9 +233,12 @@ where
         message: DynMessage,
     ) -> MessageResult<()> {
         let Some(window) = self.windows.get_mut(&window_id) else {
-            unreachable!("Already checked");
+            return MessageResult::Stale;
         };
 
+        let Some(element) = masonry_ctx.window(window_id) else {
+            return MessageResult::Stale;
+        };
         let mut message_context = MessageCtx::new(
             std::mem::take(window.view_ctx.environment()),
             id_path,
@@ -243,7 +247,7 @@ where
         let res = window.view.message(
             &mut window.view_state,
             &mut message_context,
-            masonry_ctx.window(window_id),
+            element,
             &mut self.state,
         );
         // TODO: Handle `_message` somehow?
@@ -260,7 +264,7 @@ where
         message_result: MessageResult<()>,
     ) {
         let Some(window) = self.windows.get_mut(&window_id) else {
-            unreachable!("Already checked");
+            return;
         };
 
         match message_result {
@@ -277,11 +281,14 @@ where
                 }
             }
             MessageResult::RequestRebuild => {
+                let Some(root) = masonry_ctx.render_root(window_id) else {
+                    return;
+                };
                 window.view.masonry_root.rebuild(
                     &window.view.masonry_root,
                     &mut window.view_state,
                     &mut window.view_ctx,
-                    masonry_ctx.render_root(window_id),
+                    root,
                     &mut self.state,
                 );
             }
