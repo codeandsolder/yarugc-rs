@@ -11,7 +11,7 @@ output=$(rg "^// Copyright (19|20)[\d]{2} (.+ and )?the (Xilem|YARUGC) Authors( 
 
 if [ -n "$output" ]; then
 	echo -e "The following files lack the correct copyright header:\n"
-	echo $output
+	printf '%s\n' "$output"
 	echo -e "\n\nPlease add the following header:\n"
 	echo "// Copyright $(date +%Y) the Xilem Authors"
 	echo "// SPDX-License-Identifier: Apache-2.0"

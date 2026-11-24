@@ -127,7 +127,6 @@ rust.unused_lifetimes = "warn"
 rust.unused_macro_rules = "warn"
 rust.unused_qualifications = "warn"
 
-clippy.too_many_arguments = "allow"
 
 clippy.allow_attributes_without_reason = "warn"
 clippy.cast_possible_truncation = "warn"

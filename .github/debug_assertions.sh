@@ -20,7 +20,7 @@ else
 	else
 		echo "Found debug_assertions usage in Rust code."
 		echo ""
-		echo $output
+		printf '%s\n' "$output"
 		echo ""
 		echo "The CI script must be modified to expect this usage."
 		echo "Set USING_DEBUG_ASSERTIONS to true in .github/workflows/ci.yml."
