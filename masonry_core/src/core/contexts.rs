@@ -21,9 +21,8 @@ use tree_arena::{ArenaMut, ArenaMutList, ArenaRefList};
 use crate::app::{MutateCallback, RenderRootSignal, RenderRootState};
 use crate::core::{
     AllowRawMut, BrushIndex, ClassSet, ErasedAction, FromDynWidget, LayerType, NewWidget,
-    PaintLayerMode, PropertiesMut, PropertiesRef, PropertyArena, PropertyCache, PropertyStackId,
-    ResizeDirection, Widget, WidgetArenaNode, WidgetId, WidgetMut, WidgetPod, WidgetRef,
-    WidgetState,
+    PaintLayerMode, PropertiesMut, PropertiesRef, PropertyArena, PropertyCache, ResizeDirection,
+    Widget, WidgetArenaNode, WidgetId, WidgetMut, WidgetPod, WidgetRef, WidgetState,
 };
 use crate::kurbo::{Affine, Axis, Insets, Point, Rect, Size, Vec2};
 use crate::layout::{LayoutSize, LenDef, LenReq, Length, SizeDef, UnitPoint};
@@ -309,7 +308,10 @@ impl MutateCtx<'_> {
             widget_state: &mut node_mut.item.state,
             properties: PropertiesMut {
                 local: &mut node_mut.item.properties,
-                default_map: self.properties.default_map,
+                default_map: self
+                    .property_arena
+                    .default_properties
+                    .for_widget(child_type_id),
                 stack: child_stack,
                 class_set: &node_mut.item.class_set,
             },
@@ -350,42 +352,20 @@ impl MutateCtx<'_> {
             property_arena: self.property_arena,
         }
     }
-
-    /// Sets which property stack this widget uses for property resolution.
-    pub fn set_property_stack(&mut self, stack_id: PropertyStackId) {
-        self.widget_state.request_update_props = true;
-        self.widget_state.needs_update_props = true;
-        self.widget_state.property_cache.invalidate();
-        self.widget_state.property_stack_id = Some(stack_id);
-    }
 }
 
 // --- MARK: WIDGET_REF
 // Methods to get a child WidgetRef from a parent.
 impl<'w> QueryCtx<'w> {
-    /// Returns a [`WidgetRef`] to a child widget.
-    pub fn get(self, child: WidgetId) -> WidgetRef<'w, dyn Widget> {
-        let child_node = self.children.item(child).expect("get_mut: child not found");
-        let child_type_id = (*child_node.item.widget).type_id();
-        let child_stack = self
-            .property_arena
-            .get(child_node.item.state.property_stack_id, child_type_id);
-        let child_ctx = QueryCtx {
-            global_state: self.global_state,
-            widget_state: &child_node.item.state,
-            properties: PropertiesRef {
-                local: &child_node.item.properties,
-                default_map: self.properties.default_map,
-                stack: child_stack,
-                class_set: &child_node.item.class_set,
-            },
-            children: child_node.children,
-            property_arena: self.property_arena,
-        };
-        WidgetRef {
-            ctx: child_ctx,
-            widget: &*child_node.item.widget,
-        }
+    /// Returns a reference to a registered child, or None if it is absent.
+    #[must_use = "Use the child reference if it exists."]
+    pub fn get(self, child: WidgetId) -> Option<WidgetRef<'w, dyn Widget>> {
+        let node = self.children.item(child)?;
+        Some(WidgetRef::from_node(
+            node,
+            self.global_state,
+            self.property_arena,
+        ))
     }
 }
 

@@ -48,7 +48,7 @@ impl LayerStack {
     /// Creates a stack with the provided base layer.
     pub(crate) fn new(root: NewWidget<impl Widget + ?Sized>) -> Self {
         let layer = LayerEntry {
-            root: root.erased().to_pod(),
+            root: root.erased().into_pod(),
             position: Point::ZERO,
         };
         Self {
@@ -84,7 +84,7 @@ impl LayerStack {
         position: Point,
     ) {
         let layer = LayerEntry {
-            root: root.erased().to_pod(),
+            root: root.erased().into_pod(),
             position,
         };
         this.widget.layers.push(layer);

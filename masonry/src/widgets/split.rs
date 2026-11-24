@@ -77,8 +77,8 @@ impl<ChildA: Widget + ?Sized, ChildB: Widget + ?Sized> Split<ChildA, ChildB> {
             solid: false,
             draggable: true,
             click_offset: 0.0,
-            child1: child1.to_pod(),
-            child2: child2.to_pod(),
+            child1: child1.into_pod(),
+            child2: child2.into_pod(),
         }
     }
 
@@ -353,13 +353,13 @@ where
     /// Replaces the first child widget with a new one.
     pub fn set_child1(this: &mut WidgetMut<'_, Self>, child: NewWidget<ChildA>) {
         this.ctx
-            .remove_child(std::mem::replace(&mut this.widget.child1, child.to_pod()));
+            .remove_child(std::mem::replace(&mut this.widget.child1, child.into_pod()));
     }
 
     /// Replaces the second child widget with a new one.
     pub fn set_child2(this: &mut WidgetMut<'_, Self>, child: NewWidget<ChildB>) {
         this.ctx
-            .remove_child(std::mem::replace(&mut this.widget.child2, child.to_pod()));
+            .remove_child(std::mem::replace(&mut this.widget.child2, child.into_pod()));
     }
 
     /// Returns a mutable reference to the first child widget.

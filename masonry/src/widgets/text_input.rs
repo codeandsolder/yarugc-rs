@@ -64,12 +64,12 @@ impl TextInput {
     /// Creates a new `TextInput` from a styled text area.
     pub fn from_text_area(text: NewWidget<TextArea<true>>) -> Self {
         Self {
-            text: text.to_pod(),
+            text: text.into_pod(),
             placeholder: Label::new("")
                 .accessibility_hidden(true)
                 .prepare()
                 .with_props(LineBreaking::Clip)
-                .to_pod(),
+                .into_pod(),
             placeholder_text: "".into(),
             text_alignment: TextAlign::default(),
             clip: false,
@@ -92,7 +92,7 @@ impl TextInput {
             .accessibility_hidden(true)
             .prepare()
             .with_props(LineBreaking::Clip)
-            .to_pod();
+            .into_pod();
         self.placeholder_text = placeholder_text;
         self
     }

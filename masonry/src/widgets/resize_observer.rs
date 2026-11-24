@@ -67,7 +67,7 @@ impl ResizeObserver {
     /// [`measure`]: Widget::measure
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
-            child: child.erased().to_pod(),
+            child: child.erased().into_pod(),
             last_size: None,
         }
     }
@@ -77,7 +77,7 @@ impl ResizeObserver {
 impl ResizeObserver {
     /// Replaces the child widget with a new one.
     pub fn set_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<impl Widget + ?Sized>) {
-        let old_child = mem::replace(&mut this.widget.child, child.erased().to_pod());
+        let old_child = mem::replace(&mut this.widget.child, child.erased().into_pod());
         this.ctx.remove_child(old_child);
     }
 

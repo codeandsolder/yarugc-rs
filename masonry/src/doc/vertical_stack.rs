@@ -58,7 +58,7 @@ impl VerticalStack {
 
 impl VerticalStack {
     pub fn add_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<dyn Widget>) {
-        this.widget.children.push(child.to_pod());
+        this.widget.children.push(child.into_pod());
         this.ctx.children_changed();
     }
 

@@ -29,8 +29,7 @@ fn get_pointer_target(
     if let Some(pointer_pos) = pointer_pos {
         let pointer_pos = (pointer_pos.x, pointer_pos.y).into();
         return root
-            .get_widget(root.root_id())
-            .expect("root widget not in widget tree")
+            .get_widget(root.root_id())?
             .find_widget_under_pointer(pointer_pos)
             .map(|widget| widget.id());
     }
@@ -102,7 +101,7 @@ fn run_event_pass<E>(
 
         if !is_handled {
             let _span = enter_span(&node.item.state);
-            let widget_type_id = node.item.widget.type_id();
+            let widget_type_id = node.item.widget.as_ref().type_id();
             let stack = root
                 .property_arena
                 .get(node.item.state.property_stack_id, widget_type_id);
@@ -189,7 +188,7 @@ pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEv
     let layer_ids = root_node.item.widget.children_ids();
     for layer_id in layer_ids {
         let mut layer_root = root.widget_arena.get_node_mut(layer_id);
-        let layer_type_id = layer_root.item.widget.type_id();
+        let layer_type_id = layer_root.item.widget.as_ref().type_id();
         if let Some(layer) = layer_root.item.widget.as_layer() {
             let stack = root
                 .property_arena

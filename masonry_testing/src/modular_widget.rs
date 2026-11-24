@@ -116,7 +116,7 @@ impl<S> ModularWidget<S> {
 impl<W: Widget + ?Sized> ModularWidget<WidgetPod<W>> {
     /// Creates a new `ModularWidget` with some methods already set to handle a single child.
     pub fn new_parent(child: NewWidget<W>) -> Self {
-        let child = child.to_pod();
+        let child = child.into_pod();
         Self::new(child)
             .register_children_fn(move |child, ctx| {
                 ctx.register_child(child);
@@ -136,7 +136,7 @@ impl<W: Widget + ?Sized> ModularWidget<Vec<WidgetPod<W>>> {
     ///
     /// Layout will just stack all children on the same position and return the size of the largest.
     pub fn new_multi_parent(children: Vec<NewWidget<W>>) -> Self {
-        let children = children.into_iter().map(|child| child.to_pod()).collect();
+        let children = children.into_iter().map(|child| child.into_pod()).collect();
         Self::new(children)
             .register_children_fn(move |children, ctx| {
                 for child in children {

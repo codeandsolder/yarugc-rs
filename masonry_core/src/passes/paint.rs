@@ -209,7 +209,7 @@ fn paint_widget(
             window_to_layer_transform,
             node.reborrow_mut(),
         );
-        parent_state.merge_up(&mut node.item.state);
+        parent_state.merge_up(&node.item.state);
     });
 
     if !is_stashed && !paint_as_external {

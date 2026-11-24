@@ -155,7 +155,7 @@ impl VariableLabel {
     /// Uses the label's text and style values.
     pub fn from_label(label: NewWidget<Label>) -> Self {
         Self {
-            label: label.to_pod(),
+            label: label.into_pod(),
             weight: AnimatedF32::stable(FontWeight::NORMAL.value()),
         }
     }

@@ -70,7 +70,7 @@ fn compose_widget(
             parent_state.bounding_box = parent_bounding_box.union(child_bounding_box);
         }
 
-        parent_state.merge_up(&mut node.item.state);
+        parent_state.merge_up(&node.item.state);
     });
 }
 

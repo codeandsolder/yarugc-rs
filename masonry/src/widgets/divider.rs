@@ -274,7 +274,7 @@ impl Divider {
     ///
     /// [`label`]: Self::label
     pub fn content(mut self, content: NewWidget<impl Widget + ?Sized>) -> Self {
-        self.content = Some(content.erased().to_pod());
+        self.content = Some(content.erased().into_pod());
         self
     }
 
@@ -399,7 +399,7 @@ impl Divider {
 
     /// Sets the `content`.
     pub fn set_content(this: &mut WidgetMut<'_, Self>, content: NewWidget<impl Widget + ?Sized>) {
-        if let Some(old_content) = this.widget.content.replace(content.erased().to_pod()) {
+        if let Some(old_content) = this.widget.content.replace(content.erased().into_pod()) {
             this.ctx.remove_child(old_content);
         }
         this.ctx.children_changed();

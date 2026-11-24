@@ -83,7 +83,7 @@ fn add_child_on_pointer_event() {
     let parent = ModularWidget::new_multi_parent(vec![SizedBox::empty().prepare()])
         .pointer_event_fn(|children, ctx, _, event| {
             if matches!(event, PointerEvent::Down { .. }) {
-                children.push(SizedBox::empty().prepare().to_pod());
+                children.push(SizedBox::empty().prepare().into_pod());
                 ctx.children_changed();
             }
         });

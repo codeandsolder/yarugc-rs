@@ -9,6 +9,7 @@ use crate::util::AnyMap;
 // TODO - Implement Debug.
 /// A collection of [properties](Property) that a widget can be created with.
 #[derive(Clone, Default)]
+#[must_use = "Use the constructed property collection."]
 pub struct PropertySet {
     pub(crate) map: AnyMap,
 }
@@ -33,6 +34,7 @@ impl PropertySet {
     }
 
     /// Returns value of property `P`.
+    #[must_use = "Use the stored property if present."]
     pub fn get<P: Property>(&self) -> Option<&P> {
         self.map.get::<P>()
     }

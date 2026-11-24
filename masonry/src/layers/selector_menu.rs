@@ -34,7 +34,7 @@ impl SelectorMenu {
 
     /// Builder-style method to add a child widget.
     pub fn with(mut self, child: NewWidget<impl Widget + ?Sized>) -> Self {
-        let child = child.erased().to_pod();
+        let child = child.erased().into_pod();
         self.children.push(child);
         self
     }
@@ -68,7 +68,7 @@ impl CollectionWidget<()> for SelectorMenu {
         child: NewWidget<impl Widget + ?Sized>,
         _params: impl Into<()>,
     ) {
-        let child = child.erased().to_pod();
+        let child = child.erased().into_pod();
         this.widget.children.push(child);
         this.ctx.children_changed();
     }
@@ -84,7 +84,7 @@ impl CollectionWidget<()> for SelectorMenu {
         child: NewWidget<impl Widget + ?Sized>,
         _params: impl Into<()>,
     ) {
-        let child = child.erased().to_pod();
+        let child = child.erased().into_pod();
         this.widget.children.insert(idx, child);
         this.ctx.children_changed();
     }
@@ -100,7 +100,7 @@ impl CollectionWidget<()> for SelectorMenu {
         child: NewWidget<impl Widget + ?Sized>,
         _params: impl Into<()>,
     ) {
-        let child = child.erased().to_pod();
+        let child = child.erased().into_pod();
         let old_child = std::mem::replace(&mut this.widget.children[idx], child);
         this.ctx.remove_child(old_child);
     }

@@ -78,7 +78,7 @@ fn build_accessibility_tree(
             node.reborrow_mut(),
             None,
         );
-        parent_state.merge_up(&mut node.item.state);
+        parent_state.merge_up(&node.item.state);
     });
 }
 

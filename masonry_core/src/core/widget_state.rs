@@ -363,11 +363,7 @@ impl WidgetState {
     /// Updates state to incorporate state changes from a child.
     ///
     /// This method is idempotent and can be called multiple times.
-    //
-    // TODO: though this method takes child state mutably, child state currently isn't actually
-    // mutated anymore. This method may start doing so again in the future, so keep taking &mut for
-    // now.
-    pub(crate) fn merge_up(&mut self, child_state: &mut Self) {
+    pub(crate) fn merge_up(&mut self, child_state: &Self) {
         if child_state.needs_layout {
             self.measurement_cache.clear();
         }

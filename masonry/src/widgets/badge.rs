@@ -70,7 +70,7 @@ impl Badge {
     /// Creates a new badge with the provided child.
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
-            child: child.erased().to_pod(),
+            child: child.erased().into_pod(),
         }
     }
 
@@ -132,7 +132,7 @@ impl Badge {
     pub fn set_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<impl Widget + ?Sized>) {
         this.ctx.remove_child(std::mem::replace(
             &mut this.widget.child,
-            child.erased().to_pod(),
+            child.erased().into_pod(),
         ));
     }
 

@@ -87,7 +87,7 @@ impl ZStack {
         child: NewWidget<impl Widget + ?Sized>,
         alignment: impl Into<ChildAlignment>,
     ) -> Self {
-        let child = Child::new(child.erased().to_pod(), alignment.into());
+        let child = Child::new(child.erased().into_pod(), alignment.into());
         self.children.push(child);
         self
     }
@@ -132,7 +132,7 @@ impl CollectionWidget<ChildAlignment> for ZStack {
         child: NewWidget<impl Widget + ?Sized>,
         params: impl Into<ChildAlignment>,
     ) {
-        let child = Child::new(child.erased().to_pod(), params.into());
+        let child = Child::new(child.erased().into_pod(), params.into());
         this.widget.children.push(child);
         this.ctx.children_changed();
     }
@@ -148,7 +148,7 @@ impl CollectionWidget<ChildAlignment> for ZStack {
         child: NewWidget<impl Widget + ?Sized>,
         params: impl Into<ChildAlignment>,
     ) {
-        let child = Child::new(child.erased().to_pod(), params.into());
+        let child = Child::new(child.erased().into_pod(), params.into());
         this.widget.children.insert(idx, child);
         this.ctx.children_changed();
     }
@@ -164,7 +164,7 @@ impl CollectionWidget<ChildAlignment> for ZStack {
         child: NewWidget<impl Widget + ?Sized>,
         params: impl Into<ChildAlignment>,
     ) {
-        let child = Child::new(child.erased().to_pod(), params.into());
+        let child = Child::new(child.erased().into_pod(), params.into());
         let old_child = std::mem::replace(&mut this.widget.children[idx], child);
         this.ctx.remove_child(old_child.widget);
     }

@@ -46,7 +46,7 @@ impl CollapsePanel {
             disclosure_button: Self::disclosure_button(collapse),
             header_label: WidgetPod::new(Label::new(header_text)),
             separator_line_y: None,
-            child: child.erased().to_pod(),
+            child: child.erased().into_pod(),
         }
     }
 
@@ -58,9 +58,9 @@ impl CollapsePanel {
     ) -> Self {
         Self {
             disclosure_button: Self::disclosure_button(collapse),
-            header_label: header_label.to_pod(),
+            header_label: header_label.into_pod(),
             separator_line_y: None,
-            child: child.erased().to_pod(),
+            child: child.erased().into_pod(),
         }
     }
 
@@ -71,7 +71,7 @@ impl CollapsePanel {
                 // TODO - Move to DefaultProperties
                 Dimensions::fixed(BUTTON_LENGTH, BUTTON_LENGTH),
             )
-            .to_pod()
+            .into_pod()
     }
 }
 
@@ -81,7 +81,7 @@ impl CollapsePanel {
     pub fn set_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<impl Widget + ?Sized>) {
         this.ctx.remove_child(std::mem::replace(
             &mut this.widget.child,
-            child.erased().to_pod(),
+            child.erased().into_pod(),
         ));
     }
 

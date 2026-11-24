@@ -51,7 +51,7 @@ impl RadioButton {
     pub fn from_label(checked: bool, label: NewWidget<Label>) -> Self {
         Self {
             selected: checked,
-            label: label.to_pod(),
+            label: label.into_pod(),
             parent_group: None,
         }
     }

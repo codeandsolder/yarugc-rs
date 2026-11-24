@@ -19,9 +19,9 @@ use crate::app::VisualLayerPlan;
 use crate::app::layer_stack::LayerStack;
 use crate::core::{
     AccessCtx, AccessEvent, BrushIndex, CursorIcon, DefaultProperties, ErasedAction, FromDynWidget,
-    Handled, Ime, LayerType, NewWidget, PointerEvent, PropertiesRef, PropertyArena, PropertyStack,
-    PropertyStackId, QueryCtx, ResizeDirection, TextEvent, Widget, WidgetArena, WidgetArenaNode,
-    WidgetId, WidgetMut, WidgetPod, WidgetRef, WidgetState, WidgetTag, WidgetTagInner, WindowEvent,
+    Handled, Ime, LayerType, NewWidget, PointerEvent, PropertyArena, PropertyStack,
+    PropertyStackId, ResizeDirection, TextEvent, Widget, WidgetArena, WidgetArenaNode, WidgetId,
+    WidgetMut, WidgetPod, WidgetRef, WidgetState, WidgetTag, WidgetTagInner, WindowEvent,
 };
 use crate::imaging::record::Scene;
 use crate::passes::accessibility::run_accessibility_pass;
@@ -332,7 +332,7 @@ impl RenderRoot {
         let layer_stack = LayerStack::new(root_widget)
             .prepare()
             .with_props(Dimensions::MAX)
-            .to_pod();
+            .into_pod();
 
         let mut root = Self {
             layer_stack,
@@ -635,33 +635,12 @@ impl RenderRoot {
 
     /// Returns a [`WidgetRef`] to a specific widget.
     pub fn get_widget(&self, id: WidgetId) -> Option<WidgetRef<'_, dyn Widget>> {
-        let node_ref = self.widget_arena.nodes.find(id)?;
-
-        let children = node_ref.children;
-        let widget = &*node_ref.item.widget;
-        let state = &node_ref.item.state;
-        let properties = &node_ref.item.properties;
-        let class_set = &node_ref.item.class_set;
-        let stack = self
-            .property_arena
-            .get(state.property_stack_id, widget.type_id());
-
-        let ctx = QueryCtx {
-            global_state: &self.global_state,
-            widget_state: state,
-            properties: PropertiesRef {
-                local: properties,
-                default_map: self
-                    .property_arena
-                    .default_properties
-                    .for_widget(widget.type_id()),
-                stack,
-                class_set,
-            },
-            children,
-            property_arena: &self.property_arena,
-        };
-        Some(WidgetRef { ctx, widget })
+        let node = self.widget_arena.nodes.find(id)?;
+        Some(WidgetRef::from_node(
+            node,
+            &self.global_state,
+            &self.property_arena,
+        ))
     }
 
     /// Returns a [`WidgetRef`] to the widget with the given tag.
@@ -670,9 +649,7 @@ impl RenderRoot {
         tag: WidgetTag<W>,
     ) -> Option<WidgetRef<'_, W>> {
         let id = self.global_state.widget_tags.get(&tag.inner)?;
-        let widget_ref = self.get_widget(*id)?;
-        let widget_ref = widget_ref.downcast().expect("wrong tag type");
-        Some(widget_ref)
+        self.get_widget(*id)?.downcast()
     }
 
     /// Returns the widget and its ancestors, starting at the widget and ending at the root.

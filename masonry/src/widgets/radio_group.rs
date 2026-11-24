@@ -22,7 +22,7 @@ impl RadioGroup {
     /// Create a new `RadioGroup`.
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
-            child: child.erased().to_pod(),
+            child: child.erased().into_pod(),
             selected_button: None,
         }
     }

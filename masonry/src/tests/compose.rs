@@ -24,7 +24,7 @@ fn request_compose() {
     let child = NewWidget::new(SizedBox::empty().record()).with_tag(child_tag);
 
     let child = ChildAndPos {
-        child: child.erased().to_pod(),
+        child: child.erased().into_pod(),
         pos: Point::ZERO,
         offset: Vec2::ZERO,
     };
@@ -98,7 +98,7 @@ fn scroll_translation_updates_composed_geometry_without_layout() {
     .with_tag(child_tag);
 
     let parent = ModularWidget::new(ChildAndOffset {
-        child: child.erased().to_pod(),
+        child: child.erased().into_pod(),
         offset: Vec2::ZERO,
     })
     .layout_fn(|state, ctx, _, size| {

@@ -60,7 +60,7 @@ fn update_anim_for_widget(
             node.reborrow_mut(),
             elapsed_ns,
         );
-        parent_state.merge_up(&mut node.item.state);
+        parent_state.merge_up(&node.item.state);
     });
 }
 

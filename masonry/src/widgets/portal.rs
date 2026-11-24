@@ -66,7 +66,7 @@ impl<W: Widget + ?Sized> Portal<W> {
     /// Creates a scrolling container the given child widget.
     pub fn new(child: NewWidget<W>) -> Self {
         Self {
-            child: child.to_pod(),
+            child: child.into_pod(),
             content_size: Size::ZERO,
             viewport_pos: Point::ORIGIN,
             constrain_horizontal: false,
@@ -306,7 +306,7 @@ impl<W: Widget + FromDynWidget + ?Sized> Portal<W> {
     /// Replaces the child widget with a new one.
     pub fn set_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<W>) {
         this.ctx
-            .remove_child(std::mem::replace(&mut this.widget.child, child.to_pod()));
+            .remove_child(std::mem::replace(&mut this.widget.child, child.into_pod()));
     }
 
     /// Returns mutable reference to the child widget.

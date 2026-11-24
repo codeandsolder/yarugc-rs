@@ -23,7 +23,7 @@ impl WrapperWidget {
     /// The `child` is the initial child widget.
     pub fn new(child: NewWidget<impl Widget>) -> Self {
         Self {
-            child: child.erased().to_pod(),
+            child: child.erased().into_pod(),
         }
     }
 
@@ -37,7 +37,7 @@ impl WrapperWidget {
     /// Replaces the container's child widget.
     pub fn set_child(this: &mut WidgetMut<'_, Self>, child: impl Widget) {
         // FIXME - Take NewWidget argument
-        Self::set_child_pod(this, NewWidget::new(child).erased().to_pod());
+        Self::set_child_pod(this, NewWidget::new(child).erased().into_pod());
     }
 
     /// Replaces the container's child widget with a `WidgetPod`.

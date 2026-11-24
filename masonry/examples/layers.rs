@@ -56,7 +56,7 @@ impl OverlayBox {
         overlayer: Box<dyn Fn() -> (NewWidget<dyn Widget>, LayerType)>,
     ) -> Self {
         Self {
-            child: child.erased().to_pod(),
+            child: child.erased().into_pod(),
             overlayer,
             layer_root_id: None,
             last_mouse_move: None,

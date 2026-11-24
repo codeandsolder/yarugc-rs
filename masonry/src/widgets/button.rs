@@ -48,7 +48,7 @@ impl Button {
     /// ```
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
-            child: child.erased().to_pod(),
+            child: child.erased().into_pod(),
         }
     }
 
@@ -73,7 +73,7 @@ impl Button {
     pub fn set_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<impl Widget + ?Sized>) {
         this.ctx.remove_child(std::mem::replace(
             &mut this.widget.child,
-            child.erased().to_pod(),
+            child.erased().into_pod(),
         ));
     }
 

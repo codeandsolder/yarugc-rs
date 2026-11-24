@@ -10,7 +10,7 @@ use ui_events::pointer::PointerType;
 use crate::app::{RenderRoot, RenderRootSignal, RenderRootState};
 use crate::core::{
     ClassSetDiff, CursorIcon, DefaultProperties, Ime, PointerEvent, PointerInfo, PropertiesMut,
-    PropertiesRef, PropertyArena, PropertyCache, QueryCtx, RegisterCtx, TextEvent, Update,
+    PropertiesRef, PropertyArena, PropertyCache, PseudoClass, RegisterCtx, TextEvent, Update,
     UpdateCtx, Widget, WidgetArenaNode, WidgetId, WidgetState,
 };
 use crate::passes::event::{run_on_pointer_event_pass, run_on_text_event_pass};
@@ -216,7 +216,7 @@ fn update_widget_tree(
             node.reborrow_mut(),
             Some(&ancestors),
         );
-        parent_state.merge_up(&mut node.item.state);
+        parent_state.merge_up(&node.item.state);
     });
 }
 
@@ -337,7 +337,7 @@ fn update_disabled_for_widget(
         };
         widget.update(&mut ctx, &mut props, &Update::DisabledChanged(disabled));
         state.is_disabled = disabled;
-        state.class_diff.is_disabled = Some(disabled);
+        state.class_diff.pseudo.set(PseudoClass::Disabled, disabled);
         state.request_update_props = true;
         state.needs_update_props = true;
         state.needs_update_focusable = true;
@@ -356,7 +356,7 @@ fn update_disabled_for_widget(
             node.reborrow_mut(),
             disabled,
         );
-        parent_state.merge_up(&mut node.item.state);
+        parent_state.merge_up(&node.item.state);
     });
 }
 
@@ -449,7 +449,7 @@ fn update_stashed_for_widget(
             node.reborrow_mut(),
             stashed,
         );
-        parent_state.merge_up(&mut node.item.state);
+        parent_state.merge_up(&node.item.state);
     });
 }
 
@@ -718,7 +718,10 @@ pub(crate) fn run_update_focus_pass(root: &mut RenderRoot) {
 
                 if ctx.widget_state.has_focus_target != has_focused {
                     widget.update(ctx, props, &Update::ChildFocusChanged(has_focused));
-                    ctx.widget_state.class_diff.has_focus_target = Some(has_focused);
+                    ctx.widget_state
+                        .class_diff
+                        .pseudo
+                        .set(PseudoClass::Focused, has_focused);
                     ctx.widget_state.request_update_props = true;
                     ctx.widget_state.needs_update_props = true;
                 }
@@ -922,14 +925,20 @@ pub(crate) fn run_update_pointer_pass(root: &mut RenderRoot) {
     if prev_active_widget != next_active_widget {
         run_single_update_pass(root, prev_active_widget, |widget, ctx, props| {
             ctx.widget_state.is_active = false;
-            ctx.widget_state.class_diff.is_active = Some(false);
+            ctx.widget_state
+                .class_diff
+                .pseudo
+                .set(PseudoClass::Active, false);
             ctx.widget_state.request_update_props = true;
             ctx.widget_state.needs_update_props = true;
             widget.update(ctx, props, &Update::ActiveChanged(false));
         });
         run_single_update_pass(root, next_active_widget, |widget, ctx, props| {
             ctx.widget_state.is_active = true;
-            ctx.widget_state.class_diff.is_active = Some(true);
+            ctx.widget_state
+                .class_diff
+                .pseudo
+                .set(PseudoClass::Active, true);
             ctx.widget_state.request_update_props = true;
             ctx.widget_state.needs_update_props = true;
             widget.update(ctx, props, &Update::ActiveChanged(true));
@@ -1023,14 +1032,20 @@ pub(crate) fn run_update_pointer_pass(root: &mut RenderRoot) {
     if prev_hovered_widget != next_hovered_widget {
         run_single_update_pass(root, prev_hovered_widget, |widget, ctx, props| {
             ctx.widget_state.is_hovered = false;
-            ctx.widget_state.class_diff.is_hovered = Some(false);
+            ctx.widget_state
+                .class_diff
+                .pseudo
+                .set(PseudoClass::Hovered, false);
             ctx.widget_state.request_update_props = true;
             ctx.widget_state.needs_update_props = true;
             widget.update(ctx, props, &Update::HoveredChanged(false));
         });
         run_single_update_pass(root, next_hovered_widget, |widget, ctx, props| {
             ctx.widget_state.is_hovered = true;
-            ctx.widget_state.class_diff.is_hovered = Some(true);
+            ctx.widget_state
+                .class_diff
+                .pseudo
+                .set(PseudoClass::Hovered, true);
             ctx.widget_state.request_update_props = true;
             ctx.widget_state.needs_update_props = true;
             widget.update(ctx, props, &Update::HoveredChanged(true));
@@ -1046,40 +1061,16 @@ pub(crate) fn run_update_pointer_pass(root: &mut RenderRoot) {
         .pointer_capture_target
         .or(next_hovered_widget);
 
-    let new_icon = if let (Some(icon_source), Some(pos)) = (icon_source, pointer_pos) {
-        let root_node = root.widget_arena.get_node(icon_source);
-        let children = root_node.children;
-        let widget = &*root_node.item.widget;
-        let state = &root_node.item.state;
-        let properties = &root_node.item.properties;
-
-        let stack = root
-            .property_arena
-            .get(state.property_stack_id, widget.type_id());
-        let ctx = QueryCtx {
-            global_state: &root.global_state,
-            widget_state: state,
-            properties: PropertiesRef {
-                local: properties,
-                default_map: root
-                    .property_arena
-                    .default_properties
-                    .for_widget(widget.type_id()),
-                stack,
-                class_set: &root_node.item.class_set,
-            },
-            children,
-            property_arena: &root.property_arena,
-        };
-
-        if state.is_disabled {
-            CursorIcon::Default
-        } else {
-            widget.get_cursor(&ctx, pos)
-        }
-    } else {
-        CursorIcon::Default
-    };
+    let new_icon = icon_source
+        .zip(pointer_pos)
+        .and_then(|(id, pos)| {
+            let widget = root.get_widget(id)?;
+            if widget.ctx().is_disabled() {
+                return None;
+            }
+            Some(widget.get_cursor(widget.ctx(), pos))
+        })
+        .unwrap_or(CursorIcon::Default);
 
     if root.global_state.cursor_icon != new_icon {
         root.global_state
@@ -1100,7 +1091,7 @@ fn update_props_for_widget(
     property_arena: &PropertyArena,
     node: ArenaMut<'_, WidgetArenaNode>,
 ) {
-    let widget_type_id = node.item.widget.type_id();
+    let widget_type_id = node.item.widget.as_ref().type_id();
     let stack = property_arena.get(node.item.state.property_stack_id, widget_type_id);
 
     let mut children = node.children;
@@ -1155,7 +1146,7 @@ fn update_props_for_widget(
     let parent_state = state;
     recurse_on_children(id, widget, children, |mut node| {
         update_props_for_widget(global_state, property_arena, node.reborrow_mut());
-        parent_state.merge_up(&mut node.item.state);
+        parent_state.merge_up(&node.item.state);
     });
 }
 
@@ -1172,10 +1163,7 @@ fn cached_props_changed(diff: &ClassSetDiff, cache: &PropertyCache) -> bool {
         return true;
     }
 
-    (diff.is_hovered.is_some() && cache.relevant_is_hovered)
-        || (diff.is_active.is_some() && cache.relevant_is_active)
-        || (diff.is_disabled.is_some() && cache.relevant_is_disabled)
-        || (diff.has_focus_target.is_some() && cache.relevant_has_focus_target)
+    diff.pseudo.mask.intersects(cache.relevant_pseudo)
 }
 
 pub(crate) fn run_update_props_pass(root: &mut RenderRoot) {
@@ -1232,7 +1220,7 @@ fn update_fonts_for_widget(
             property_arena,
             node.reborrow_mut(),
         );
-        parent_state.merge_up(&mut node.item.state);
+        parent_state.merge_up(&node.item.state);
     });
 }
 

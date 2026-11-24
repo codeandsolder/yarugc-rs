@@ -104,7 +104,7 @@ impl DemoPage for StepInputDemo {
 
         let id = render_root.property_arena().insert(stack);
         render_root.edit_widget_with_tag(self.tag_custom, |mut widget| {
-            widget.ctx.set_property_stack(id);
+            widget.set_property_stack(Some(id));
         });
 
         self.initialized = true;

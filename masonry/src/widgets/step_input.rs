@@ -1302,7 +1302,7 @@ impl<T: Steppable> Widget for StepInput<T> {
                     Label::new(display_value)
                         .prepare()
                         .with_props(*color)
-                        .to_pod(),
+                        .into_pod(),
                 );
                 ctx.children_changed();
             }

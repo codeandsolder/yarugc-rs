@@ -57,7 +57,7 @@ impl Prose {
     /// Creates a new `Prose` from a styled text area.
     pub fn from_text_area(text: NewWidget<TextArea<false>>) -> Self {
         Self {
-            text: text.to_pod(),
+            text: text.into_pod(),
             clip: false,
         }
     }

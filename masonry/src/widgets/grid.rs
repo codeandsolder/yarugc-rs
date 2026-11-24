@@ -575,7 +575,7 @@ impl Grid {
 impl Child {
     fn new(child: NewWidget<impl Widget + ?Sized>, params: GridParams) -> Self {
         Self {
-            widget: child.erased().to_pod(),
+            widget: child.erased().into_pod(),
             params,
 
             x: 0,

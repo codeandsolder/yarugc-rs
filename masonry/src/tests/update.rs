@@ -891,7 +891,10 @@ fn property_stack_selector_changes_notify_only_affected_values() {
     let mut harness =
         TestHarness::create(test_property_set(), NewWidget::new(widget).with_tag(tag));
     let id = harness.render_root().insert_property_stack(stack);
-    harness.edit_root_widget(|mut widget| widget.ctx.set_property_stack(id));
+    harness.edit_root_widget(|mut widget| {
+        widget.set_property_stack(Some(id));
+        assert_eq!(*widget.get_prop::<ContentColor>(), black);
+    });
     let _ = harness.redraw();
     assert_eq!(*harness.get_widget(tag).get_prop::<ContentColor>(), black);
     changes.set(0);
@@ -922,4 +925,44 @@ fn property_stack_selector_changes_notify_only_affected_values() {
     let _ = harness.redraw();
     assert_eq!(changes.get(), 3);
     assert_eq!(*harness.get_widget(tag).get_prop::<ContentColor>(), white);
+
+    harness.edit_root_widget(|mut widget| {
+        widget.set_property_stack(None);
+        assert_eq!(*widget.get_prop::<ContentColor>(), black);
+    });
+    let _ = harness.redraw();
+    assert_eq!(*harness.get_widget(tag).get_prop::<ContentColor>(), black);
+}
+
+#[test]
+fn widget_access_resolves_the_childs_own_defaults() {
+    use crate::peniko::color::AlphaColor;
+    use crate::properties::ContentColor;
+
+    let child_tag = WidgetTag::named("child-defaults");
+    let parent_tag = WidgetTag::named("parent-defaults");
+    let child = NewWidget::new(Label::new("child")).with_tag(child_tag);
+    let parent = NewWidget::new(ModularWidget::new_parent(child)).with_tag(parent_tag);
+    let mut defaults = test_property_set();
+    let parent_color = ContentColor::new(AlphaColor::BLACK);
+    let child_color = ContentColor::new(AlphaColor::WHITE);
+    defaults.insert::<ModularWidget<WidgetPod<Label>>, ContentColor>(parent_color);
+    defaults.insert::<Label, ContentColor>(child_color);
+
+    let mut harness = TestHarness::create(defaults, parent);
+    let parent = harness.get_widget(parent_tag);
+    let child = harness.get_widget(child_tag);
+    assert_eq!(*parent.get_prop::<ContentColor>(), parent_color);
+    assert_eq!(*child.get_prop::<ContentColor>(), child_color);
+    assert_eq!(
+        *parent.children()[0].get_prop::<ContentColor>(),
+        child_color
+    );
+    let child_from_ctx = parent.ctx().get(child.id()).unwrap();
+    assert_eq!(*child_from_ctx.get_prop::<ContentColor>(), child_color);
+
+    harness.edit_root_widget(|mut parent| {
+        let mut child = parent.ctx.get_mut(&mut parent.widget.state);
+        assert_eq!(*child.get_prop::<ContentColor>(), child_color);
+    });
 }

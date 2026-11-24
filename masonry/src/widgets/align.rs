@@ -45,7 +45,7 @@ impl Align {
     pub fn new(align: UnitPoint, child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
             align,
-            child: child.erased().to_pod(),
+            child: child.erased().into_pod(),
             width_factor: None,
             height_factor: None,
         }
@@ -70,7 +70,7 @@ impl Align {
     pub fn horizontal(align: UnitPoint, child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
             align,
-            child: child.erased().to_pod(),
+            child: child.erased().into_pod(),
             width_factor: None,
             height_factor: Some(1.0),
         }
@@ -80,7 +80,7 @@ impl Align {
     pub fn vertical(align: UnitPoint, child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
             align,
-            child: child.erased().to_pod(),
+            child: child.erased().into_pod(),
             width_factor: Some(1.0),
             height_factor: None,
         }
@@ -101,7 +101,7 @@ impl Align {
     pub fn set_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<impl Widget + ?Sized>) {
         this.ctx.remove_child(std::mem::replace(
             &mut this.widget.child,
-            child.erased().to_pod(),
+            child.erased().into_pod(),
         ));
     }
 

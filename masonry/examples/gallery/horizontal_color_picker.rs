@@ -92,7 +92,7 @@ impl HorizontalColorPicker {
 
         Self {
             color,
-            widget: body.prepare().to_pod(),
+            widget: body.prepare().into_pod(),
             sliders,
             preview_id,
         }

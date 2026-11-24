@@ -63,6 +63,7 @@ impl LayoutSize {
     }
 
     /// Returns the [`Length`] of the provided `axis`.
+    #[must_use = "Use the length of the requested axis."]
     pub const fn length(&self, axis: Axis) -> Option<Length> {
         match axis {
             Axis::Horizontal => self.width,

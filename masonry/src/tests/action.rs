@@ -34,7 +34,7 @@ fn action_source_removed() {
         })
         .prepare()
         .with_props(Dimensions::fixed(50.px(), 50.px()))
-        .to_pod();
+        .into_pod();
     let action_source_id = action_source.id();
 
     let parent = ModularWidget::new(Some(action_source))

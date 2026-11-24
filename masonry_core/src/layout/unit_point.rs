@@ -48,10 +48,10 @@ impl UnitPoint {
     /// the rect should be `(0, 0, -5, -5)`. Then `TOP_LEFT` will resolve to `(0, 0)`
     /// while `BOTTOM_RIGHT` will resolve to `(-5, -5)`.
     #[must_use = "Use the resolved point within the rectangle."]
-    pub const fn resolve(self, rect: Rect) -> Point {
+    pub fn resolve(self, rect: Rect) -> Point {
         Point::new(
-            rect.x0 + self.u * (rect.x1 - rect.x0),
-            rect.y0 + self.v * (rect.y1 - rect.y0),
+            self.u.mul_add(rect.x1 - rect.x0, rect.x0),
+            self.v.mul_add(rect.y1 - rect.y0, rect.y0),
         )
     }
 }

@@ -3,7 +3,7 @@
 
 //! Basic types and traits Masonry is built on.
 
-mod class_set;
+pub(crate) mod class_set;
 mod contexts;
 mod default_properties;
 mod events;
@@ -13,18 +13,18 @@ mod properties_mut;
 mod properties_ref;
 mod property;
 mod property_arena;
-mod property_cache;
+pub(crate) mod property_cache;
 mod property_set;
 mod property_stack;
 mod selector;
 mod text;
 mod widget;
-mod widget_arena;
+pub(crate) mod widget_arena;
 mod widget_mut;
 mod widget_paint;
 mod widget_pod;
 mod widget_ref;
-mod widget_state;
+pub(crate) mod widget_state;
 mod widget_tag;
 
 pub use contexts::*;

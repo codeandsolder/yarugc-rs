@@ -18,6 +18,7 @@ pub struct PropertyStackId(pub(crate) NonZeroU64);
 /// When resolving a property, the stack is traversed from top to bottom until
 /// a matching selector with the requested property is found.
 #[derive(Debug, Default, Clone)]
+#[must_use = "Use the constructed property stack."]
 pub struct PropertyStack {
     pub(crate) stack: Vec<(Selector, PropertySet)>,
 }
@@ -33,8 +34,9 @@ impl PropertyStackId {
     }
 
     /// Returns the integer value of the `PropertyStackId`.
-    pub fn to_raw(self) -> u64 {
-        self.0.into()
+    #[must_use = "Use the raw stack identifier."]
+    pub const fn to_raw(self) -> u64 {
+        self.0.get()
     }
 }
 
@@ -230,7 +232,11 @@ mod tests {
         );
         assert!(cache.relevant_classes.contains("selected"));
         assert!(!cache.relevant_classes.contains("unrelated"));
-        assert!(!cache.relevant_is_hovered);
+        assert!(
+            !cache
+                .relevant_pseudo
+                .contains(crate::core::PseudoClass::Hovered)
+        );
 
         let readonly = props.as_ref();
         assert_eq!(readonly.get_without_saving::<Value>(&cache), &Value(3));

@@ -1,7 +1,7 @@
 // Copyright 2024 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use tree_arena::{ArenaMut, ArenaRef, TreeArena};
+use tree_arena::{ArenaMut, TreeArena};
 
 use crate::core::{ClassSet, PropertySet, Widget, WidgetId, WidgetState};
 
@@ -23,20 +23,8 @@ impl WidgetArena {
 
     #[track_caller]
     pub(crate) fn parent_of(&self, widget_id: WidgetId) -> Option<WidgetId> {
-        let widget_ref = self
-            .nodes
-            .find(widget_id)
-            .expect("parent_of: widget not found in arena");
-
-        let id = widget_ref.parent_id?;
-        Some(WidgetId(id.try_into().unwrap()))
-    }
-
-    #[track_caller]
-    pub(crate) fn get_node(&self, widget_id: WidgetId) -> ArenaRef<'_, WidgetArenaNode> {
-        self.nodes
-            .find(widget_id)
-            .expect("get_pair: widget not in widget tree")
+        let id = self.nodes.find(widget_id)?.parent_id?;
+        std::num::NonZeroU64::new(id).map(WidgetId)
     }
 
     #[track_caller]
@@ -47,7 +35,7 @@ impl WidgetArena {
     }
 
     #[track_caller]
-    pub(crate) fn get_state(&mut self, widget_id: WidgetId) -> &WidgetState {
+    pub(crate) fn get_state(&self, widget_id: WidgetId) -> &WidgetState {
         &self
             .nodes
             .find(widget_id)

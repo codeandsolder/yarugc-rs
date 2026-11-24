@@ -66,7 +66,7 @@ pub(crate) fn merge_state_up(arena: &mut WidgetArena, widget_id: WidgetId) {
     parent_node_mut
         .item
         .state
-        .merge_up(&mut child_node_mut.item.state);
+        .merge_up(&child_node_mut.item.state);
 }
 
 /// Masonry has a significant number of passes which may traverse a significant number of

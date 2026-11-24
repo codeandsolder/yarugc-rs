@@ -430,7 +430,7 @@ impl VirtualScroll {
             "`add_child` should only be called with an index requested by the controller."
         );
         this.ctx.children_changed();
-        if this.widget.items.insert(idx, child.to_pod()).is_some() {
+        if this.widget.items.insert(idx, child.into_pod()).is_some() {
             tracing::warn!("Tried to add child {idx} twice to VirtualScroll");
         };
     }

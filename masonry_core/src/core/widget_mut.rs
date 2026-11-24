@@ -4,7 +4,7 @@
 use std::any::TypeId;
 use std::fmt::Debug;
 
-use crate::core::{FromDynWidget, MutateCtx, Property, Widget, WidgetId};
+use crate::core::{FromDynWidget, MutateCtx, Property, PropertyStackId, Widget, WidgetId};
 use crate::kurbo::Affine;
 use crate::properties::core_property_changed;
 
@@ -56,7 +56,8 @@ impl<W: Widget + ?Sized> Debug for WidgetMut<'_, W> {
 
 impl<W: Widget + ?Sized> WidgetMut<'_, W> {
     /// Returns the [`WidgetId`] of the current widget.
-    pub fn id(&self) -> WidgetId {
+    #[must_use = "Use the widget identifier."]
+    pub const fn id(&self) -> WidgetId {
         self.ctx.widget_state.id
     }
 
@@ -72,15 +73,15 @@ impl<W: Widget + ?Sized> WidgetMut<'_, W> {
     /// Returns `true` if the widget has a local property of type `T`.
     ///
     /// Does not check default properties.
+    #[must_use = "Inspect whether the property is locally set."]
     pub fn contains_prop<T: Property>(&self) -> bool {
         self.ctx.properties.contains::<T>()
     }
 
     /// Returns the value of property `T`.
     ///
-    /// If the widget has an entry for `P`, returns that entry.
-    /// If the default property set has an entry for `P`, returns that entry.
-    /// Otherwise returns [`Property::static_default()`].
+    /// Precedence is local property, matching stack layer, widget default,
+    /// then the property's static default.
     pub fn get_prop<T: Property>(&mut self) -> &T {
         self.ctx
             .properties
@@ -113,6 +114,23 @@ impl<W: Widget + ?Sized> WidgetMut<'_, W> {
         core_property_changed(&mut ctx, property_type);
         self.widget.property_changed(&mut ctx, property_type);
         value
+    }
+
+    /// Sets the property stack and immediately uses it for subsequent reads.
+    /// Passing None restores the default stack for the concrete widget type.
+    pub fn set_property_stack(&mut self, stack_id: Option<PropertyStackId>) {
+        let state = &mut self.ctx.widget_state;
+        if state.property_stack_id == stack_id {
+            return;
+        }
+        state.request_update_props = true;
+        state.needs_update_props = true;
+        state.property_cache.invalidate();
+        state.property_stack_id = stack_id;
+        self.ctx.properties.stack = self
+            .ctx
+            .property_arena
+            .get(stack_id, self.widget.as_dyn().type_id());
     }
 
     /// Sets the local transform of this widget.

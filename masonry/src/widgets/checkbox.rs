@@ -58,7 +58,7 @@ impl Checkbox {
     pub fn from_label(checked: bool, label: NewWidget<Label>) -> Self {
         Self {
             checked,
-            label: label.to_pod(),
+            label: label.into_pod(),
         }
     }
 }

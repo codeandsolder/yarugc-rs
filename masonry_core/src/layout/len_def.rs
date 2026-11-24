@@ -49,6 +49,7 @@ impl From<LenReq> for LenDef {
 
 impl LenDef {
     /// Returns the specific fixed border-box length if it is present.
+    #[must_use = "Use the fixed length if present."]
     pub const fn fixed(self) -> Option<Length> {
         match self {
             Self::Fixed(val) => Some(val),

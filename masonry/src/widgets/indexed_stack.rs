@@ -46,7 +46,7 @@ impl IndexedStack {
 
     /// Builder-style method to add a child widget.
     pub fn with(mut self, child: NewWidget<impl Widget + ?Sized>) -> Self {
-        self.children.push(child.erased().to_pod());
+        self.children.push(child.erased().into_pod());
         self
     }
 
@@ -133,7 +133,7 @@ impl CollectionWidget<()> for IndexedStack {
         child: NewWidget<impl Widget + ?Sized>,
         _params: impl Into<()>,
     ) {
-        this.widget.children.push(child.erased().to_pod());
+        this.widget.children.push(child.erased().into_pod());
         this.ctx.children_changed();
     }
 
@@ -148,7 +148,7 @@ impl CollectionWidget<()> for IndexedStack {
         child: NewWidget<impl Widget + ?Sized>,
         _params: impl Into<()>,
     ) {
-        this.widget.children.insert(idx, child.erased().to_pod());
+        this.widget.children.insert(idx, child.erased().into_pod());
         if this.widget.active_child >= idx {
             // adjust index to keep the same widget active
             this.widget.active_child += 1;
@@ -167,7 +167,8 @@ impl CollectionWidget<()> for IndexedStack {
         child: NewWidget<impl Widget + ?Sized>,
         _params: impl Into<()>,
     ) {
-        let old_child = std::mem::replace(&mut this.widget.children[idx], child.erased().to_pod());
+        let old_child =
+            std::mem::replace(&mut this.widget.children[idx], child.erased().into_pod());
         this.ctx.remove_child(old_child);
     }
 

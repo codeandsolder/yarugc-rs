@@ -51,7 +51,7 @@ impl ProgressBar {
         let label_props = PropertySet::one(LineBreaking::Overflow);
         let label = NewWidget::new(Label::new(Self::value(progress)))
             .with_props(label_props)
-            .to_pod();
+            .into_pod();
         Self { progress, label }
     }
 }

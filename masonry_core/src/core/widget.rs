@@ -660,7 +660,9 @@ pub fn find_widget_under_pointer<'c>(
         // Assumes `Self::children_ids` is in increasing "z-order", picking the last child in case
         // of overlapping children.
         for child_id in widget.children_ids().iter().rev() {
-            let child_ref = ctx.get(*child_id);
+            let Some(child_ref) = ctx.get(*child_id) else {
+                continue;
+            };
             if let Some(child) = child_ref
                 .widget
                 .find_widget_under_pointer(child_ref.ctx, pos)

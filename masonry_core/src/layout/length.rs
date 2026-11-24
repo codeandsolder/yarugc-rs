@@ -39,18 +39,16 @@ impl Length {
     /// If debug assertions are off, this will return zero instead of panicking.
     #[track_caller]
     pub fn px(value: f64) -> Self {
-        match Self::try_px(value) {
-            Some(length) => length,
-            None => {
-                debug_panic!("Invalid length value '{value}'");
-                Self::ZERO
-            }
-        }
+        Self::try_px(value).unwrap_or_else(|| {
+            debug_panic!("Invalid length value '{value}'");
+            Self::ZERO
+        })
     }
 
     /// Creates a length, in logical pixels.
     ///
     /// Returns `None` if the provided `value` is non-finite or negative.
+    #[must_use = "Handle invalid logical pixel values."]
     pub const fn try_px(value: f64) -> Option<Self> {
         if value < 0. || !value.is_finite() {
             return None;
@@ -92,6 +90,7 @@ impl Length {
 
     /// Clamps this length to the inclusive interval, returning None if the
     /// minimum is greater than the maximum.
+    #[must_use = "Handle invalid clamp bounds."]
     pub const fn try_clamp(self, min: Self, max: Self) -> Option<Self> {
         if min.value > max.value {
             return None;

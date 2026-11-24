@@ -249,7 +249,7 @@ impl Pagination {
             let text = format!("{}", page_idx + 1);
             let disabled = page_idx == self.active_page;
             let button = Button::with_text(text);
-            let button = NewWidget::new(button).disabled(disabled).to_pod();
+            let button = NewWidget::new(button).disabled(disabled).into_pod();
             self.buttons.push(PageButton {
                 widget: button,
                 disabled,

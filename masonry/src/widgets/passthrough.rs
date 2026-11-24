@@ -52,7 +52,7 @@ impl Passthrough {
     /// Creates a new `Passthrough` with the given initial child.
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
-            inner: child.erased().to_pod(),
+            inner: child.erased().into_pod(),
         }
     }
 }
@@ -69,7 +69,7 @@ impl Passthrough {
 impl Passthrough {
     /// Replaces the child widget with a new one.
     pub fn set_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<impl Widget + ?Sized>) {
-        let old = std::mem::replace(&mut this.widget.inner, child.erased().to_pod());
+        let old = std::mem::replace(&mut this.widget.inner, child.erased().into_pod());
         this.ctx.remove_child(old);
     }
 

@@ -70,8 +70,8 @@ impl Badged {
         badge: NewWidget<impl Widget + ?Sized>,
     ) -> Self {
         Self {
-            content: content.erased().to_pod(),
-            badge: Some(badge.erased().to_pod()),
+            content: content.erased().into_pod(),
+            badge: Some(badge.erased().into_pod()),
             placement: BadgePlacement::TopRight,
             offset: Vec2::ZERO,
         }
@@ -85,8 +85,8 @@ impl Badged {
         badge: Option<NewWidget<dyn Widget>>,
     ) -> Self {
         Self {
-            content: content.erased().to_pod(),
-            badge: badge.map(|b| b.to_pod()),
+            content: content.erased().into_pod(),
+            badge: badge.map(|b| b.into_pod()),
             placement: BadgePlacement::TopRight,
             offset: Vec2::ZERO,
         }
@@ -118,13 +118,13 @@ impl Badged {
     pub fn set_content(this: &mut WidgetMut<'_, Self>, content: NewWidget<impl Widget + ?Sized>) {
         this.ctx.remove_child(std::mem::replace(
             &mut this.widget.content,
-            content.erased().to_pod(),
+            content.erased().into_pod(),
         ));
     }
 
     /// Replaces the badge widget with a new one.
     pub fn set_badge(this: &mut WidgetMut<'_, Self>, badge: NewWidget<impl Widget + ?Sized>) {
-        if let Some(old) = this.widget.badge.replace(badge.erased().to_pod()) {
+        if let Some(old) = this.widget.badge.replace(badge.erased().into_pod()) {
             this.ctx.remove_child(old);
         } else {
             this.ctx.children_changed();

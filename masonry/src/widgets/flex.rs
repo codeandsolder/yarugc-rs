@@ -177,7 +177,7 @@ impl Flex {
     ///
     /// Convenient for assembling a group of widgets in a single expression.
     pub fn with_fixed(mut self, child: NewWidget<impl Widget + ?Sized>) -> Self {
-        let child = new_child(0., child.erased().to_pod());
+        let child = new_child(0., child.erased().into_pod());
         self.children.push(child);
         self
     }
@@ -188,7 +188,7 @@ impl Flex {
         child: NewWidget<impl Widget + ?Sized>,
         params: impl Into<FlexParams>,
     ) -> Self {
-        let child = new_child(params, child.erased().to_pod());
+        let child = new_child(params, child.erased().into_pod());
         self.children.push(child);
         self
     }
@@ -254,7 +254,7 @@ impl Flex {
     ///
     /// [`with_fixed`]: Flex::with_fixed
     pub fn add_fixed(this: &mut WidgetMut<'_, Self>, child: NewWidget<impl Widget + ?Sized>) {
-        let child = new_child(0., child.erased().to_pod());
+        let child = new_child(0., child.erased().into_pod());
         this.widget.children.push(child);
         this.ctx.children_changed();
     }
@@ -303,7 +303,7 @@ impl Flex {
         idx: usize,
         child: NewWidget<impl Widget + ?Sized>,
     ) {
-        let child = new_child(0., child.erased().to_pod());
+        let child = new_child(0., child.erased().into_pod());
         this.widget.children.insert(idx, child);
         this.ctx.children_changed();
     }
@@ -354,7 +354,7 @@ impl Flex {
         idx: usize,
         child: NewWidget<impl Widget + ?Sized>,
     ) {
-        let child = new_child(0., child.erased().to_pod());
+        let child = new_child(0., child.erased().into_pod());
         let old_child = std::mem::replace(&mut this.widget.children[idx], child);
         if let Child::Widget { widget, .. } = old_child {
             this.ctx.remove_child(widget);
@@ -443,7 +443,7 @@ impl CollectionWidget<FlexParams> for Flex {
         child: NewWidget<impl Widget + ?Sized>,
         params: impl Into<FlexParams>,
     ) {
-        let child = child.erased().to_pod();
+        let child = child.erased().into_pod();
         let child = new_child(params, child);
 
         this.widget.children.push(child);
@@ -461,7 +461,7 @@ impl CollectionWidget<FlexParams> for Flex {
         child: NewWidget<impl Widget + ?Sized>,
         params: impl Into<FlexParams>,
     ) {
-        let child = child.erased().to_pod();
+        let child = child.erased().into_pod();
         let child = new_child(params, child);
         this.widget.children.insert(idx, child);
         this.ctx.children_changed();
@@ -478,7 +478,7 @@ impl CollectionWidget<FlexParams> for Flex {
         child: NewWidget<impl Widget + ?Sized>,
         params: impl Into<FlexParams>,
     ) {
-        let child = child.erased().to_pod();
+        let child = child.erased().into_pod();
         let child = new_child(params, child);
         let old_child = std::mem::replace(&mut this.widget.children[idx], child);
         if let Child::Widget { widget, .. } = old_child {

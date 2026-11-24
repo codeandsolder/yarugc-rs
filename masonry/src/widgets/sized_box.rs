@@ -68,7 +68,7 @@ impl SizedBox {
     /// Creates container with child, and both width and height unset.
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
-            child: Some(child.erased().to_pod()),
+            child: Some(child.erased().into_pod()),
             width: None,
             height: None,
         }
@@ -140,7 +140,7 @@ impl SizedBox {
         if let Some(child) = this.widget.child.take() {
             this.ctx.remove_child(child);
         }
-        this.widget.child = Some(child.erased().to_pod());
+        this.widget.child = Some(child.erased().into_pod());
         this.ctx.children_changed();
     }
 
