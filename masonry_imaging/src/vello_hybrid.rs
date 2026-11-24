@@ -1,36 +1,7 @@
 // Copyright 2026 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use core::fmt;
-
 use crate::headless_wgpu;
-
-/// Errors that can occur while creating or using a Vello Hybrid renderer.
-#[derive(Debug)]
-pub enum Error {
-    /// Headless WGPU initialization failed.
-    Init(crate::HeadlessInitError),
-    /// The underlying `imaging_vello_hybrid` renderer failed.
-    Backend(imaging_vello_hybrid::Error),
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Init(err) => write!(f, "Headless renderer initialization failed: {err}"),
-            Self::Backend(err) => write!(f, "Vello Hybrid render failed: {err:?}"),
-        }
-    }
-}
-
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Init(err) => Some(err),
-            Self::Backend(err) => Some(err),
-        }
-    }
-}
 
 /// Stable backend name for diagnostics.
 pub const BACKEND_NAME: &str = "imaging_vello_hybrid";
@@ -49,8 +20,8 @@ pub type TextureTarget = imaging_wgpu::TextureViewTarget;
 /// # Errors
 ///
 /// Returns an error if the GPU or rendering backend cannot be initialized.
-pub fn new_headless_renderer() -> Result<Renderer, Error> {
-    let (device, queue) = headless_wgpu::try_init_device_and_queue().map_err(Error::Init)?;
+pub fn new_headless_renderer() -> Result<Renderer, crate::HeadlessInitError> {
+    let (device, queue) = headless_wgpu::try_init_device_and_queue()?;
     Ok(imaging_vello_hybrid::VelloHybridRenderer::new(
         device, queue,
     ))
