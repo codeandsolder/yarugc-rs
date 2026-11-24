@@ -350,27 +350,9 @@ where
     ChildA: Widget + FromDynWidget + ?Sized,
     ChildB: Widget + FromDynWidget + ?Sized,
 {
-    /// Replaces the first child widget with a new one.
-    pub fn set_child1(this: &mut WidgetMut<'_, Self>, child: NewWidget<ChildA>) {
-        this.ctx
-            .remove_child(std::mem::replace(&mut this.widget.child1, child.into_pod()));
-    }
+    child_accessors!(child1, set_child1, child1_mut, ChildA);
 
-    /// Replaces the second child widget with a new one.
-    pub fn set_child2(this: &mut WidgetMut<'_, Self>, child: NewWidget<ChildB>) {
-        this.ctx
-            .remove_child(std::mem::replace(&mut this.widget.child2, child.into_pod()));
-    }
-
-    /// Returns a mutable reference to the first child widget.
-    pub fn child1_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, ChildA>> {
-        this.ctx.get_mut(this.widget.child1.id())
-    }
-
-    /// Returns a mutable reference to the second child widget.
-    pub fn child2_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, ChildB>> {
-        this.ctx.get_mut(this.widget.child2.id())
-    }
+    child_accessors!(child2, set_child2, child2_mut, ChildB);
 
     /// Sets the split axis.
     pub fn set_split_axis(this: &mut WidgetMut<'_, Self>, split_axis: Axis) {

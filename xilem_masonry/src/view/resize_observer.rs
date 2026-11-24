@@ -131,20 +131,7 @@ where
         });
     }
 
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-    ) {
-        ctx.with_id(RESIZE_OBSERVER_CONTENT_VIEW_ID, |ctx| {
-            let Some(child_element) = widgets::ResizeObserver::child_mut(&mut element) else {
-                return;
-            };
-            View::<State, Action, _>::teardown(&self.inner, view_state, ctx, child_element);
-        });
-        ctx.teardown_action_source(element);
-    }
+    action_child_teardown!(ResizeObserver, inner, RESIZE_OBSERVER_CONTENT_VIEW_ID);
 
     fn message(
         &self,

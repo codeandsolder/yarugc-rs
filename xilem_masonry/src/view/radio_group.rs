@@ -71,44 +71,5 @@ where
         (ctx.create_pod(widget), child_state)
     }
 
-    fn rebuild(
-        &self,
-        prev: &Self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) {
-        let Some(typed_child) = widgets::RadioGroup::child_mut(&mut element) else {
-            return;
-        };
-        self.child
-            .rebuild(&prev.child, view_state, ctx, typed_child, app_state);
-    }
-
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-    ) {
-        let Some(typed_child) = widgets::RadioGroup::child_mut(&mut element) else {
-            return;
-        };
-        self.child.teardown(view_state, ctx, typed_child);
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        mut element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        let Some(typed_child) = widgets::RadioGroup::child_mut(&mut element) else {
-            return MessageResult::Stale;
-        };
-        self.child
-            .message(view_state, message, typed_child, app_state)
-    }
+    single_child_view_lifecycle!(RadioGroup, child, rebuild);
 }

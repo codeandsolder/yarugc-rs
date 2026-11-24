@@ -303,16 +303,7 @@ impl<W: Widget + ?Sized> Portal<W> {
 
 // --- MARK: WIDGETMUT
 impl<W: Widget + FromDynWidget + ?Sized> Portal<W> {
-    /// Replaces the child widget with a new one.
-    pub fn set_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<W>) {
-        this.ctx
-            .remove_child(std::mem::replace(&mut this.widget.child, child.into_pod()));
-    }
-
-    /// Returns mutable reference to the child widget.
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, W>> {
-        this.ctx.get_mut(this.widget.child.id())
-    }
+    child_accessors!(child, set_child, child_mut, W);
 
     /// Returns mutable reference to the horizontal scrollbar.
     pub fn horizontal_scrollbar_mut<'t>(

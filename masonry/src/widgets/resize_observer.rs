@@ -1,11 +1,9 @@
 // Copyright 2025 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use std::mem;
-
 use crate::core::{
-    AccessCtx, ChildrenIds, FromDynWidget, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
-    PropertiesRef, RegisterCtx, Widget, WidgetMut, WidgetPod,
+    AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, PaintCtx, PropertiesRef, RegisterCtx,
+    Widget, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Point, Size};
@@ -75,11 +73,7 @@ impl ResizeObserver {
 
 // --- MARK: WIDGETMUT
 impl ResizeObserver {
-    /// Replaces the child widget with a new one.
-    pub fn set_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<impl Widget + ?Sized>) {
-        let old_child = mem::replace(&mut this.widget.child, child.erased().into_pod());
-        this.ctx.remove_child(old_child);
-    }
+    child_accessors!(child, set_child, child_mut, erased);
 
     /// Forces this layout observer to send a new action.
     ///
@@ -87,13 +81,6 @@ impl ResizeObserver {
     pub fn force_resend(this: &mut WidgetMut<'_, Self>) {
         this.widget.last_size = None;
         this.ctx.request_layout();
-    }
-
-    /// Returns mutable reference to the child widget.
-    pub fn child_mut<'t, W: Widget + FromDynWidget + ?Sized>(
-        this: &'t mut WidgetMut<'_, Self>,
-    ) -> Option<WidgetMut<'t, W>> {
-        this.ctx.get_mut(this.widget.child.id())
     }
 }
 

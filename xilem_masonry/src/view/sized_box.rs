@@ -112,29 +112,5 @@ where
         }
     }
 
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-    ) {
-        let Some(typed_child) = widgets::SizedBox::child_mut(&mut element) else {
-            return;
-        };
-        self.inner.teardown(view_state, ctx, typed_child);
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        mut element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        let Some(typed_child) = widgets::SizedBox::child_mut(&mut element) else {
-            return MessageResult::Stale;
-        };
-        self.inner
-            .message(view_state, message, typed_child, app_state)
-    }
+    single_child_view_lifecycle!(SizedBox, inner);
 }

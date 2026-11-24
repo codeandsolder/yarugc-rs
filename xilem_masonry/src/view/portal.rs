@@ -119,29 +119,5 @@ where
             .rebuild(&prev.child, view_state, ctx, child_element, app_state);
     }
 
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-    ) {
-        let Some(child_element) = widgets::Portal::child_mut(&mut element) else {
-            return;
-        };
-        self.child.teardown(view_state, ctx, child_element);
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        mut element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        let Some(child_element) = widgets::Portal::child_mut(&mut element) else {
-            return MessageResult::Stale;
-        };
-        self.child
-            .message(view_state, message, child_element, app_state)
-    }
+    single_child_view_lifecycle!(Portal, child);
 }

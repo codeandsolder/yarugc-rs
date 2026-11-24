@@ -30,6 +30,116 @@ macro_rules! impl_indexed_element {
     };
 }
 
+// Indexed views use the same checked element lifecycle regardless of their layout.
+macro_rules! indexed_item_lifecycle {
+    ($widget:ident, $params:ident) => {
+        fn rebuild(
+            &self,
+            prev: &Self,
+            view_state: &mut Self::ViewState,
+            ctx: &mut ViewCtx,
+            mut element: Mut<'_, Self::Element>,
+            app_state: &mut State,
+        ) {
+            if self.$params != prev.$params {
+                widgets::$widget::set_params(&mut element.parent, element.idx, self.$params);
+            }
+            if let Some(child) = widgets::$widget::get_mut(&mut element.parent, element.idx) {
+                self.view
+                    .rebuild(&prev.view, view_state, ctx, child, app_state);
+            }
+        }
+
+        fn teardown(
+            &self,
+            view_state: &mut Self::ViewState,
+            ctx: &mut ViewCtx,
+            mut element: Mut<'_, Self::Element>,
+        ) {
+            if let Some(child) = widgets::$widget::get_mut(&mut element.parent, element.idx) {
+                self.view.teardown(view_state, ctx, child);
+            }
+        }
+
+        fn message(
+            &self,
+            view_state: &mut Self::ViewState,
+            message: &mut MessageCtx,
+            mut element: Mut<'_, Self::Element>,
+            app_state: &mut State,
+        ) -> MessageResult<Action> {
+            let Some(child) = widgets::$widget::get_mut(&mut element.parent, element.idx) else {
+                return MessageResult::Stale;
+            };
+            self.view.message(view_state, message, child, app_state)
+        }
+    };
+}
+
+// Views with a single child delegate the lifecycle through the same checked lookup.
+macro_rules! single_child_view_lifecycle {
+    ($widget:ident, $field:ident, rebuild) => {
+        fn rebuild(
+            &self,
+            prev: &Self,
+            view_state: &mut Self::ViewState,
+            ctx: &mut ViewCtx,
+            mut element: Mut<'_, Self::Element>,
+            app_state: &mut State,
+        ) {
+            if let Some(child) = widgets::$widget::child_mut(&mut element) {
+                self.$field
+                    .rebuild(&prev.$field, view_state, ctx, child, app_state);
+            }
+        }
+        single_child_view_lifecycle!($widget, $field);
+    };
+    ($widget:ident, $field:ident) => {
+        fn teardown(
+            &self,
+            view_state: &mut Self::ViewState,
+            ctx: &mut ViewCtx,
+            mut element: Mut<'_, Self::Element>,
+        ) {
+            if let Some(child) = widgets::$widget::child_mut(&mut element) {
+                self.$field.teardown(view_state, ctx, child);
+            }
+        }
+
+        fn message(
+            &self,
+            view_state: &mut Self::ViewState,
+            message: &mut MessageCtx,
+            mut element: Mut<'_, Self::Element>,
+            app_state: &mut State,
+        ) -> MessageResult<Action> {
+            let Some(child) = widgets::$widget::child_mut(&mut element) else {
+                return MessageResult::Stale;
+            };
+            self.$field.message(view_state, message, child, app_state)
+        }
+    };
+}
+
+// Action-producing wrappers must release their own action source even when the child is absent.
+macro_rules! action_child_teardown {
+    ($widget:ident, $field:ident, $id:ident) => {
+        fn teardown(
+            &self,
+            view_state: &mut Self::ViewState,
+            ctx: &mut ViewCtx,
+            mut element: Mut<'_, Self::Element>,
+        ) {
+            ctx.with_id($id, |ctx| {
+                if let Some(child) = widgets::$widget::child_mut(&mut element) {
+                    View::<State, Action, _>::teardown(&self.$field, view_state, ctx, child);
+                }
+            });
+            ctx.teardown_action_source(element);
+        }
+    };
+}
+
 mod badge;
 mod badged;
 mod button;

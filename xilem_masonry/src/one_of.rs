@@ -16,6 +16,22 @@ use crate::core::Mut;
 use crate::core::one_of::OneOf;
 use crate::{Pod, ViewCtx};
 
+macro_rules! one_of_downcasts {
+    ($(($method:ident, $variant:ident)),* $(,)?) => {
+        $(
+            fn $method<R>(
+                elem: &mut Mut<'_, Self::OneOfElement>,
+                f: impl FnOnce(Mut<'_, Pod<$variant>>) -> R,
+            ) -> Option<R> {
+                match elem.widget {
+                    OneOfWidget::$variant(child) => elem.ctx.get_mut(child.id()).map(f),
+                    _ => None,
+                }
+            }
+        )*
+    };
+}
+
 impl<
     A: Widget + FromDynWidget + ?Sized,
     B: Widget + FromDynWidget + ?Sized,
@@ -41,87 +57,17 @@ impl<
 {
     type OneOfElement = Pod<OneOfWidget<A, B, C, D, E, F, G, H, I>>;
 
-    fn with_downcast_a<R>(
-        elem: &mut Mut<'_, Self::OneOfElement>,
-        f: impl FnOnce(Mut<'_, Pod<A>>) -> R,
-    ) -> Option<R> {
-        match elem.widget {
-            OneOfWidget::A(a) => elem.ctx.get_mut(a.id()).map(f),
-            _ => None,
-        }
-    }
-    fn with_downcast_b<R>(
-        elem: &mut Mut<'_, Self::OneOfElement>,
-        f: impl FnOnce(Mut<'_, Pod<B>>) -> R,
-    ) -> Option<R> {
-        match elem.widget {
-            OneOfWidget::B(b) => elem.ctx.get_mut(b.id()).map(f),
-            _ => None,
-        }
-    }
-    fn with_downcast_c<R>(
-        elem: &mut Mut<'_, Self::OneOfElement>,
-        f: impl FnOnce(Mut<'_, Pod<C>>) -> R,
-    ) -> Option<R> {
-        match elem.widget {
-            OneOfWidget::C(c) => elem.ctx.get_mut(c.id()).map(f),
-            _ => None,
-        }
-    }
-    fn with_downcast_d<R>(
-        elem: &mut Mut<'_, Self::OneOfElement>,
-        f: impl FnOnce(Mut<'_, Pod<D>>) -> R,
-    ) -> Option<R> {
-        match elem.widget {
-            OneOfWidget::D(d) => elem.ctx.get_mut(d.id()).map(f),
-            _ => None,
-        }
-    }
-    fn with_downcast_e<R>(
-        elem: &mut Mut<'_, Self::OneOfElement>,
-        f: impl FnOnce(Mut<'_, Pod<E>>) -> R,
-    ) -> Option<R> {
-        match elem.widget {
-            OneOfWidget::E(e) => elem.ctx.get_mut(e.id()).map(f),
-            _ => None,
-        }
-    }
-    fn with_downcast_f<R>(
-        elem: &mut Mut<'_, Self::OneOfElement>,
-        f: impl FnOnce(Mut<'_, Pod<F>>) -> R,
-    ) -> Option<R> {
-        match elem.widget {
-            OneOfWidget::F(f_) => elem.ctx.get_mut(f_.id()).map(f),
-            _ => None,
-        }
-    }
-    fn with_downcast_g<R>(
-        elem: &mut Mut<'_, Self::OneOfElement>,
-        f: impl FnOnce(Mut<'_, Pod<G>>) -> R,
-    ) -> Option<R> {
-        match elem.widget {
-            OneOfWidget::G(g) => elem.ctx.get_mut(g.id()).map(f),
-            _ => None,
-        }
-    }
-    fn with_downcast_h<R>(
-        elem: &mut Mut<'_, Self::OneOfElement>,
-        f: impl FnOnce(Mut<'_, Pod<H>>) -> R,
-    ) -> Option<R> {
-        match elem.widget {
-            OneOfWidget::H(h) => elem.ctx.get_mut(h.id()).map(f),
-            _ => None,
-        }
-    }
-    fn with_downcast_i<R>(
-        elem: &mut Mut<'_, Self::OneOfElement>,
-        f: impl FnOnce(Mut<'_, Pod<I>>) -> R,
-    ) -> Option<R> {
-        match elem.widget {
-            OneOfWidget::I(i) => elem.ctx.get_mut(i.id()).map(f),
-            _ => None,
-        }
-    }
+    one_of_downcasts!(
+        (with_downcast_a, A),
+        (with_downcast_b, B),
+        (with_downcast_c, C),
+        (with_downcast_d, D),
+        (with_downcast_e, E),
+        (with_downcast_f, F),
+        (with_downcast_g, G),
+        (with_downcast_h, H),
+        (with_downcast_i, I),
+    );
     fn upcast_one_of_element(
         &mut self,
         elem: OneOf<Pod<A>, Pod<B>, Pod<C>, Pod<D>, Pod<E>, Pod<F>, Pod<G>, Pod<H>, Pod<I>>,

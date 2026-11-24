@@ -8,8 +8,8 @@ use include_doc_path::include_doc_path;
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, FromDynWidget, NewWidget, NoAction, PropertiesMut, PropertiesRef, StyleProperty,
-    Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, NewWidget, NoAction, PropertiesMut, PropertiesRef, StyleProperty, Update, UpdateCtx,
+    Widget, WidgetId, WidgetPod,
 };
 use crate::layout::UnitPoint;
 use crate::parley::style::FontWeight;
@@ -128,20 +128,7 @@ impl Badge {
 
 // --- MARK: WIDGETMUT
 impl Badge {
-    /// Replaces the child widget with a new one.
-    pub fn set_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<impl Widget + ?Sized>) {
-        this.ctx.remove_child(std::mem::replace(
-            &mut this.widget.child,
-            child.erased().into_pod(),
-        ));
-    }
-
-    /// Returns a mutable reference to the child.
-    pub fn child_mut<'t, W: Widget + FromDynWidget + ?Sized>(
-        this: &'t mut WidgetMut<'_, Self>,
-    ) -> Option<WidgetMut<'t, W>> {
-        this.ctx.get_mut(this.widget.child.id())
-    }
+    child_accessors!(child, set_child, child_mut, erased);
 }
 
 // --- MARK: IMPL WIDGET

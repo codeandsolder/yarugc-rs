@@ -5,8 +5,8 @@ use accesskit::{Node, Role};
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, ChildrenIds, FromDynWidget, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
-    PropertiesRef, RegisterCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesRef,
+    RegisterCtx, Widget, WidgetId, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Point, Size};
@@ -67,18 +67,7 @@ impl Passthrough {
 
 // --- MARK: WIDGETMUT
 impl Passthrough {
-    /// Replaces the child widget with a new one.
-    pub fn set_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<impl Widget + ?Sized>) {
-        let old = std::mem::replace(&mut this.widget.inner, child.erased().into_pod());
-        this.ctx.remove_child(old);
-    }
-
-    /// Returns a mutable reference to the hosted child.
-    pub fn child_mut<'t, W: Widget + FromDynWidget + ?Sized>(
-        this: &'t mut WidgetMut<'_, Self>,
-    ) -> Option<WidgetMut<'t, W>> {
-        this.ctx.get_mut(this.widget.inner.id())
-    }
+    child_accessors!(inner, set_child, child_mut, erased);
 }
 
 // --- MARK: IMPL WIDGET

@@ -72,19 +72,7 @@ impl Checkbox {
         this.ctx.request_render();
     }
 
-    /// Sets the text.
-    ///
-    /// We enforce this to be an `ArcStr` to make the allocation explicit.
-    pub fn set_text(this: &mut WidgetMut<'_, Self>, new_text: ArcStr) {
-        if let Some(mut child) = Self::label_mut(this) {
-            Label::set_text(&mut child, new_text);
-        }
-    }
-
-    /// Returns a mutable reference to the label.
-    pub fn label_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, Label>> {
-        this.ctx.get_mut(this.widget.label.id())
-    }
+    label_text_accessors!();
 }
 
 impl UsesProperty<CheckmarkStrokeWidth> for Checkbox {}

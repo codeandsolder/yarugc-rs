@@ -11,8 +11,8 @@ use crate::core::keyboard::{Key, KeyState, NamedKey};
 use crate::core::{
     AccessCtx, AccessEvent, ArcStr, BrushIndex, ChildrenIds, CursorIcon, EventCtx, Ime, LayoutCtx,
     MeasureCtx, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PointerUpdate,
-    PropertiesMut, PropertiesRef, QueryCtx, RegisterCtx, StyleProperty, TextEvent, Update,
-    UpdateCtx, Widget, WidgetId, WidgetMut, render_text, set_accesskit_brush_properties,
+    PropertiesMut, PropertiesRef, Property, QueryCtx, RegisterCtx, StyleProperty, TextEvent,
+    Update, UpdateCtx, Widget, WidgetId, WidgetMut, render_text, set_accesskit_brush_properties,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Affine, Axis, Point, Rect, Size};
@@ -24,6 +24,24 @@ use crate::theme::default_text_styles;
 use crate::util::bounding_box_to_rect;
 use crate::util::debug_panic;
 use crate::{TextAlign, theme};
+
+// Inherit the resolved parent property after registration and property updates.
+pub(crate) fn inherit_property<
+    P: Property,
+    Q: Property,
+    W: Widget + crate::core::FromDynWidget + ?Sized,
+>(
+    ctx: &mut UpdateCtx<'_>,
+    child: WidgetId,
+    map: impl FnOnce(P) -> Q + Send + 'static,
+) {
+    ctx.mutate_self_later(move |mut parent| {
+        let property = map(parent.get_prop::<P>().clone());
+        if let Some(mut child) = parent.ctx.get_mut::<W>(child) {
+            child.insert_prop(property);
+        }
+    });
+}
 
 /// `TextArea` implements the core of interactive text.
 ///

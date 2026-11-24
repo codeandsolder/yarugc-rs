@@ -5,10 +5,10 @@ use accesskit::{Node, Role};
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, AccessEvent, ChildrenIds, CollectionWidget, ComposeCtx, EventCtx, FromDynWidget,
-    Layer, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PointerButton, PointerButtonEvent,
-    PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx,
-    UsesProperty, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, AccessEvent, ChildrenIds, CollectionWidget, ComposeCtx, EventCtx, Layer, LayoutCtx,
+    MeasureCtx, NewWidget, NoAction, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent,
+    PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, UsesProperty, Widget,
+    WidgetId, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Point, Size};
@@ -42,24 +42,7 @@ impl SelectorMenu {
 
 // --- MARK: COLLECTIONWIDGET
 impl CollectionWidget<()> for SelectorMenu {
-    /// Returns the number of children.
-    fn len(&self) -> usize {
-        self.children.len()
-    }
-
-    /// Returns `true` if there are no children.
-    fn is_empty(&self) -> bool {
-        self.children.is_empty()
-    }
-
-    /// Returns a mutable handle if the index contains a registered child widget.
-    fn get_mut<'t, W: Widget + FromDynWidget + ?Sized>(
-        this: &'t mut WidgetMut<'_, Self>,
-        idx: usize,
-    ) -> Option<WidgetMut<'t, W>> {
-        let child = this.widget.children.get(idx)?;
-        this.ctx.get_mut(child.id())
-    }
+    collection_accessors!(child => child.id());
 
     /// Appends a child widget to the collection.
     fn add(

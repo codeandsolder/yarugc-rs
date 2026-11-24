@@ -8,9 +8,8 @@ use include_doc_path::include_doc_path;
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, ChildrenIds, CollectionWidget, FromDynWidget, LayoutCtx, MeasureCtx, NewWidget,
-    NoAction, PaintCtx, PropertiesRef, RegisterCtx, UpdateCtx, UsesProperty, Widget, WidgetId,
-    WidgetMut, WidgetPod,
+    AccessCtx, ChildrenIds, CollectionWidget, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
+    PropertiesRef, RegisterCtx, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Point, Size};
@@ -719,24 +718,7 @@ impl Grid {
 
 // --- MARK: COLLECTIONWIDGET
 impl CollectionWidget<GridParams> for Grid {
-    /// Returns the number of children.
-    fn len(&self) -> usize {
-        self.children.len()
-    }
-
-    /// Returns `true` if there are no children.
-    fn is_empty(&self) -> bool {
-        self.children.is_empty()
-    }
-
-    /// Returns a mutable handle if the index contains a registered child widget.
-    fn get_mut<'t, W: Widget + FromDynWidget + ?Sized>(
-        this: &'t mut WidgetMut<'_, Self>,
-        idx: usize,
-    ) -> Option<WidgetMut<'t, W>> {
-        let child = &this.widget.children.get(idx)?.widget;
-        this.ctx.get_mut(child.id())
-    }
+    collection_accessors!(child => child.widget.id());
 
     /// Appends a child widget to the collection.
     fn add(

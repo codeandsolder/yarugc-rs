@@ -4,8 +4,8 @@
 use std::any::TypeId;
 
 use crate::core::{
-    AccessCtx, ArcStr, ChildrenIds, FromDynWidget, LayoutCtx, MeasureCtx, NewWidget, NoAction,
-    PaintCtx, PropertiesRef, RegisterCtx, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    AccessCtx, ArcStr, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
+    PropertiesRef, RegisterCtx, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Line, Point, Size, Stroke};
@@ -77,13 +77,7 @@ impl CollapsePanel {
 
 // --- MARK: WIDGETMUT
 impl CollapsePanel {
-    /// Set the child widget.
-    pub fn set_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<impl Widget + ?Sized>) {
-        this.ctx.remove_child(std::mem::replace(
-            &mut this.widget.child,
-            child.erased().into_pod(),
-        ));
-    }
+    child_accessors!(child, set_child, child_mut, erased);
 
     /// Set whether or not the panel is collapsed.
     pub fn set_collapsed(this: &mut WidgetMut<'_, Self>, collapsed: bool) {
@@ -112,13 +106,6 @@ impl CollapsePanel {
     /// Get a mutable reference to the label.
     pub fn header_label_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, Label>> {
         this.ctx.get_mut(this.widget.header_label.id())
-    }
-
-    /// Get a mutable reference to the child.
-    pub fn child_mut<'t, W: Widget + FromDynWidget + ?Sized>(
-        this: &'t mut WidgetMut<'_, Self>,
-    ) -> Option<WidgetMut<'t, W>> {
-        this.ctx.get_mut(this.widget.child.id())
     }
 }
 

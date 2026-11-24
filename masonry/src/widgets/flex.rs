@@ -8,9 +8,8 @@ use include_doc_path::include_doc_path;
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, ChildrenIds, CollectionWidget, FromDynWidget, LayoutCtx, MeasureCtx, NewWidget,
-    NoAction, PaintCtx, PropertiesRef, RegisterCtx, UpdateCtx, UsesProperty, Widget, WidgetId,
-    WidgetMut, WidgetPod,
+    AccessCtx, ChildrenIds, CollectionWidget, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
+    PropertiesRef, RegisterCtx, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Size};
@@ -413,26 +412,7 @@ impl Flex {
 
 // --- MARK: COLLECTIONWIDGET
 impl CollectionWidget<FlexParams> for Flex {
-    /// Returns the number of children (widgets and spacers).
-    fn len(&self) -> usize {
-        self.children.len()
-    }
-
-    /// Returns `true` if there are no children (widgets or spacers).
-    fn is_empty(&self) -> bool {
-        self.children.is_empty()
-    }
-
-    /// Returns a mutable handle if the index contains a registered child widget.
-    fn get_mut<'t, W: Widget + FromDynWidget + ?Sized>(
-        this: &'t mut WidgetMut<'_, Self>,
-        idx: usize,
-    ) -> Option<WidgetMut<'t, W>> {
-        let Child::Widget { widget, .. } = this.widget.children.get(idx)? else {
-            return None;
-        };
-        this.ctx.get_mut(widget.id())
-    }
+    collection_accessors!(child => match child { Child::Widget { widget, .. } => widget.id(), _ => return None });
 
     /// Appends a child widget to the collection.
     fn add(

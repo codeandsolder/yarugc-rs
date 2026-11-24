@@ -154,65 +154,33 @@ impl Widget for Prose {
     }
 
     fn property_changed(&mut self, ctx: &mut UpdateCtx<'_>, property_type: TypeId) {
-        // FIXME - Find more elegant way to propagate property to child.
         if property_type == TypeId::of::<CaretColor>() {
-            ctx.mutate_self_later(|mut input| {
-                let mut input = input.downcast::<Self>();
-                let color = *input.get_prop::<CaretColor>();
-                let Some(mut text_area) = Self::text_mut(&mut input) else {
-                    return;
-                };
-                text_area.insert_prop(color);
-            });
+            super::text_area::inherit_property::<CaretColor, CaretColor, TextArea<false>>(
+                ctx,
+                self.text.id(),
+                std::convert::identity,
+            );
         } else if property_type == TypeId::of::<ContentColor>() {
-            ctx.mutate_self_later(|mut input| {
-                let mut input = input.downcast::<Self>();
-                let color = *input.get_prop::<ContentColor>();
-                let Some(mut text_area) = Self::text_mut(&mut input) else {
-                    return;
-                };
-                text_area.insert_prop(color);
-            });
+            super::text_area::inherit_property::<ContentColor, ContentColor, TextArea<false>>(
+                ctx,
+                self.text.id(),
+                std::convert::identity,
+            );
         } else if property_type == TypeId::of::<SelectionColor>() {
-            ctx.mutate_self_later(|mut input| {
-                let mut input = input.downcast::<Self>();
-                let color = *input.get_prop::<SelectionColor>();
-                let Some(mut text_area) = Self::text_mut(&mut input) else {
-                    return;
-                };
-                text_area.insert_prop(color);
-            });
+            super::text_area::inherit_property::<SelectionColor, SelectionColor, TextArea<false>>(
+                ctx,
+                self.text.id(),
+                std::convert::identity,
+            );
         }
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
             Update::WidgetAdded => {
-                // FIXME - Find more elegant way to propagate property to child.
-                ctx.mutate_self_later(|mut input| {
-                    let mut input = input.downcast::<Self>();
-                    let color = *input.get_prop::<CaretColor>();
-                    let Some(mut text_area) = Self::text_mut(&mut input) else {
-                        return;
-                    };
-                    text_area.insert_prop(color);
-                });
-                ctx.mutate_self_later(|mut input| {
-                    let mut input = input.downcast::<Self>();
-                    let color = *input.get_prop::<ContentColor>();
-                    let Some(mut text_area) = Self::text_mut(&mut input) else {
-                        return;
-                    };
-                    text_area.insert_prop(color);
-                });
-                ctx.mutate_self_later(|mut input| {
-                    let mut input = input.downcast::<Self>();
-                    let color = *input.get_prop::<SelectionColor>();
-                    let Some(mut text_area) = Self::text_mut(&mut input) else {
-                        return;
-                    };
-                    text_area.insert_prop(color);
-                });
+                self.property_changed(ctx, TypeId::of::<CaretColor>());
+                self.property_changed(ctx, TypeId::of::<ContentColor>());
+                self.property_changed(ctx, TypeId::of::<SelectionColor>());
             }
             _ => {}
         }

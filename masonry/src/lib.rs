@@ -212,6 +212,81 @@ pub mod doc;
 #[cfg(test)]
 mod tests;
 
+// Containers share the same registered child replacement and access contract.
+macro_rules! child_accessors {
+    ($field:ident, $setter:ident, $getter:ident, erased) => {
+        /// Replaces the child widget with a new one.
+        pub fn $setter(
+            this: &mut $crate::core::WidgetMut<'_, Self>,
+            child: $crate::core::NewWidget<impl $crate::core::Widget + ?Sized>,
+        ) {
+            let old = std::mem::replace(&mut this.widget.$field, child.erased().into_pod());
+            this.ctx.remove_child(old);
+        }
+
+        /// Returns a mutable handle to a registered child of the requested type.
+        pub fn $getter<'t, W: $crate::core::Widget + $crate::core::FromDynWidget + ?Sized>(
+            this: &'t mut $crate::core::WidgetMut<'_, Self>,
+        ) -> Option<$crate::core::WidgetMut<'t, W>> {
+            this.ctx.get_mut(this.widget.$field.id())
+        }
+    };
+    ($field:ident, $setter:ident, $getter:ident, $ty:ty) => {
+        /// Replaces the child widget with a new one.
+        pub fn $setter(
+            this: &mut $crate::core::WidgetMut<'_, Self>,
+            child: $crate::core::NewWidget<$ty>,
+        ) {
+            let old = std::mem::replace(&mut this.widget.$field, child.into_pod());
+            this.ctx.remove_child(old);
+        }
+
+        /// Returns a mutable handle to the child if registered.
+        pub fn $getter<'t>(
+            this: &'t mut $crate::core::WidgetMut<'_, Self>,
+        ) -> Option<$crate::core::WidgetMut<'t, $ty>> {
+            this.ctx.get_mut(this.widget.$field.id())
+        }
+    };
+}
+
+// A collection's slot projection determines which indices contain widgets.
+macro_rules! collection_accessors {
+    ($child:ident => $id:expr) => {
+        fn len(&self) -> usize {
+            self.children.len()
+        }
+
+        fn is_empty(&self) -> bool {
+            self.children.is_empty()
+        }
+
+        fn get_mut<'t, W: $crate::core::Widget + $crate::core::FromDynWidget + ?Sized>(
+            this: &'t mut $crate::core::WidgetMut<'_, Self>,
+            idx: usize,
+        ) -> Option<$crate::core::WidgetMut<'t, W>> {
+            let $child = this.widget.children.get(idx)?;
+            this.ctx.get_mut($id)
+        }
+    };
+}
+
+macro_rules! label_text_accessors {
+    () => {
+        /// Sets the text. The allocation is explicit in the ArcStr argument.
+        pub fn set_text(this: &mut WidgetMut<'_, Self>, new_text: ArcStr) {
+            if let Some(mut child) = Self::label_mut(this) {
+                Label::set_text(&mut child, new_text);
+            }
+        }
+
+        /// Returns a mutable handle to the registered label.
+        pub fn label_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, Label>> {
+            this.ctx.get_mut(this.widget.label.id())
+        }
+    };
+}
+
 pub mod layers;
 pub mod properties;
 pub mod theme;

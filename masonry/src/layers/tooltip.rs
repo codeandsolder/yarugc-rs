@@ -5,8 +5,8 @@ use accesskit::{Node, Role};
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, EventCtx, FromDynWidget, Layer, NewWidget, NoAction, PointerEvent, PropertiesMut,
-    PropertiesRef, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, EventCtx, Layer, NewWidget, NoAction, PointerEvent, PropertiesMut, PropertiesRef,
+    Widget, WidgetId, WidgetPod,
 };
 use crate::layout::UnitPoint;
 
@@ -27,20 +27,7 @@ impl Tooltip {
 
 // --- MARK: WIDGETMUT
 impl Tooltip {
-    /// Replace the child widget with a new one.
-    pub fn set_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<impl Widget + ?Sized>) {
-        this.ctx.remove_child(std::mem::replace(
-            &mut this.widget.child,
-            child.erased().into_pod(),
-        ));
-    }
-
-    /// Get a mutable reference to the child.
-    pub fn child_mut<'t, W: Widget + FromDynWidget + ?Sized>(
-        this: &'t mut WidgetMut<'_, Self>,
-    ) -> Option<WidgetMut<'t, W>> {
-        this.ctx.get_mut(this.widget.child.id())
-    }
+    child_accessors!(child, set_child, child_mut, erased);
 }
 
 // --- MARK: IMPL WIDGET

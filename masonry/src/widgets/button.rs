@@ -11,9 +11,8 @@ use tracing::{Span, trace, trace_span};
 use crate::core::keyboard::{Key, NamedKey};
 use crate::core::pointer::PointerButton;
 use crate::core::{
-    AccessCtx, AccessEvent, EventCtx, FromDynWidget, NewWidget, PointerButtonEvent, PointerEvent,
-    PropertiesMut, PropertiesRef, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
-    WidgetPod,
+    AccessCtx, AccessEvent, EventCtx, NewWidget, PointerButtonEvent, PointerEvent, PropertiesMut,
+    PropertiesRef, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetPod,
 };
 use crate::layout::{Length, UnitPoint};
 use crate::theme;
@@ -70,20 +69,7 @@ impl Button {
 
 // --- MARK: WIDGETMUT
 impl Button {
-    /// Replaces the child widget with a new one.
-    pub fn set_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<impl Widget + ?Sized>) {
-        this.ctx.remove_child(std::mem::replace(
-            &mut this.widget.child,
-            child.erased().into_pod(),
-        ));
-    }
-
-    /// Returns a mutable reference to the child.
-    pub fn child_mut<'t, W: Widget + FromDynWidget + ?Sized>(
-        this: &'t mut WidgetMut<'_, Self>,
-    ) -> Option<WidgetMut<'t, W>> {
-        this.ctx.get_mut(this.widget.child.id())
-    }
+    child_accessors!(child, set_child, child_mut, erased);
 }
 
 /// A button was pressed.

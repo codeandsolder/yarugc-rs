@@ -11,8 +11,8 @@ use include_doc_path::include_doc_path;
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, ChildrenIds, FromDynWidget, LayoutCtx, NewWidget, NoAction, PaintCtx, PropertiesRef,
-    RegisterCtx, Widget, WidgetId, WidgetPod,
+    AccessCtx, ChildrenIds, LayoutCtx, NewWidget, NoAction, PaintCtx, PropertiesRef, RegisterCtx,
+    Widget, WidgetId, WidgetPod,
 };
 use crate::core::{MeasureCtx, WidgetMut};
 use crate::imaging::Painter;
@@ -97,20 +97,7 @@ impl Align {
         }
     }
 
-    /// Replaces the child widget with a new one.
-    pub fn set_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<impl Widget + ?Sized>) {
-        this.ctx.remove_child(std::mem::replace(
-            &mut this.widget.child,
-            child.erased().into_pod(),
-        ));
-    }
-
-    /// Returns mutable reference to the child widget.
-    pub fn child_mut<'t, W: Widget + FromDynWidget + ?Sized>(
-        this: &'t mut WidgetMut<'_, Self>,
-    ) -> Option<WidgetMut<'t, W>> {
-        this.ctx.get_mut(this.widget.child.id())
-    }
+    child_accessors!(child, set_child, child_mut, erased);
 }
 
 // --- MARK: IMPL WIDGET

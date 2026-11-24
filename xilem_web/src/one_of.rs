@@ -7,6 +7,28 @@ use crate::core::Mut;
 use crate::core::one_of::{OneOf, OneOfCtx, PhantomElementCtx};
 use crate::{DomNode, Pod, PodFlags, PodMut, ViewCtx};
 
+macro_rules! one_of_downcasts {
+    ($(($method:ident, $variant:ident, $node:ident)),* $(,)?) => {
+        $(
+    fn $method<R>(
+        e: &mut Mut<'_, Self::OneOfElement>,
+        f: impl FnOnce(Mut<'_, Pod<$node>>) -> R,
+    ) -> Option<R> {
+        let (OneOf::$variant(node), OneOf::$variant(props)) = (&mut e.node, &mut e.props) else {
+            return None;
+        };
+        Some(f(PodMut::new(
+            node,
+            props,
+            e.flags,
+            e.parent,
+            e.was_removed,
+        )))
+    }
+        )*
+    };
+}
+
 impl<N1, N2, N3, N4, N5, N6, N7, N8, N9>
     OneOfCtx<Pod<N1>, Pod<N2>, Pod<N3>, Pod<N4>, Pod<N5>, Pod<N6>, Pod<N7>, Pod<N8>, Pod<N9>>
     for ViewCtx
@@ -84,149 +106,17 @@ where
         };
     }
 
-    fn with_downcast_a<R>(
-        e: &mut Mut<'_, Self::OneOfElement>,
-        f: impl FnOnce(Mut<'_, Pod<N1>>) -> R,
-    ) -> Option<R> {
-        let (OneOf::A(node), OneOf::A(props)) = (&mut e.node, &mut e.props) else {
-            return None;
-        };
-        Some(f(PodMut::new(
-            node,
-            props,
-            e.flags,
-            e.parent,
-            e.was_removed,
-        )))
-    }
-
-    fn with_downcast_b<R>(
-        e: &mut Mut<'_, Self::OneOfElement>,
-        f: impl FnOnce(Mut<'_, Pod<N2>>) -> R,
-    ) -> Option<R> {
-        let (OneOf::B(node), OneOf::B(props)) = (&mut e.node, &mut e.props) else {
-            return None;
-        };
-        Some(f(PodMut::new(
-            node,
-            props,
-            e.flags,
-            e.parent,
-            e.was_removed,
-        )))
-    }
-
-    fn with_downcast_c<R>(
-        e: &mut Mut<'_, Self::OneOfElement>,
-        f: impl FnOnce(Mut<'_, Pod<N3>>) -> R,
-    ) -> Option<R> {
-        let (OneOf::C(node), OneOf::C(props)) = (&mut e.node, &mut e.props) else {
-            return None;
-        };
-        Some(f(PodMut::new(
-            node,
-            props,
-            e.flags,
-            e.parent,
-            e.was_removed,
-        )))
-    }
-
-    fn with_downcast_d<R>(
-        e: &mut Mut<'_, Self::OneOfElement>,
-        f: impl FnOnce(Mut<'_, Pod<N4>>) -> R,
-    ) -> Option<R> {
-        let (OneOf::D(node), OneOf::D(props)) = (&mut e.node, &mut e.props) else {
-            return None;
-        };
-        Some(f(PodMut::new(
-            node,
-            props,
-            e.flags,
-            e.parent,
-            e.was_removed,
-        )))
-    }
-
-    fn with_downcast_e<R>(
-        e: &mut Mut<'_, Self::OneOfElement>,
-        f: impl FnOnce(Mut<'_, Pod<N5>>) -> R,
-    ) -> Option<R> {
-        let (OneOf::E(node), OneOf::E(props)) = (&mut e.node, &mut e.props) else {
-            return None;
-        };
-        Some(f(PodMut::new(
-            node,
-            props,
-            e.flags,
-            e.parent,
-            e.was_removed,
-        )))
-    }
-
-    fn with_downcast_f<R>(
-        e: &mut Mut<'_, Self::OneOfElement>,
-        f: impl FnOnce(Mut<'_, Pod<N6>>) -> R,
-    ) -> Option<R> {
-        let (OneOf::F(node), OneOf::F(props)) = (&mut e.node, &mut e.props) else {
-            return None;
-        };
-        Some(f(PodMut::new(
-            node,
-            props,
-            e.flags,
-            e.parent,
-            e.was_removed,
-        )))
-    }
-
-    fn with_downcast_g<R>(
-        e: &mut Mut<'_, Self::OneOfElement>,
-        f: impl FnOnce(Mut<'_, Pod<N7>>) -> R,
-    ) -> Option<R> {
-        let (OneOf::G(node), OneOf::G(props)) = (&mut e.node, &mut e.props) else {
-            return None;
-        };
-        Some(f(PodMut::new(
-            node,
-            props,
-            e.flags,
-            e.parent,
-            e.was_removed,
-        )))
-    }
-
-    fn with_downcast_h<R>(
-        e: &mut Mut<'_, Self::OneOfElement>,
-        f: impl FnOnce(Mut<'_, Pod<N8>>) -> R,
-    ) -> Option<R> {
-        let (OneOf::H(node), OneOf::H(props)) = (&mut e.node, &mut e.props) else {
-            return None;
-        };
-        Some(f(PodMut::new(
-            node,
-            props,
-            e.flags,
-            e.parent,
-            e.was_removed,
-        )))
-    }
-
-    fn with_downcast_i<R>(
-        e: &mut Mut<'_, Self::OneOfElement>,
-        f: impl FnOnce(Mut<'_, Pod<N9>>) -> R,
-    ) -> Option<R> {
-        let (OneOf::I(node), OneOf::I(props)) = (&mut e.node, &mut e.props) else {
-            return None;
-        };
-        Some(f(PodMut::new(
-            node,
-            props,
-            e.flags,
-            e.parent,
-            e.was_removed,
-        )))
-    }
+    one_of_downcasts!(
+        (with_downcast_a, A, N1),
+        (with_downcast_b, B, N2),
+        (with_downcast_c, C, N3),
+        (with_downcast_d, D, N4),
+        (with_downcast_e, E, N5),
+        (with_downcast_f, F, N6),
+        (with_downcast_g, G, N7),
+        (with_downcast_h, H, N8),
+        (with_downcast_i, I, N9),
+    );
 }
 
 impl<N1, N2, N3, N4, N5, N6, N7, N8, N9> DomNode for OneOf<N1, N2, N3, N4, N5, N6, N7, N8, N9>

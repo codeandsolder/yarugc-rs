@@ -546,51 +546,7 @@ where
         )
     }
 
-    fn rebuild(
-        &self,
-        prev: &Self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) {
-        {
-            if self.params != prev.params {
-                widgets::Flex::set_params(&mut element.parent, element.idx, self.params);
-            }
-            let Some(typed_child) = widgets::Flex::get_mut(&mut element.parent, element.idx) else {
-                return;
-            };
-            self.view
-                .rebuild(&prev.view, view_state, ctx, typed_child, app_state);
-        }
-    }
-
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-    ) {
-        let Some(typed_child) = widgets::Flex::get_mut(&mut element.parent, element.idx) else {
-            return;
-        };
-        self.view.teardown(view_state, ctx, typed_child);
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        mut element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        let Some(typed_child) = widgets::Flex::get_mut(&mut element.parent, element.idx) else {
-            return MessageResult::Stale;
-        };
-        self.view
-            .message(view_state, message, typed_child, app_state)
-    }
+    indexed_item_lifecycle!(Flex, params);
 }
 
 /// A spacer that can be used within a [`Flex`] [`View`]
