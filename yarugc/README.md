@@ -6,8 +6,40 @@ redraw. Native GPU producers can update other surfaces independently. A prepared
 composition reuses GPU placement buffers and texture bindings until geometry or
 ordering changes. The host draws it over its own scene and presents.
 
-This first slice deliberately does not perform general-purpose damage tracking.
-Window-local input routing, docking, numeric widgets, dynamic semantic layer
-extraction and batching beyond individual texture quads are subsequent work.
-The compositor accepts straight or premultiplied RGBA8 layers in painter order.
-Vello writes straight alpha; the compositor premultiplies before interpolation.
+## Fixed-layout telemetry
+
+- Resolve widget geometry with `CachedWindow::slot(widget_id)` after layout.
+  `SlotGeometry` retains the content box, physical transform and ancestor clips.
+  `Placement` supports arbitrary affine transforms and convex clipping.
+- Create a shared `ReadoutRenderer` with font bytes, a pixel size and the desired
+  alphabet. `prepare` creates a retained `ReadoutBatch` for a window's slots.
+- Use `ReadoutBatch::set_text` to update fixed-width, right-aligned glyph cells.
+  It validates characters and capacity before mutation. No layout, shaping,
+  allocation or geometry rebuilding is needed for a value update.
+- `ReadoutBatch::render` encodes a single draw into its persistent premultiplied
+  surface when any glyph IDs change. Submit the encoder before changing values
+  again. Ordinary complex/interactive text still uses Masonry/Parley.
+- Compose the cached window surface, dynamic readout surface and any native GPU
+  instrument surfaces in painter order. Reuse the prepared composition until
+  placement/order/texture allocation changes. Reprepare slots after layout
+  changes; regenerate the glyph atlas when the desired physical font size changes.
+
+This architecture deliberately does not perform general-purpose damage tracking.
+Window-local input routing, docking, and extraction of foreground/popup layers
+above dynamic content are subsequent work. The compositor accepts straight or
+premultiplied RGBA8 layers in painter order. Vello writes straight alpha; the
+compositor premultiplies before interpolation.
+
+## Validation
+
+On a machine with a working wgpu adapter:
+
+```sh
+cargo test -p yarugc --locked -- --include-ignored --nocapture
+```
+
+The GPU regression fixtures verify composition over a host scene, alpha,
+moving/clipping, resizing, and 256 visible Masonry grid readouts changing
+magnitude/units without modifying layout or repainting the static surface.
+The CPU timing printed by the readout test measures only value updates, not
+formatting or GPU frame time.

@@ -675,6 +675,17 @@ impl RenderRoot {
         Some(widget_ref)
     }
 
+    /// Returns the widget and its ancestors, starting at the widget and ending at the root.
+    /// An unknown widget has an empty path.
+    pub fn widget_path(&self, id: WidgetId) -> Vec<WidgetId> {
+        self.widget_arena
+            .nodes
+            .get_id_path(id)
+            .into_iter()
+            .map(|id| WidgetId(id.try_into().unwrap()))
+            .collect()
+    }
+
     /// Checks if a widget with the given id is in the tree.
     pub fn has_widget(&self, id: WidgetId) -> bool {
         self.widget_arena.has(id)

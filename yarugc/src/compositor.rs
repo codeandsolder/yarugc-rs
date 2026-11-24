@@ -1,6 +1,8 @@
 // Copyright 2026 the YARUGC Authors
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::Placement;
+use masonry_core::kurbo::Rect;
 use wgpu::util::DeviceExt;
 
 /// Alpha representation of a retained RGBA8 texture.
@@ -32,6 +34,11 @@ impl Surface {
         &self.view
     }
 
+    /// Alpha representation of the texture content.
+    pub fn alpha_mode(&self) -> AlphaMode {
+        self.alpha_mode
+    }
+
     /// Physical pixel extent.
     pub fn size(&self) -> [u32; 2] {
         [self.texture.width(), self.texture.height()]
@@ -39,12 +46,23 @@ impl Surface {
 }
 
 /// Placement of a retained surface, in target physical pixels.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Layer<'a> {
     /// Surface to composite.
     pub surface: &'a Surface,
-    /// Top-left position; may be negative or outside the viewport.
-    pub origin: [f32; 2],
+    /// Affine placement and clip in target coordinates.
+    pub placement: Placement,
+}
+
+impl<'a> Layer<'a> {
+    /// Place at the texture's native pixel size.
+    pub fn at(surface: &'a Surface, [x, y]: [f64; 2]) -> Self {
+        let [w, h] = surface.size().map(f64::from);
+        Self {
+            surface,
+            placement: Placement::rect(Rect::new(x, y, x + w, y + h)),
+        }
+    }
 }
 
 /// Prepared painter-order composition. Rebuild only when placement, target size,
@@ -52,7 +70,7 @@ pub struct Layer<'a> {
 #[derive(Debug)]
 pub struct Composition {
     vertices: Option<wgpu::Buffer>,
-    bindings: Vec<wgpu::BindGroup>,
+    bindings: Vec<(std::ops::Range<u32>, wgpu::BindGroup)>,
 }
 
 /// Composites retained surfaces into a render pass owned by the host.
@@ -140,6 +158,10 @@ impl Compositor {
         }
     }
 
+    pub(crate) fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
     /// Allocate a persistent texture compatible with Vello and native GPU producers.
     ///
     /// Returns `None` for empty or unsupported extents.
@@ -200,8 +222,12 @@ impl Compositor {
     pub fn prepare(&self, extent: [u32; 2], layers: &[Layer<'_>]) -> Composition {
         let mut bytes = Vec::new();
         let mut bindings = Vec::new();
+        let mut first = 0_u32;
         for layer in layers {
-            if let Some(vertices) = quad(extent, layer.origin, layer.surface.size()) {
+            let vertices = layer.placement.vertices(extent);
+            if !vertices.is_empty() {
+                let count = u32::try_from(vertices.len()).expect("vertex count fits u32");
+                let end = first.checked_add(count).expect("vertex index fits u32");
                 for vertex in vertices {
                     for value in vertex {
                         bytes.extend_from_slice(&value.to_ne_bytes());
@@ -213,7 +239,8 @@ impl Compositor {
                     };
                     bytes.extend_from_slice(&straight.to_ne_bytes());
                 }
-                bindings.push(layer.surface.binding.clone());
+                bindings.push((first..end, layer.surface.binding.clone()));
+                first = end;
             }
         }
         let vertices = (!bytes.is_empty()).then(|| {
@@ -236,62 +263,9 @@ impl Compositor {
         };
         pass.set_pipeline(&self.pipeline);
         pass.set_vertex_buffer(0, vertices.slice(..));
-        for (index, binding) in composition.bindings.iter().enumerate() {
-            let first = u32::try_from(index)
-                .expect("layer index fits u32")
-                .checked_mul(6)
-                .expect("layer vertex index fits u32");
+        for (range, binding) in &composition.bindings {
             pass.set_bind_group(0, binding, &[]);
-            pass.draw(first..first + 6, 0..1);
+            pass.draw(range.clone(), 0..1);
         }
-    }
-}
-
-fn quad(extent: [u32; 2], origin: [f32; 2], size: [u32; 2]) -> Option<[[f32; 4]; 6]> {
-    let [width, height] = extent.map(|v| v as f32);
-    let [x, y] = origin;
-    let [w, h] = size.map(|v| v as f32);
-    if width == 0.0
-        || height == 0.0
-        || !x.is_finite()
-        || !y.is_finite()
-        || w == 0.0
-        || h == 0.0
-        || x >= width
-        || y >= height
-        || x + w <= 0.0
-        || y + h <= 0.0
-    {
-        return None;
-    }
-    let left = x.max(0.0);
-    let top = y.max(0.0);
-    let right = (x + w).min(width);
-    let bottom = (y + h).min(height);
-    let vertex = |px: f32, py: f32| {
-        [
-            2.0 * px / width - 1.0,
-            1.0 - 2.0 * py / height,
-            (px - x) / w,
-            (py - y) / h,
-        ]
-    };
-    let a = vertex(left, top);
-    let b = vertex(right, top);
-    let c = vertex(left, bottom);
-    let d = vertex(right, bottom);
-    Some([a, c, b, b, c, d])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::quad;
-
-    #[test]
-    fn clipped_window_preserves_texture_coordinates() {
-        let q = quad([100, 100], [-25.0, 50.0], [50, 100]).unwrap();
-        assert_eq!(q[0], [-1.0, 0.0, 0.5, 0.0]);
-        assert_eq!(q[5], [-0.5, -1.0, 1.0, 0.5]);
-        assert!(quad([100, 100], [100.0, 0.0], [1, 1]).is_none());
     }
 }

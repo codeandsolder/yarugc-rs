@@ -103,6 +103,11 @@ impl CachedWindow {
         &mut self.root
     }
 
+    /// Resolve a GPU instrument slot after layout has been refreshed.
+    pub fn slot(&self, id: masonry_core::core::WidgetId) -> Option<crate::SlotGeometry> {
+        crate::SlotGeometry::resolve(&self.root, id)
+    }
+
     /// Most recent successfully rendered surface, if any.
     pub fn surface(&self) -> Option<&Surface> {
         self.surface.as_ref()
