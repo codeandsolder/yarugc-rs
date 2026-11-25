@@ -359,19 +359,21 @@ mod tests {
             CollapsePanel::from_label(true, header, child).prepare(),
             (160, 80),
         );
-        let children = harness.root_widget().unwrap().children();
-        let button_id = children[0].id();
-        let label_id = children[1].id();
-        let button_rect = children[0]
-            .ctx()
-            .window_transform()
-            .transform_rect_bbox(children[0].ctx().border_box());
-        let label_rect = children[1]
-            .ctx()
-            .window_transform()
-            .transform_rect_bbox(children[1].ctx().border_box());
-        assert!((button_rect.center().y - label_rect.center().y).abs() < 1e-8);
-        assert!(children[2].ctx().is_stashed());
+        let (button_id, label_id) = {
+            let children = harness.root_widget().unwrap().children();
+            let button_rect = children[0]
+                .ctx()
+                .window_transform()
+                .transform_rect_bbox(children[0].ctx().border_box());
+            let label_rect = children[1]
+                .ctx()
+                .window_transform()
+                .transform_rect_bbox(children[1].ctx().border_box());
+            assert!((button_rect.center().y - label_rect.center().y).abs() < 1e-8);
+            assert!(children[2].ctx().is_stashed());
+            (children[0].id(), children[1].id())
+        };
+        let _ = harness.redraw();
         let button = harness.access_node(button_id).unwrap();
         assert_eq!(
             button.data().labelled_by(),
