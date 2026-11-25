@@ -51,6 +51,7 @@ impl std::error::Error for InvalidSelection {}
 // --- MARK: BUILDERS
 impl Selector {
     /// Creates a selector. An empty list has no selected option and cannot open a menu.
+    #[must_use = "Use the configured selector."]
     pub fn new(options: Vec<String>) -> Self {
         let selected_option = (!options.is_empty()).then_some(0);
         let text = options.first().cloned().unwrap_or_default();
