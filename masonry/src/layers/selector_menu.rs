@@ -6,21 +6,22 @@ use tracing::{Span, trace_span};
 
 use crate::core::keyboard::NamedKey;
 use crate::core::{
-    AccessCtx, AccessEvent, ChildrenIds, ComposeCtx, EventCtx, Layer, LayoutCtx, MeasureCtx,
-    NoAction, PointerButton, PointerButtonEvent, PointerEvent, PointerScrollEvent, PropertiesMut,
-    PropertiesRef, RegisterCtx, Update, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut,
-    WidgetPod,
+    AccessCtx, AccessEvent, ActionCtx, ChildrenIds, ComposeCtx, ErasedAction, EventCtx, Layer,
+    LayoutCtx, MeasureCtx, NoAction, PointerButton, PointerButtonEvent, PointerEvent,
+    PointerScrollEvent, PropertiesMut, PropertiesRef, RegisterCtx, Update, UpdateCtx, UsesProperty,
+    Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::dpi::PhysicalPosition;
 use crate::kurbo::{Axis, Point, Rect, Size, Vec2};
 use crate::layout::{AsUnit, LayoutSize, LenDef, LenReq, Length, SizeDef};
 use crate::properties::Gap;
-use crate::widgets::{Selector, SelectorItem};
+use crate::widgets::{ScrollBar, ScrollBarMoved, Selector, SelectorItem};
 
 /// A [`Layer`] representing a list of options for a [`Selector`] widget.
 pub struct SelectorMenu {
     creator: WidgetId,
     children: Vec<WidgetPod<SelectorItem>>,
+    scrollbar: WidgetPod<ScrollBar>,
     pressed: Option<usize>,
     highlighted: usize,
     row_bounds: Vec<Rect>,
@@ -44,6 +45,10 @@ impl SelectorMenu {
                         .into_pod()
                 })
                 .collect(),
+            scrollbar: ScrollBar::new(Axis::Vertical, Length::ZERO, Length::ZERO)
+                .with_focus_owner(creator)
+                .prepare()
+                .into_pod(),
             pressed: None,
             highlighted: selected,
             row_bounds: Vec::new(),
@@ -162,6 +167,32 @@ impl SelectorMenu {
         });
     }
 
+    fn measure_rows(&mut self, ctx: &mut LayoutCtx<'_>, width: f64, height: f64, gap: f64) -> f64 {
+        let size = Size::new(width, height);
+        let auto_size = SizeDef::new(LenDef::Fixed(width.px()), LenDef::MaxContent);
+        self.row_bounds.clear();
+        self.row_bounds.reserve(self.children.len());
+        let mut y_offset = 0.0;
+        for child in &self.children {
+            let child_size = ctx.compute_size(child, auto_size, size.into());
+            self.row_bounds.push(Rect::from_origin_size(
+                Point::new(0.0, y_offset),
+                child_size,
+            ));
+            y_offset += child_size.height + gap;
+        }
+        (y_offset - gap).max(0.0)
+    }
+
+    fn scrollbar_progress(&self) -> f64 {
+        let maximum = self.max_scroll();
+        if maximum > 0.0 {
+            self.scroll / maximum
+        } else {
+            0.0
+        }
+    }
+
     fn target_index(&self, ctx: &EventCtx<'_>) -> Option<usize> {
         self.children
             .iter()
@@ -230,6 +261,24 @@ impl Widget for SelectorMenu {
                 ctx.set_handled();
             }
             _ => {}
+        }
+    }
+
+    fn on_action(
+        &mut self,
+        ctx: &mut ActionCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        action: &ErasedAction,
+        source: WidgetId,
+    ) {
+        if source == self.scrollbar.id()
+            && let Some(movement) = action.downcast_ref::<ScrollBarMoved>()
+        {
+            if self.scroll_to(movement.0 * self.max_scroll()) {
+                ctx.request_compose();
+                ctx.request_accessibility_update();
+            }
+            ctx.set_handled();
         }
     }
 
@@ -305,31 +354,29 @@ impl Widget for SelectorMenu {
         let cache = ctx.property_cache();
         let gap = props.get::<Gap>(cache);
 
-        if self.children.is_empty() {
-            ctx.clear_baselines();
-            return;
-        }
         let gap_length = gap.gap.get();
-        let auto_size = SizeDef::new(LenDef::Fixed(size.width.px()), LenDef::MaxContent);
-        let context_size = size.into();
-        self.row_bounds.clear();
-        self.row_bounds.reserve(self.children.len());
-        let mut y_offset = 0.0;
-        for child in &mut self.children {
-            let child_size = ctx.compute_size(child, auto_size, context_size);
-            ctx.run_layout(child, child_size);
-            ctx.place_child(child, Point::new(0.0, y_offset));
-            self.row_bounds.push(Rect::from_origin_size(
-                Point::new(0.0, y_offset),
-                child_size,
-            ));
-            y_offset += child_size.height + gap_length;
+        self.content_height = self.measure_rows(ctx, size.width, size.height, gap_length);
+        let show_bar = self.content_height > size.height && size.height > 0.0 && size.width > 0.0;
+        let scrollbar_width = if show_bar {
+            let preferred = ctx
+                .compute_size(&self.scrollbar, SizeDef::fit(size), size.into())
+                .width;
+            preferred.min(size.width / 2.0)
+        } else {
+            0.0
+        };
+        if show_bar {
+            self.content_height =
+                self.measure_rows(ctx, size.width - scrollbar_width, size.height, gap_length);
+        }
+        for (child, rect) in self.children.iter().zip(&self.row_bounds) {
+            ctx.run_layout(child, rect.size());
+            ctx.place_child(child, rect.origin());
         }
         if self.viewport_height.to_bits() != size.height.to_bits() {
             self.reveal_highlight = true;
         }
         self.viewport_height = size.height;
-        self.content_height = (y_offset - gap_length).max(0.0);
         ctx.set_clip_path(size.to_rect());
         self.scroll_to(self.scroll);
         if self.reveal_highlight {
@@ -338,6 +385,20 @@ impl Widget for SelectorMenu {
                 self.reveal(rect);
             }
         }
+        ctx.set_stashed(&self.scrollbar, !show_bar);
+        ScrollBar::synchronize_raw(
+            ctx.get_raw_mut(&self.scrollbar),
+            self.viewport_height,
+            self.content_height,
+            self.scrollbar_progress(),
+        );
+        if show_bar {
+            ctx.run_layout(&self.scrollbar, Size::new(scrollbar_width, size.height));
+            ctx.place_child(
+                &self.scrollbar,
+                Point::new(size.width - scrollbar_width, 0.0),
+            );
+        }
         ctx.clear_baselines();
     }
 
@@ -345,6 +406,12 @@ impl Widget for SelectorMenu {
         for child in &self.children {
             ctx.set_child_scroll_translation(child, Vec2::new(0.0, -self.scroll));
         }
+        ScrollBar::synchronize_raw(
+            ctx.get_raw_mut(&self.scrollbar),
+            self.viewport_height,
+            self.content_height,
+            self.scrollbar_progress(),
+        );
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
@@ -391,10 +458,15 @@ impl Widget for SelectorMenu {
         for child in &mut self.children {
             ctx.register_child(child);
         }
+        ctx.register_child(&mut self.scrollbar);
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        self.children.iter().map(WidgetPod::id).collect()
+        self.children
+            .iter()
+            .map(WidgetPod::id)
+            .chain(std::iter::once(self.scrollbar.id()))
+            .collect()
     }
 
     fn as_layer(&mut self) -> Option<&mut dyn Layer> {

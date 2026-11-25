@@ -263,13 +263,13 @@ There is always at least one layer, called the "base layer".
 It's the one in which almost all content (buttons, texts, images) will be drawn.
 
 Other layers can represent tooltips, menus, dialogs, etc.
-They are created with a pre-set position and are drawn on top of the base layer.
+They are drawn on top of the base layer. Absolute layers have a fixed origin, while popup layers are anchored to a rectangle and constrained to the available viewport.
 
 ### Adding a layer
 
 <!-- TODO - Flesh this out -->
 
-Most context methods have a `create_layer(layer_type, fallback_widget, pos)` method.
+Most context methods have a `create_layer(layer_type, fallback_widget, placement)` method.
 
 `layer_type` and `fallback_widget` are two redundant representations of the same layer:
 

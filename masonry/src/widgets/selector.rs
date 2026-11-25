@@ -647,9 +647,17 @@ mod tests {
             .transform_rect_bbox(popup.ctx().border_box());
         assert!(bounds.x0 >= 0.0 && bounds.y0 >= 0.0);
         assert!(bounds.x1 <= 200.0 && bounds.y1 <= 90.0);
+        let scrollbar = popup
+            .children()
+            .into_iter()
+            .find(|child| child.downcast::<crate::widgets::ScrollBar>().is_some())
+            .unwrap();
+        let scrollbar_id = scrollbar.id();
+        assert!(!scrollbar.ctx().is_stashed());
         let items = popup
             .children()
             .iter()
+            .filter(|item| item.downcast::<crate::widgets::SelectorItem>().is_some())
             .map(|item| item.id())
             .collect::<Vec<_>>();
         let _ = harness.redraw();
@@ -661,6 +669,20 @@ mod tests {
         assert!(harness.mouse_move_to(items[0]).is_err());
 
         harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::Home)));
+        harness.mouse_move_to(items[0]).unwrap();
+        let bar = harness.get_widget_with_id(scrollbar_id).unwrap();
+        let box_rect = bar.ctx().content_box();
+        let end = bar
+            .ctx()
+            .local_to_window(Point::new(box_rect.center().x, box_rect.y1 - 1.0));
+        harness.mouse_move(end);
+        harness.mouse_button_press(None);
+        harness.mouse_button_release(None);
+        assert_eq!(harness.focused_widget_id(), Some(id));
+        assert_eq!(attached(&harness, id), Some(menu));
+        assert!(harness.pop_action_erased().is_none());
+        harness.mouse_move_to(items[31]).unwrap();
+        harness.scroll_into_view(items[0]);
         harness.mouse_move_to(items[0]).unwrap();
         harness.mouse_wheel(crate::kurbo::Vec2::new(0.0, -10000.0));
         harness.mouse_move_to(items[31]).unwrap();
