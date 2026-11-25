@@ -138,6 +138,19 @@ impl Activation {
 // commit selection, whereas switches and checkboxes propose a new value.
 macro_rules! activation_methods {
     () => {
+        super::selection_control::activation_methods!(@pointer_and_keyboard super::selection_control::ActivationKeys::Space);
+        fn on_access_event(
+            &mut self,
+            ctx: &mut $crate::core::EventCtx<'_>,
+            _props: &mut $crate::core::PropertiesMut<'_>,
+            event: &$crate::core::AccessEvent,
+        ) {
+            if super::selection_control::Activation::access(ctx, event) {
+                self.activate(ctx);
+            }
+        }
+    };
+    (@pointer_and_keyboard $keys:expr) => {
         fn on_pointer_event(
             &mut self,
             ctx: &mut $crate::core::EventCtx<'_>,
@@ -155,21 +168,11 @@ macro_rules! activation_methods {
             _props: &mut $crate::core::PropertiesMut<'_>,
             event: &$crate::core::TextEvent,
         ) {
-            if self.activation.keyboard(ctx, event) {
+            if self.activation.keyboard_with_keys(ctx, event, $keys) {
                 self.activate(ctx);
             }
         }
 
-        fn on_access_event(
-            &mut self,
-            ctx: &mut $crate::core::EventCtx<'_>,
-            _props: &mut $crate::core::PropertiesMut<'_>,
-            event: &$crate::core::AccessEvent,
-        ) {
-            if super::selection_control::Activation::access(ctx, event) {
-                self.activate(ctx);
-            }
-        }
     };
 }
 pub(super) use activation_methods;

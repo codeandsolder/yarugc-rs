@@ -4,12 +4,11 @@
 use core::any::TypeId;
 use core::f64::consts::FRAC_PI_2;
 
+use super::selection_control::{Activation, ActivationKeys};
 use crate::accesskit;
-use crate::core::keyboard::{Key, NamedKey};
 use crate::core::{
     AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NoAction, PaintCtx,
-    PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, Widget,
-    WidgetMut,
+    PropertiesMut, PropertiesRef, RegisterCtx, Update, UpdateCtx, Widget, WidgetMut,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Affine, Axis, BezPath, Join, Size, Stroke};
@@ -23,9 +22,15 @@ const DEFAULT_LENGTH: Length = crate::layout::length!(8.);
 
 /// A triangle button that points towards the right when undisclosed
 /// and points towards the bottom when disclosed.
-#[derive(Default)]
 pub struct DisclosureButton {
     is_disclosed: bool,
+    activation: Activation,
+}
+
+impl Default for DisclosureButton {
+    fn default() -> Self {
+        Self::new(false)
+    }
 }
 
 // --- MARK: BUILDERS
@@ -34,7 +39,10 @@ impl DisclosureButton {
     /// an initial disclosed state.
     #[must_use = "Use the returned value."]
     pub const fn new(is_disclosed: bool) -> Self {
-        Self { is_disclosed }
+        Self {
+            is_disclosed,
+            activation: Activation::new(),
+        }
     }
 
     /// Get the disclosed state of the button.
@@ -49,16 +57,15 @@ impl DisclosureButton {
 impl DisclosureButton {
     /// Change the disclosed state of the button.
     pub fn set_disclosed(this: &mut WidgetMut<'_, Self>, is_disclosed: bool) {
-        this.widget.is_disclosed = is_disclosed;
-
-        this.ctx.request_layout();
+        if this.widget.is_disclosed != is_disclosed {
+            this.widget.is_disclosed = is_disclosed;
+            this.ctx.request_layout();
+        }
     }
 
-    #[inline]
-    /// Switch the disclosed state of the button.
-    /// True -> False | False -> True
-    const fn switch_disclosed_state(&mut self) {
+    fn activate(&mut self, ctx: &mut EventCtx<'_>) {
         self.is_disclosed = !self.is_disclosed;
+        ctx.request_layout();
     }
 }
 
@@ -66,50 +73,7 @@ impl DisclosureButton {
 impl Widget for DisclosureButton {
     type Action = NoAction;
 
-    fn on_pointer_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &PointerEvent,
-    ) {
-        match event {
-            PointerEvent::Down { .. } if !ctx.is_disabled() => {
-                ctx.capture_pointer();
-                // Checked state impacts appearance and accessibility node
-                ctx.request_render();
-            }
-            PointerEvent::Up { .. }
-                if ctx.is_pointer_capture_target() && ctx.is_hovered() && !ctx.is_disabled() =>
-            {
-                self.switch_disclosed_state();
-                ctx.request_layout();
-
-                // TODO: Submit actions?
-            }
-            _ => (),
-        }
-    }
-
-    fn on_text_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &TextEvent,
-    ) {
-        match event {
-            TextEvent::Keyboard(event)
-                if event.state.is_up()
-                    && (matches!(&event.key, Key::Character(c) if c == " ")
-                        || event.key == Key::Named(NamedKey::Enter)) =>
-            {
-                self.switch_disclosed_state();
-                ctx.request_layout();
-
-                // TODO: Submit actions?
-            }
-            _ => (),
-        }
-    }
+    super::selection_control::activation_methods!(@pointer_and_keyboard ActivationKeys::SpaceOrEnter);
 
     fn on_access_event(
         &mut self,
@@ -117,15 +81,16 @@ impl Widget for DisclosureButton {
         _props: &mut PropertiesMut<'_>,
         event: &AccessEvent,
     ) {
-        if ctx.target() != ctx.widget_id() {
+        if ctx.target() != ctx.widget_id() || ctx.is_disabled() || ctx.is_stashed() {
             return;
         }
-
-        if event.action == accesskit::Action::Click {
-            self.switch_disclosed_state();
-            ctx.request_layout();
-            // TODO: Submit actions?
+        match event.action {
+            accesskit::Action::Click => self.activate(ctx),
+            accesskit::Action::Expand if !self.is_disclosed => self.activate(ctx),
+            accesskit::Action::Collapse if self.is_disclosed => self.activate(ctx),
+            _ => return,
         }
+        ctx.set_handled();
     }
 
     fn register_children(&mut self, _ctx: &mut RegisterCtx<'_>) {}
@@ -135,8 +100,9 @@ impl Widget for DisclosureButton {
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        if matches!(event, Update::HoveredChanged(_) | Update::FocusChanged(_)) {
-            ctx.request_render();
+        self.activation.update(event);
+        if matches!(event, Update::FocusChanged(_)) {
+            ctx.request_paint_only();
         }
     }
 
@@ -209,15 +175,90 @@ impl Widget for DisclosureButton {
         &mut self,
         _ctx: &mut AccessCtx<'_>,
         _props: &PropertiesRef<'_>,
-        _node: &mut accesskit::Node,
+        node: &mut accesskit::Node,
     ) {
+        node.set_expanded(self.is_disclosed);
+        node.add_action(accesskit::Action::Click);
+        node.add_action(if self.is_disclosed {
+            accesskit::Action::Collapse
+        } else {
+            accesskit::Action::Expand
+        });
     }
 
     fn children_ids(&self) -> ChildrenIds {
         ChildrenIds::new()
     }
 
+    fn propagates_pointer_interaction(&self) -> bool {
+        false
+    }
+
     fn accepts_focus(&self) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::keyboard::{Key, NamedKey};
+    use crate::core::{PointerButton, TextEvent};
+    use crate::testing::TestHarness;
+    use crate::theme::test_property_set;
+
+    #[test]
+    fn activation_and_accessibility_follow_disclosure_state() {
+        use accesskit::{Action, ActionRequest, TreeId};
+        let mut harness =
+            TestHarness::create(test_property_set(), DisclosureButton::new(false).prepare());
+        let id = harness.root_id();
+        let check = |harness: &mut TestHarness<DisclosureButton>, expanded| {
+            assert_eq!(harness.root_widget().unwrap().is_disclosed(), expanded);
+            let _ = harness.redraw();
+            let node = harness.access_node(id).unwrap();
+            assert_eq!(node.data().is_expanded(), Some(expanded));
+            assert_eq!(node.data().supports_action(Action::Expand), !expanded);
+            assert_eq!(node.data().supports_action(Action::Collapse), expanded);
+        };
+        check(&mut harness, false);
+        harness
+            .mouse_click_on(id, Some(PointerButton::Secondary))
+            .unwrap();
+        check(&mut harness, false);
+        harness.focus_on(Some(id));
+        let enter = Key::Named(NamedKey::Enter);
+        harness.process_text_event(&TextEvent::key_up(enter.clone()));
+        check(&mut harness, false);
+        harness.process_text_event(&TextEvent::key_down(enter.clone()));
+        harness.process_text_event(&TextEvent::key_up(enter));
+        check(&mut harness, true);
+        let request = |action| ActionRequest {
+            action,
+            target_tree: TreeId::ROOT,
+            target_node: id.into(),
+            data: None,
+        };
+        harness.process_access_event(request(Action::Expand));
+        check(&mut harness, true);
+        harness.process_access_event(request(Action::Collapse));
+        check(&mut harness, false);
+        harness
+            .mouse_click_on(id, Some(PointerButton::Primary))
+            .unwrap();
+        check(&mut harness, true);
+        harness
+            .edit_root_widget(|mut button| {
+                button.ctx.set_disabled(true);
+            })
+            .unwrap();
+        harness.process_access_event(request(Action::Collapse));
+        check(&mut harness, true);
+        harness
+            .edit_root_widget(|mut button| {
+                DisclosureButton::set_disclosed(&mut button, false);
+            })
+            .unwrap();
+        check(&mut harness, false);
     }
 }
