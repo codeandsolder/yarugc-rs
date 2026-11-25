@@ -5,13 +5,12 @@ use std::any::TypeId;
 
 use accesskit::{Node, Role, Toggled};
 use include_doc_path::include_doc_path;
-use tracing::{Span, trace, trace_span};
+use tracing::{Span, trace_span};
 
-use crate::core::keyboard::Key;
 use crate::core::{
-    AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
-    PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, Property, RegisterCtx, TextEvent, Update,
-    UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
+    PropertiesMut, PropertiesRef, Property, RegisterCtx, Update, UpdateCtx, UsesProperty, Widget,
+    WidgetId, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, BezPath, Cap, Dashes, Join, Size, Stroke};
@@ -39,6 +38,7 @@ use crate::widgets::Label;
 /// and ensure that its value is based on their correct source of truth.
 pub struct Checkbox {
     checked: bool,
+    activation: super::selection_control::Activation,
     // FIXME - Remove label child, have this widget only be a box with a checkmark.
     label: WidgetPod<Label>,
 }
@@ -49,6 +49,7 @@ impl Checkbox {
     pub fn new(checked: bool, text: impl Into<ArcStr>) -> Self {
         Self {
             checked,
+            activation: super::selection_control::Activation::new(),
             label: WidgetPod::new(Label::new(text)),
         }
     }
@@ -58,6 +59,7 @@ impl Checkbox {
     pub fn from_label(checked: bool, label: NewWidget<Label>) -> Self {
         Self {
             checked,
+            activation: super::selection_control::Activation::new(),
             label: label.into_pod(),
         }
     }
@@ -67,9 +69,10 @@ impl Checkbox {
 impl Checkbox {
     /// Checks or unchecks the box.
     pub fn set_checked(this: &mut WidgetMut<'_, Self>, checked: bool) {
-        this.widget.checked = checked;
-        // Checked state impacts appearance and accessibility node
-        this.ctx.request_render();
+        if this.widget.checked != checked {
+            this.widget.checked = checked;
+            this.ctx.request_render();
+        }
     }
 
     label_text_accessors!();
@@ -84,70 +87,33 @@ impl UsesProperty<CheckmarkColor> for Checkbox {}
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct CheckboxToggled(pub bool);
 
+impl Checkbox {
+    fn activate(&self, ctx: &mut EventCtx<'_>) {
+        ctx.submit_action::<CheckboxToggled>(CheckboxToggled(!self.checked));
+    }
+}
+
 // --- MARK: IMPL WIDGET
 impl Widget for Checkbox {
     type Action = CheckboxToggled;
 
-    fn on_pointer_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &PointerEvent,
-    ) {
-        match event {
-            PointerEvent::Down { .. } => {
-                ctx.capture_pointer();
-                trace!("Checkbox {:?} pressed", ctx.widget_id());
-            }
-            PointerEvent::Up { .. } if ctx.is_active() && ctx.is_hovered() => {
-                ctx.submit_action::<Self::Action>(CheckboxToggled(!self.checked));
-                trace!("Checkbox {:?} released", ctx.widget_id());
-            }
-            _ => (),
-        }
-    }
+    super::selection_control::activation_methods!();
 
-    fn on_text_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &TextEvent,
-    ) {
-        match event {
-            TextEvent::Keyboard(event) if event.state.is_up() => {
-                if matches!(&event.key, Key::Character(c) if c == " ") {
-                    ctx.submit_action::<Self::Action>(CheckboxToggled(!self.checked));
-                }
-            }
-            _ => (),
-        }
+    fn accepts_focus(&self) -> bool {
+        true
     }
 
     fn propagates_pointer_interaction(&self) -> bool {
         false
     }
 
-    fn accepts_focus(&self) -> bool {
-        true
-    }
-
-    fn on_access_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &AccessEvent,
-    ) {
-        match event.action {
-            accesskit::Action::Click => {
-                ctx.submit_action::<Self::Action>(CheckboxToggled(!self.checked));
-            }
-            _ => {}
-        }
-    }
-
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        self.activation.update(event);
         match event {
-            Update::HoveredChanged(_) | Update::FocusChanged(_) | Update::DisabledChanged(_) => {
+            Update::HoveredChanged(_)
+            | Update::ActiveChanged(_)
+            | Update::FocusChanged(_)
+            | Update::DisabledChanged(_) => {
                 ctx.request_paint_only();
             }
             _ => {}
@@ -258,7 +224,7 @@ impl Widget for Checkbox {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{PropertySet, StyleProperty};
+    use crate::core::{PropertySet, StyleProperty, TextEvent, keyboard::Key};
     use crate::layout::AsUnit;
     use crate::properties::{ContentColor, Padding};
     use crate::testing::{TestHarness, TestHarnessParams, assert_render_snapshot};
@@ -282,6 +248,8 @@ mod tests {
             Some((CheckboxToggled(true), checkbox_id))
         );
 
+        assert_eq!(harness.focused_widget_id(), Some(checkbox_id));
+        harness.focus_on(None);
         assert_render_snapshot!(harness, "checkbox_hello_hovered");
 
         harness

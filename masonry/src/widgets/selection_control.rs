@@ -1,8 +1,10 @@
 // Copyright 2026 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::core::keyboard::Key;
 use crate::core::{
-    LayoutCtx, MeasureCtx, PaintCtx, PrePaintProps, PropertiesRef, WidgetPod, paint_background,
+    AccessEvent, EventCtx, LayoutCtx, MeasureCtx, PaintCtx, PointerButton, PointerButtonEvent,
+    PointerEvent, PrePaintProps, PropertiesRef, TextEvent, Update, WidgetPod, paint_background,
     paint_box_shadow,
 };
 use crate::imaging::Painter;
@@ -10,6 +12,125 @@ use crate::kurbo::{Axis, Cap, Dashes, Join, Point, Size, Stroke};
 use crate::layout::{LayoutSize, LenReq, Length, SizeDef};
 use crate::theme;
 use crate::widgets::Label;
+
+// Shared activation policy for selection controls. Keep the keyboard press
+// armed only while the control owns focus, rather than treating any Space
+// release as a click.
+#[derive(Debug)]
+pub(super) struct Activation {
+    space_pressed: bool,
+}
+
+impl Activation {
+    pub(super) const fn new() -> Self {
+        Self {
+            space_pressed: false,
+        }
+    }
+
+    pub(super) fn pointer(ctx: &mut EventCtx<'_>, event: &PointerEvent) -> bool {
+        match event {
+            PointerEvent::Down(PointerButtonEvent {
+                button: None | Some(PointerButton::Primary),
+                ..
+            }) => {
+                ctx.request_focus();
+                ctx.capture_pointer();
+                ctx.set_handled();
+                false
+            }
+            PointerEvent::Up(PointerButtonEvent {
+                button: None | Some(PointerButton::Primary),
+                ..
+            }) if ctx.is_pointer_capture_target() => {
+                ctx.set_handled();
+                ctx.is_hovered()
+            }
+            _ => false,
+        }
+    }
+
+    pub(super) fn keyboard(&mut self, ctx: &mut EventCtx<'_>, event: &TextEvent) -> bool {
+        if matches!(event, TextEvent::WindowFocusChange(false)) {
+            self.space_pressed = false;
+        }
+        let TextEvent::Keyboard(event) = event else {
+            return false;
+        };
+        if !ctx.is_focus_target() || !matches!(&event.key, Key::Character(c) if c == " ") {
+            return false;
+        }
+        ctx.set_handled();
+        if event.state.is_down() {
+            if !event.repeat {
+                self.space_pressed = true;
+            }
+            false
+        } else {
+            std::mem::take(&mut self.space_pressed)
+        }
+    }
+
+    pub(super) fn access(ctx: &mut EventCtx<'_>, event: &AccessEvent) -> bool {
+        if event.action == accesskit::Action::Click && !ctx.is_disabled() && !ctx.is_stashed() {
+            ctx.set_handled();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(super) const fn update(&mut self, event: &Update) {
+        if matches!(
+            event,
+            Update::FocusChanged(false)
+                | Update::DisabledChanged(true)
+                | Update::StashedChanged(true)
+        ) {
+            self.space_pressed = false;
+        }
+    }
+}
+
+// The action itself remains the widget's responsibility: radio buttons
+// commit selection, whereas switches and checkboxes propose a new value.
+macro_rules! activation_methods {
+    () => {
+        fn on_pointer_event(
+            &mut self,
+            ctx: &mut $crate::core::EventCtx<'_>,
+            _props: &mut $crate::core::PropertiesMut<'_>,
+            event: &$crate::core::PointerEvent,
+        ) {
+            if super::selection_control::Activation::pointer(ctx, event) {
+                self.activate(ctx);
+            }
+        }
+
+        fn on_text_event(
+            &mut self,
+            ctx: &mut $crate::core::EventCtx<'_>,
+            _props: &mut $crate::core::PropertiesMut<'_>,
+            event: &$crate::core::TextEvent,
+        ) {
+            if self.activation.keyboard(ctx, event) {
+                self.activate(ctx);
+            }
+        }
+
+        fn on_access_event(
+            &mut self,
+            ctx: &mut $crate::core::EventCtx<'_>,
+            _props: &mut $crate::core::PropertiesMut<'_>,
+            event: &$crate::core::AccessEvent,
+        ) {
+            if super::selection_control::Activation::access(ctx, event) {
+                self.activate(ctx);
+            }
+        }
+    };
+}
+pub(super) use activation_methods;
 
 pub(super) fn measure(
     label: &WidgetPod<Label>,
@@ -130,3 +251,71 @@ macro_rules! control_methods {
     };
 }
 pub(super) use control_methods;
+
+#[cfg(test)]
+mod tests {
+    use crate::core::{FromDynWidget, NewWidget, Widget};
+    use crate::testing::TestHarness;
+    use crate::theme::test_property_set;
+    use crate::widgets::{Checkbox, CheckboxToggled, Switch, SwitchToggled};
+
+    use super::*;
+
+    fn exercise_activation<W>(widget: NewWidget<W>, expected: W::Action)
+    where
+        W: Widget + FromDynWidget,
+        W::Action: PartialEq,
+    {
+        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (100, 40));
+        let id = harness.root_id();
+        let press = TextEvent::key_down(Key::Character(" ".into()));
+        let release = TextEvent::key_up(Key::Character(" ".into()));
+
+        harness
+            .mouse_click_on(id, Some(PointerButton::Secondary))
+            .unwrap();
+        assert!(harness.pop_action_erased().is_none());
+        harness
+            .mouse_click_on(id, Some(PointerButton::Primary))
+            .unwrap();
+        assert_eq!(
+            harness.pop_action::<W::Action>().unwrap(),
+            Some((expected, id))
+        );
+
+        // A key release on a newly focused widget must not activate it.
+        harness.process_text_event(&release);
+        assert!(harness.pop_action_erased().is_none());
+        harness.process_text_event(&press);
+        harness.focus_on(None);
+        harness.focus_on(Some(id));
+        harness.process_text_event(&release);
+        assert!(harness.pop_action_erased().is_none());
+
+        harness.process_text_event(&press);
+        harness
+            .edit_root_widget(|mut widget| widget.ctx.set_disabled(true))
+            .unwrap();
+        harness
+            .edit_root_widget(|mut widget| widget.ctx.set_disabled(false))
+            .unwrap();
+        harness.focus_on(Some(id));
+        harness.process_text_event(&release);
+        assert!(harness.pop_action_erased().is_none());
+
+        harness.process_text_event(&press);
+        harness.process_text_event(&release);
+        assert!(harness.pop_action::<W::Action>().unwrap().is_some());
+        harness.accessibility_click_on(id);
+        assert!(harness.pop_action::<W::Action>().unwrap().is_some());
+    }
+
+    #[test]
+    fn checkbox_and_switch_share_primary_and_keyboard_activation_rules() {
+        exercise_activation(
+            Checkbox::new(false, "Test").prepare(),
+            CheckboxToggled(true),
+        );
+        exercise_activation(Switch::new(false).prepare(), SwitchToggled(true));
+    }
+}

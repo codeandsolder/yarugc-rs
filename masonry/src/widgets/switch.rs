@@ -5,13 +5,11 @@ use std::any::TypeId;
 
 use accesskit::{Node, Role, Toggled};
 use include_doc_path::include_doc_path;
-use tracing::{Span, trace, trace_span};
+use tracing::{Span, trace_span};
 
-use crate::core::keyboard::Key;
 use crate::core::{
-    AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, PaintCtx, PointerEvent,
-    PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, UsesProperty, Widget,
-    WidgetId, WidgetMut,
+    AccessCtx, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, PaintCtx, PropertiesMut,
+    PropertiesRef, RegisterCtx, Update, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Circle, Join, Point, Rect, Size, Stroke};
@@ -47,6 +45,7 @@ use crate::properties::{
 /// [class]: masonry_core::doc::masonry_concepts#classes
 pub struct Switch {
     on: bool,
+    activation: super::selection_control::Activation,
 }
 
 // --- MARK: BUILDERS
@@ -54,7 +53,10 @@ impl Switch {
     /// Creates a new `Switch` with the given initial state.
     #[must_use = "Use the returned value."]
     pub const fn new(on: bool) -> Self {
-        Self { on }
+        Self {
+            on,
+            activation: super::selection_control::Activation::new(),
+        }
     }
 
     /// Returns whether the switch is currently on.
@@ -106,67 +108,24 @@ impl UsesProperty<TrackThickness> for Switch {}
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct SwitchToggled(pub bool);
 
+impl Switch {
+    fn activate(&self, ctx: &mut EventCtx<'_>) {
+        ctx.submit_action::<SwitchToggled>(SwitchToggled(!self.on));
+    }
+}
+
 // --- MARK: IMPL WIDGET
 impl Widget for Switch {
     type Action = SwitchToggled;
 
-    fn on_pointer_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &PointerEvent,
-    ) {
-        match event {
-            PointerEvent::Down { .. } => {
-                ctx.request_focus();
-                ctx.capture_pointer();
-                trace!("Switch {:?} pressed", ctx.widget_id());
-            }
-            PointerEvent::Up { .. } if ctx.is_active() && ctx.is_hovered() => {
-                ctx.submit_action::<Self::Action>(SwitchToggled(!self.on));
-                trace!("Switch {:?} released", ctx.widget_id());
-            }
-            _ => (),
-        }
-    }
-
-    fn on_text_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &TextEvent,
-    ) {
-        match event {
-            TextEvent::Keyboard(event) if event.state.is_up() => {
-                // Space toggles the switch (per ARIA guidelines, Enter should submit forms)
-                if matches!(&event.key, Key::Character(c) if c == " ") {
-                    ctx.submit_action::<Self::Action>(SwitchToggled(!self.on));
-                    ctx.set_handled();
-                }
-            }
-            _ => (),
-        }
-    }
+    super::selection_control::activation_methods!();
 
     fn accepts_focus(&self) -> bool {
         true
     }
 
-    fn on_access_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &AccessEvent,
-    ) {
-        match event.action {
-            accesskit::Action::Click => {
-                ctx.submit_action::<Self::Action>(SwitchToggled(!self.on));
-            }
-            _ => {}
-        }
-    }
-
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        self.activation.update(event);
         match event {
             Update::WidgetAdded if self.on => {
                 ctx.add_class("#toggled");
@@ -331,7 +290,7 @@ impl Widget for Switch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::TextEvent;
+    use crate::core::{TextEvent, keyboard::Key};
     use crate::properties::types::{CrossAxisAlignment, MainAxisAlignment};
     use crate::testing::{TestHarness, assert_render_snapshot};
     use crate::theme::test_property_set;

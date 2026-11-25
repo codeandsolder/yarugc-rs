@@ -5,13 +5,12 @@ use std::any::TypeId;
 
 use accesskit::{Node, Role, Toggled};
 use include_doc_path::include_doc_path;
-use tracing::{Span, trace, trace_span};
+use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
-    PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef,
-    RegisterCtx, TextEvent, Update, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut,
-    WidgetPod, keyboard::Key,
+    AccessCtx, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
+    PropertiesMut, PropertiesRef, RegisterCtx, Update, UpdateCtx, UsesProperty, Widget, WidgetId,
+    WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Circle, Size, Stroke};
@@ -32,6 +31,7 @@ use crate::widgets::{Label, RadioGroup};
 /// A button outside a group behaves as an independent selection control.
 pub struct RadioButton {
     selected: bool,
+    activation: super::selection_control::Activation,
     // FIXME - Remove label child, have this widget only be a box with a checkmark.
     label: WidgetPod<Label>,
     parent_group: Option<WidgetId>,
@@ -42,6 +42,7 @@ impl RadioButton {
     pub fn new(checked: bool, text: impl Into<ArcStr>) -> Self {
         Self {
             selected: checked,
+            activation: super::selection_control::Activation::new(),
             label: WidgetPod::new(Label::new(text)),
             parent_group: None,
         }
@@ -52,6 +53,7 @@ impl RadioButton {
     pub fn from_label(checked: bool, label: NewWidget<Label>) -> Self {
         Self {
             selected: checked,
+            activation: super::selection_control::Activation::new(),
             label: label.into_pod(),
             parent_group: None,
         }
@@ -106,8 +108,7 @@ pub struct RadioButtonSelected;
 
 // --- MARK: HELPERS
 impl RadioButton {
-    fn select(&mut self, ctx: &mut EventCtx<'_>) {
-        ctx.set_handled();
+    fn activate(&mut self, ctx: &mut EventCtx<'_>) {
         if self.selected {
             return;
         }
@@ -128,73 +129,18 @@ impl RadioButton {
 impl Widget for RadioButton {
     type Action = RadioButtonSelected;
 
-    fn on_pointer_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &PointerEvent,
-    ) {
-        match event {
-            PointerEvent::Down(PointerButtonEvent {
-                button: None | Some(PointerButton::Primary),
-                ..
-            }) => {
-                ctx.request_focus();
-                ctx.capture_pointer();
-                ctx.set_handled();
-                trace!("RadioButton {:?} pressed", ctx.widget_id());
-            }
-            PointerEvent::Up(PointerButtonEvent {
-                button: None | Some(PointerButton::Primary),
-                ..
-            }) if ctx.is_active() && ctx.is_hovered() => {
-                trace!("RadioButton {:?} released", ctx.widget_id());
-                self.select(ctx);
-            }
-            _ => (),
-        }
-    }
+    super::selection_control::activation_methods!();
 
-    fn on_text_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &TextEvent,
-    ) {
-        match event {
-            TextEvent::Keyboard(event) if event.state.is_up() => {
-                if matches!(&event.key, Key::Character(c) if c == " ") {
-                    self.select(ctx);
-                }
-            }
-            _ => (),
-        }
+    fn accepts_focus(&self) -> bool {
+        true
     }
 
     fn propagates_pointer_interaction(&self) -> bool {
         false
     }
 
-    fn accepts_focus(&self) -> bool {
-        // RadioButton can be tab-focused...
-        true
-    }
-
-    fn on_access_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &AccessEvent,
-    ) {
-        match event.action {
-            accesskit::Action::Click => {
-                self.select(ctx);
-            }
-            _ => {}
-        }
-    }
-
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        self.activation.update(event);
         match event {
             Update::WidgetAdded => {
                 self.parent_group = ctx.nearest_ancestor::<RadioGroup>().map(|(_, id)| id);
@@ -300,7 +246,7 @@ impl Widget for RadioButton {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{CollectionWidget, StyleProperty, WidgetTag};
+    use crate::core::{CollectionWidget, PointerButton, StyleProperty, WidgetTag};
     use crate::properties::ContentColor;
     use crate::testing::{TestHarness, assert_render_snapshot};
     use crate::theme::{ACCENT_COLOR, default_property_set};
@@ -407,6 +353,8 @@ mod tests {
             Some((RadioButtonSelected, radio_id))
         );
 
+        assert_eq!(harness.focused_widget_id(), Some(radio_id));
+        harness.focus_on(None);
         assert_render_snapshot!(harness, "radio_button_hello_checked");
 
         harness
