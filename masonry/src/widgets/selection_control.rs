@@ -8,8 +8,9 @@ use crate::core::{
     paint_box_shadow,
 };
 use crate::imaging::Painter;
-use crate::kurbo::{Axis, Cap, Dashes, Join, Point, Size, Stroke};
+use crate::kurbo::{Axis, Cap, Dashes, Insets, Join, Point, Size, Stroke};
 use crate::layout::{LayoutSize, LenReq, Length, SizeDef};
+use crate::properties::{BorderWidth, Padding};
 use crate::theme;
 use crate::widgets::Label;
 
@@ -173,6 +174,27 @@ macro_rules! activation_methods {
 }
 pub(super) use activation_methods;
 
+// Keep the indicator at its preferred size unless the actual available
+// content box is smaller. Reserve the same prefix in layout and painting.
+pub(super) fn indicator_side(size: Size) -> f64 {
+    theme::BASIC_WIDGET_HEIGHT
+        .get()
+        .min(size.width)
+        .min(size.height)
+        .max(0.0)
+}
+
+pub(super) fn indicator_border(side: f64, requested: BorderWidth) -> BorderWidth {
+    // Preserve a nonempty interior for the checkmark or radio dot even when
+    // a custom theme requests a border wider than the indicator.
+    BorderWidth::all(Length::px(requested.width.get().min(side / 3.0)))
+}
+
+fn indicator_prefix(side: Length, width: Option<Length>) -> Length {
+    let preferred = side.saturating_add(theme::WIDGET_CONTROL_COMPONENT_PADDING);
+    width.map_or(preferred, |width| preferred.min(width))
+}
+
 pub(super) fn measure(
     label: &WidgetPod<Label>,
     ctx: &mut MeasureCtx<'_>,
@@ -180,48 +202,66 @@ pub(super) fn measure(
     len_req: LenReq,
     cross_length: Option<Length>,
 ) -> Length {
-    let check_side = theme::BASIC_WIDGET_HEIGHT;
-    let check_padding = theme::WIDGET_CONTROL_COMPONENT_PADDING;
-
-    let calc_other_length = |axis| match axis {
-        Axis::Horizontal => check_side.saturating_add(check_padding),
-        Axis::Vertical => Length::ZERO,
-    };
-    let other_length = calc_other_length(axis);
-
-    let cross = axis.cross();
-    let cross_space = cross_length.map(|cross_length| {
-        let cross_other_length = calc_other_length(cross);
-        cross_length.saturating_sub(cross_other_length)
+    // The known cross-axis dimension limits the indicator. An unconstrained
+    // axis retains the preferred minimum, rather than shrinking on its own.
+    let side = cross_length.map_or(theme::BASIC_WIDGET_HEIGHT, |cross| {
+        theme::BASIC_WIDGET_HEIGHT.min(cross)
     });
+    let (other_length, cross_space) = match axis {
+        Axis::Horizontal => {
+            let width = match len_req {
+                LenReq::Fit(width) => Some(width),
+                _ => None,
+            };
+            (indicator_prefix(side, width), cross_length)
+        }
+        Axis::Vertical => (
+            Length::ZERO,
+            cross_length.map(|width| width.saturating_sub(indicator_prefix(side, Some(width)))),
+        ),
+    };
 
     let auto_length = len_req.reduce(other_length).into();
-    let context_size = LayoutSize::maybe(cross, cross_space);
-
+    let context_size = LayoutSize::maybe(axis.cross(), cross_space);
     let label_length = ctx.compute_length(label, auto_length, context_size, axis, cross_space);
 
     match axis {
         Axis::Horizontal => label_length.saturating_add(other_length),
-        Axis::Vertical => label_length.max(check_side).saturating_add(other_length),
+        Axis::Vertical => label_length.max(side),
     }
 }
 
-pub(super) fn layout(label: &WidgetPod<Label>, ctx: &mut LayoutCtx<'_>, size: Size) {
-    let check_side = theme::BASIC_WIDGET_HEIGHT.get();
-    let check_padding = theme::WIDGET_CONTROL_COMPONENT_PADDING.get();
+const FOCUS_RING_OFFSET: f64 = 2.0;
+const FOCUS_RING_WIDTH: f64 = 2.0;
 
-    let space = Size::new(
-        (size.width - (check_side + check_padding)).max(0.),
-        size.height,
-    );
+pub(super) fn layout(
+    label: &WidgetPod<Label>,
+    ctx: &mut LayoutCtx<'_>,
+    props: &PropertiesRef<'_>,
+    size: Size,
+) {
+    let side = Length::px(indicator_side(size));
+    let prefix = indicator_prefix(side, Some(Length::px(size.width))).get();
+    let space = Size::new((size.width - prefix).max(0.0), size.height);
 
     let label_size = ctx.compute_size(label, SizeDef::fit(space), space.into());
     ctx.run_layout(label, label_size);
-
-    let label_origin = Point::new(check_side + check_padding, 0.);
-    ctx.place_child(label, label_origin);
-
+    ctx.place_child(label, Point::new(prefix, 0.0));
     ctx.derive_baselines(label);
+
+    // The focus/hover ring is drawn outside the border box in pre_paint.
+    // Report it for every state, so showing it never requires relayout.
+    let cache = ctx.property_cache();
+    let insets = props.get::<Padding>(cache).insets() + props.get::<BorderWidth>(cache).insets();
+    ctx.set_paint_insets(insets + Insets::uniform(FOCUS_RING_OFFSET + FOCUS_RING_WIDTH / 2.0));
+
+    // An explicit child size or an indivisible glyph may exceed its allocation.
+    // Clip to the control border box, preserving pointer interaction in padding.
+    if label_size.width > space.width || label_size.height > space.height {
+        ctx.set_clip_path(size.to_rect() + insets);
+    } else {
+        ctx.clear_clip_path();
+    }
 }
 
 pub(super) fn pre_paint(
@@ -240,10 +280,10 @@ pub(super) fn pre_paint(
     if ctx.is_focus_target() || ctx.is_hovered() {
         // TODO: Replace this custom implementation with the general paint_border()
 
-        let focus_rect = bbox.inflate(2.0, 2.0);
+        let focus_rect = bbox.inflate(FOCUS_RING_OFFSET, FOCUS_RING_OFFSET);
 
         let focus_color = p.border_color.color;
-        let focus_width = 2.0;
+        let focus_width = FOCUS_RING_WIDTH;
         let focus_radius = 4.0;
 
         let focus_stroke = Stroke {
@@ -277,8 +317,8 @@ macro_rules! control_methods {
             super::selection_control::measure(&self.label, ctx, axis, len_req, cross_length)
         }
 
-        fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-            super::selection_control::layout(&self.label, ctx, size);
+        fn layout(&mut self, ctx: &mut LayoutCtx<'_>, props: &PropertiesRef<'_>, size: Size) {
+            super::selection_control::layout(&self.label, ctx, props, size);
         }
 
         fn pre_paint(
@@ -296,9 +336,10 @@ pub(super) use control_methods;
 #[cfg(test)]
 mod tests {
     use crate::core::{FromDynWidget, NewWidget, Widget};
+    use crate::properties::Dimensions;
     use crate::testing::TestHarness;
     use crate::theme::test_property_set;
-    use crate::widgets::{Checkbox, CheckboxToggled, Switch, SwitchToggled};
+    use crate::widgets::{Checkbox, CheckboxToggled, Flex, RadioButton, Switch, SwitchToggled};
 
     use super::*;
 
@@ -349,6 +390,68 @@ mod tests {
         assert!(harness.pop_action::<W::Action>().unwrap().is_some());
         harness.accessibility_click_on(id);
         assert!(harness.pop_action::<W::Action>().unwrap().is_some());
+    }
+
+    #[test]
+    fn indicator_geometry_stays_inside_available_content() {
+        for (size, expected) in [
+            (Size::new(100.0, 40.0), 18.0),
+            (Size::new(5.0, 40.0), 5.0),
+            (Size::new(40.0, 3.0), 3.0),
+            (Size::ZERO, 0.0),
+        ] {
+            let side = indicator_side(size);
+            assert!((side - expected).abs() < 1e-9);
+            let border = indicator_border(side, BorderWidth::all(Length::px(100.0)));
+            assert!(border.width.get() <= side / 3.0);
+            let prefix = indicator_prefix(Length::px(side), Some(Length::px(size.width)));
+            assert!(prefix.get() >= side && prefix.get() <= size.width);
+        }
+    }
+
+    fn exercise_constrained_geometry<W: Widget + FromDynWidget>(widget: NewWidget<W>) {
+        let id = widget.id();
+        let control = widget.with_props((
+            Dimensions::fixed(Length::px(31.0), Length::px(29.0)),
+            BorderWidth::all(Length::px(12.0)),
+        ));
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            Flex::row().with_fixed(control).prepare(),
+            (100, 100),
+        );
+        let control = harness.get_widget_with_id(id).unwrap();
+        let ctx = control.ctx();
+        let label = control.children()[0];
+        let position = ctx.window_to_local(
+            label
+                .ctx()
+                .local_to_window(label.ctx().border_box().origin()),
+        );
+        assert!(position.x >= 0.0 && position.x <= ctx.content_box().width());
+        let border = ctx.border_box();
+        let paint = ctx.paint_box();
+        let expected = border.inflate(3.0, 3.0);
+        assert!(
+            paint.x0 <= expected.x0
+                && paint.y0 <= expected.y0
+                && paint.x1 >= expected.x1
+                && paint.y1 >= expected.y1
+        );
+        assert!(ctx.clip_path().is_some());
+        harness.focus_on(Some(id));
+        assert!(harness.render().is_ok());
+    }
+
+    #[test]
+    fn constrained_checkbox_and_radio_keep_indicator_and_focus_bounds_valid() {
+        let label = || {
+            Label::new("Oversized")
+                .prepare()
+                .with_props(Dimensions::fixed(Length::px(50.0), Length::px(40.0)))
+        };
+        exercise_constrained_geometry(Checkbox::from_label(true, label()).prepare());
+        exercise_constrained_geometry(RadioButton::from_label(true, label()).prepare());
     }
 
     #[test]

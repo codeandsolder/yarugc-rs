@@ -7,6 +7,7 @@ use accesskit::{Node, Role, Toggled};
 use include_doc_path::include_doc_path;
 use tracing::{Span, trace_span};
 
+use super::selection_control::{indicator_border, indicator_side};
 use crate::core::{
     AccessCtx, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
     PropertiesMut, PropertiesRef, RegisterCtx, Update, UpdateCtx, UsesProperty, Widget, WidgetId,
@@ -16,7 +17,6 @@ use crate::imaging::Painter;
 use crate::kurbo::{Axis, Circle, Size, Stroke};
 use crate::layout::{LenReq, Length};
 use crate::properties::{BorderColor, BorderWidth, CheckmarkColor};
-use crate::theme;
 use crate::widgets::{Label, RadioGroup};
 
 /// A radio button that can be toggled.
@@ -180,12 +180,15 @@ impl Widget for RadioButton {
         props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
+        let side = indicator_side(ctx.content_box().size());
+        if side <= 0.0 {
+            return;
+        }
         let cache = ctx.property_cache();
         let border_color = *props.get::<BorderColor>(cache);
-        let border_width = *props.get::<BorderWidth>(cache);
+        let border_width = indicator_border(side, *props.get::<BorderWidth>(cache));
         let brush = *props.get::<CheckmarkColor>(cache);
 
-        let side = theme::BASIC_WIDGET_HEIGHT.get();
         let check_size = Size::new(side, side);
 
         let border_circle = Circle::new(
@@ -195,14 +198,17 @@ impl Widget for RadioButton {
 
         // Paint the radio button border
         let border_stroke = Stroke::new(border_width.width.get());
-        painter
-            .stroke(border_circle, &border_stroke, border_color.color)
-            .draw();
+        if border_width.width.get() > 0.0 {
+            painter
+                .stroke(border_circle, &border_stroke, border_color.color)
+                .draw();
+        }
 
         // Paint the checkmark if checked
         if self.selected {
             // TODO: Create a prop for ellipse size. Default: 50% of border size
-            let check_circle = Circle::new(check_size.to_rect().center(), side * 0.25);
+            let dot_radius = (side * 0.25).min(side / 2.0 - border_width.width.get());
+            let check_circle = Circle::new(check_size.to_rect().center(), dot_radius);
             painter.fill(check_circle, brush.color).draw();
         }
     }

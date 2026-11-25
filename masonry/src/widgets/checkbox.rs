@@ -7,6 +7,7 @@ use accesskit::{Node, Role, Toggled};
 use include_doc_path::include_doc_path;
 use tracing::{Span, trace_span};
 
+use super::selection_control::{indicator_border, indicator_side};
 use crate::core::{
     AccessCtx, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
     PropertiesMut, PropertiesRef, Property, RegisterCtx, Update, UpdateCtx, UsesProperty, Widget,
@@ -18,7 +19,6 @@ use crate::layout::{LenReq, Length};
 use crate::properties::{
     BorderColor, BorderWidth, CheckmarkColor, CheckmarkStrokeWidth, CornerRadius,
 };
-use crate::theme;
 use crate::widgets::Label;
 
 /// A checkbox that can be toggled.
@@ -145,12 +145,20 @@ impl Widget for Checkbox {
         props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
-        let side = theme::BASIC_WIDGET_HEIGHT.get();
+        let side = indicator_side(ctx.content_box().size());
+        if side <= 0.0 {
+            return;
+        }
         let check_size = Size::new(side, side);
 
         let cache = ctx.property_cache();
-        let border_width = *props.get::<BorderWidth>(cache);
-        let border_radius = *props.get::<CornerRadius>(cache);
+        let border_width = indicator_border(side, *props.get::<BorderWidth>(cache));
+        let border_radius = CornerRadius {
+            radius: props
+                .get::<CornerRadius>(cache)
+                .radius
+                .min(Length::px(side / 2.0)),
+        };
 
         let border_rect = border_width.border_rect(check_size.to_rect(), border_radius);
 
@@ -158,22 +166,33 @@ impl Widget for Checkbox {
 
         // Paint the checkbox box border
         let border_stroke = Stroke::new(border_width.width.get()).with_join(Join::Miter);
-        painter
-            .stroke(border_rect, &border_stroke, border_color.color)
-            .draw();
+        if border_width.width.get() > 0.0 {
+            painter
+                .stroke(border_rect, &border_stroke, border_color.color)
+                .draw();
+        }
 
         // Paint the checkmark if checked
         if self.checked {
             let checkmark_width = *props.get::<CheckmarkStrokeWidth>(cache);
             let brush = *props.get::<CheckmarkColor>(cache);
 
+            // The nominal checkmark is centered in an 18px square. Scale
+            // with constrained content and further fit it inside the border.
+            let interior = side - 2.0 * border_width.width.get();
+            let stroke_width = (checkmark_width.width * (side / 18.0)).min(interior / 3.0);
+            if !checkmark_width.width.is_finite() || stroke_width <= 0.0 {
+                return;
+            }
+            let scale = (side / 18.0).min((interior - stroke_width) / 10.0);
+            let center = side / 2.0;
             let mut path = BezPath::new();
-            path.move_to((4.0, 9.0));
-            path.line_to((8.0, 13.0));
-            path.line_to((14.0, 5.0));
+            path.move_to((center - 5.0 * scale, center));
+            path.line_to((center - scale, center + 4.0 * scale));
+            path.line_to((center + 5.0 * scale, center - 4.0 * scale));
 
             let style = Stroke {
-                width: checkmark_width.width,
+                width: stroke_width,
                 join: Join::Round,
                 miter_limit: 10.0,
                 start_cap: Cap::Round,
