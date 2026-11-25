@@ -157,23 +157,11 @@ mod tests {
     use masonry::kurbo::Axis;
     use masonry::widgets::{ButtonPress, Divider};
 
-    use crate::core::{DynMessage, Environment, ProxyError, RawProxy, SendMessage};
+    use crate::core::{DynMessage, Environment};
+    use crate::test_support::ClosedProxy;
     use crate::view::{button, spinner};
 
     use super::*;
-
-    #[derive(Debug)]
-    struct ClosedProxy;
-
-    impl RawProxy for ClosedProxy {
-        fn send_message(&self, _: Arc<[ViewId]>, message: SendMessage) -> Result<(), ProxyError> {
-            Err(ProxyError::DriverFinished(message))
-        }
-
-        fn dyn_debug(&self) -> &dyn std::fmt::Debug {
-            self
-        }
-    }
 
     #[test]
     fn replacing_optional_child_rejects_old_messages_and_cleans_routing() {

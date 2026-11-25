@@ -262,22 +262,9 @@ mod tests {
     use std::future::pending;
     use std::time::Duration;
 
-    use crate::core::{ProxyError, RawProxy, SendMessage};
+    use crate::test_support::ClosedProxy;
 
     use super::*;
-
-    #[derive(Debug)]
-    struct ClosedProxy;
-
-    impl RawProxy for ClosedProxy {
-        fn send_message(&self, _: Arc<[ViewId]>, message: SendMessage) -> Result<(), ProxyError> {
-            Err(ProxyError::DriverFinished(message))
-        }
-
-        fn dyn_debug(&self) -> &dyn std::fmt::Debug {
-            self
-        }
-    }
 
     struct RequestGuard(Sender<usize>, usize);
 

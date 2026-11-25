@@ -348,7 +348,7 @@ where
                     with_child_path(ctx, idx, generation, |ctx| view.build(ctx, app_state));
                 if !fetch.add_child(idx, child.new_widget.erased()) {
                     with_child_path(ctx, idx, generation, |ctx| {
-                        ctx.remove_action_sources_under_current_path()
+                        ctx.remove_action_sources_under_current_path();
                     });
                     continue;
                 }
@@ -436,5 +436,129 @@ where
             tracing::error!(?message, "Wrong message type in VirtualScroll::message");
             MessageResult::Stale
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, mpsc};
+
+    use masonry::app::{RenderRoot, RenderRootOptions, RenderRootSignal, WindowSizePolicy};
+    use masonry::dpi::PhysicalSize;
+
+    use crate::core::{DynMessage, Environment};
+    use crate::test_support::ClosedProxy;
+    use crate::view::spinner;
+
+    use super::*;
+
+    fn next_fetch(signals: &mpsc::Receiver<RenderRootSignal>) -> widgets::VirtualScrollFetchAction {
+        signals
+            .try_iter()
+            .find_map(|signal| {
+                let RenderRootSignal::Action(action, _) = signal else {
+                    return None;
+                };
+                match *action.downcast::<widgets::VirtualScrollAction>().ok()? {
+                    widgets::VirtualScrollAction::Fetch(action) => Some(action),
+                    widgets::VirtualScrollAction::Scroll(_) => None,
+                }
+            })
+            .unwrap()
+    }
+
+    fn message(action: widgets::VirtualScrollFetchAction) -> MessageCtx {
+        MessageCtx::new(
+            Environment::default(),
+            Vec::new(),
+            DynMessage::new(widgets::VirtualScrollAction::Fetch(action)),
+        )
+    }
+
+    #[test]
+    fn shrinking_between_message_and_rebuild_never_calls_out_of_range_component() {
+        let runtime = Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap(),
+        );
+        let mut ctx = ViewCtx::new(Arc::new(ClosedProxy), runtime);
+        let mut calls = Vec::new();
+        let component = |calls: &mut Vec<usize>, idx| {
+            calls.push(idx);
+            spinner()
+        };
+        let original = virtual_scroll::<_, (), _, _>(100, component);
+        let smaller = virtual_scroll::<_, (), _, _>(1, component);
+        let (pod, mut state) = original.build(&mut ctx, &mut calls);
+        let (send, receive) = mpsc::channel();
+        let mut root = RenderRoot::new(
+            pod.new_widget,
+            move |signal| {
+                let _ = send.send(signal);
+            },
+            RenderRootOptions {
+                default_properties: Arc::new(masonry::theme::default_property_set()),
+                use_system_fonts: false,
+                size_policy: WindowSizePolicy::User,
+                size: PhysicalSize::new(100, 200),
+                scale_factor: 1.0,
+                test_font: None,
+            },
+        );
+        let old = next_fetch(&receive);
+        assert!(old.target().end > 1);
+
+        root.edit_base_layer(|element| {
+            assert!(matches!(
+                original.message(&mut state, &mut message(old.clone()), element, &mut calls),
+                MessageResult::RequestRebuild,
+            ));
+        })
+        .unwrap();
+
+        root.edit_base_layer(|element| {
+            smaller.rebuild(&original, &mut state, &mut ctx, element, &mut calls);
+        })
+        .unwrap();
+        assert!(calls.is_empty());
+        assert!(state.children.is_empty());
+        let current = next_fetch(&receive);
+        assert_eq!(current.target(), &(0..1));
+
+        root.edit_base_layer(
+            |mut element: masonry::core::WidgetMut<'_, widgets::VirtualScroll>| {
+                assert!(matches!(
+                    smaller.message(
+                        &mut state,
+                        &mut message(current.clone()),
+                        element.reborrow_mut(),
+                        &mut calls
+                    ),
+                    MessageResult::RequestRebuild,
+                ));
+                assert!(matches!(
+                    smaller.message(
+                        &mut state,
+                        &mut message(old),
+                        element.reborrow_mut(),
+                        &mut calls
+                    ),
+                    MessageResult::Stale,
+                ));
+                smaller.rebuild(&smaller, &mut state, &mut ctx, element, &mut calls);
+            },
+        )
+        .unwrap();
+        assert_eq!(calls, [0]);
+        assert_eq!(state.children.len(), 1);
+
+        root.edit_base_layer(|element| {
+            assert!(matches!(
+                smaller.message(&mut state, &mut message(current), element, &mut calls),
+                MessageResult::Stale,
+            ));
+        })
+        .unwrap();
     }
 }
