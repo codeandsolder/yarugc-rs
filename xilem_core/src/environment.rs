@@ -65,9 +65,21 @@ impl Environment {
 /// Marker trait for values which can be provided to descendant views.
 pub trait Resource: AnyDebug {}
 
-// All four lifecycle methods use the same scoped ownership transfer. The driver
-// is borrowed independently from the stored resource so descendants can provide
-// additional resources and access the rest of the driver during traversal.
+// Restore the previously active resource even if a descendant unwinds.
+// The guard borrows the driver, so callbacks can use a shorter reborrow safely.
+struct ResourceScope<'a, Driver, Env: Fn(&mut Driver) -> &mut Environment> {
+    driver: &'a mut Driver,
+    environment: Env,
+    resource_type: TypeId,
+    resource: &'a mut Option<Box<dyn AnyDebug>>,
+}
+
+impl<Driver, Env: Fn(&mut Driver) -> &mut Environment> Drop for ResourceScope<'_, Driver, Env> {
+    fn drop(&mut self) {
+        (self.environment)(self.driver).swap(self.resource_type, self.resource);
+    }
+}
+
 fn with_resource_scope<Res: Resource, Driver, R>(
     driver: &mut Driver,
     environment: impl Fn(&mut Driver) -> &mut Environment,
@@ -76,9 +88,13 @@ fn with_resource_scope<Res: Resource, Driver, R>(
 ) -> R {
     let resource_type = TypeId::of::<Res>();
     environment(driver).swap(resource_type, resource);
-    let result = f(driver);
-    environment(driver).swap(resource_type, resource);
-    result
+    let scope = ResourceScope {
+        driver,
+        environment,
+        resource_type,
+        resource,
+    };
+    f(scope.driver)
 }
 
 /// Makes a resource available to all descendants of a view.
@@ -525,6 +541,40 @@ mod tests {
         );
         assert!(ctx.environment().get::<Counter>().is_none());
         assert!(ctx.view_path().is_empty());
+    }
+
+    #[test]
+    fn unwinding_restores_outer_resource_and_view_path() {
+        extern crate std;
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+
+        let mut ctx = Fake::default();
+        let mut outer: Option<Box<dyn AnyDebug>> = Some(Box::new(Counter(3)));
+        let mut inner: Option<Box<dyn AnyDebug>> = Some(Box::new(Counter(7)));
+        with_resource_scope::<Counter, _, _>(&mut ctx, Fake::environment, &mut outer, |ctx| {
+            ctx.with_id(ViewId::new(1), |ctx| {
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    ctx.with_id(ViewId::new(2), |ctx| {
+                        with_resource_scope::<Counter, _, _>(
+                            ctx,
+                            Fake::environment,
+                            &mut inner,
+                            |ctx| {
+                                ctx.environment().get_mut::<Counter>().unwrap().0 = 9;
+                                panic!("injected descendant failure");
+                            },
+                        );
+                    });
+                }));
+                assert!(result.is_err());
+                assert_eq!(ctx.view_path(), &[ViewId::new(1)]);
+                assert_eq!(ctx.environment().get::<Counter>().unwrap().0, 3);
+            });
+        });
+        assert!(ctx.view_path().is_empty());
+        assert!(ctx.environment().get::<Counter>().is_none());
+        assert_eq!(outer.unwrap().downcast::<Counter>().unwrap().0, 3);
+        assert_eq!(inner.unwrap().downcast::<Counter>().unwrap().0, 9);
     }
 
     #[test]
