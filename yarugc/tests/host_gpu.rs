@@ -218,7 +218,10 @@ fn fixed_readouts_share_one_dynamic_layer() {
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
     let timestamp_features =
         wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
-    let timestamps_available = adapter.features().contains(timestamp_features);
+    // Software adapters exercise the same rendering assertions, but their
+    // timestamp measurements are not representative GPU performance data.
+    let timestamps_available = adapter.get_info().device_type != wgpu::DeviceType::Cpu
+        && adapter.features().contains(timestamp_features);
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_features: if timestamps_available {
             timestamp_features

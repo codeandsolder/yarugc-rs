@@ -321,6 +321,10 @@ jobs:
           # Check that doc file paths are correct
           CHECK_DOC_PATHS: "true"
 
+      - name: Run retained GPU integration tests
+        if: runner.os == 'Linux'
+        run: cargo test --workspace --locked --profile ci --all-features --test host_gpu -- --ignored --test-threads=1
+
       - name: Run cargo nextest on unsafe arena
         run: cargo nextest run -p tree_arena --locked --no-fail-fast --no-default-features
 
