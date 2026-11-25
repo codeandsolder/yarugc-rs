@@ -339,7 +339,7 @@ fn dispatch_ime(root: &mut RenderRoot, owner: WidgetId, event: &TextEvent) -> Ha
         event,
         EventRoute::TargetOnly,
         None,
-        |widget, ctx, props, event| widget.on_text_event(ctx, props, event),
+        Widget::on_text_event,
         true,
     )
 }

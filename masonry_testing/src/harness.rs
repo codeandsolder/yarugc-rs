@@ -796,7 +796,8 @@ impl<W: Widget> TestHarness<W> {
 
     // TODO - Handle complicated IME
     // TODO - Mock Winit keyboard events
-    /// Sends a [`TextEvent`] for each character in the given string.
+    /// Simulates IME text commits for the focused text-input widget.
+    /// This does not synthesize keyboard key presses.
     pub fn keyboard_type_chars(&mut self, text: &str) {
         // For each character
         for c in text.split("").filter(|s| !s.is_empty()) {

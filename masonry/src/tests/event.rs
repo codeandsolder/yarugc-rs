@@ -309,7 +309,7 @@ fn try_capture_pointer_on_text_event() {
     harness.focus_on(Some(id));
 
     assert_debug_panics!(
-        harness.keyboard_type_chars("a"),
+        harness.process_text_event(&TextEvent::key_down(Key::Character("a".into()))),
         "event does not allow pointer capture"
     );
 }
@@ -579,14 +579,14 @@ fn text_event_fallback() {
 
     // If a widget is set as focus fallback, that widget gets text events when no widget is focused.
     harness.focus_on(None);
-    harness.keyboard_type_chars("A");
+    harness.process_text_event(&TextEvent::key_down(Key::Character("A".into())));
     let records = harness.take_records_of(target_tag).unwrap();
     assert_any(records, |r| matches!(r, Record::TextEvent(_)));
 
     // Unless it's disabled.
     harness.set_disabled(target_tag, true).unwrap();
     harness.flush_records_of(target_tag).unwrap();
-    harness.keyboard_type_chars("A");
+    harness.process_text_event(&TextEvent::key_down(Key::Character("A".into())));
     assert_matches!(harness.take_records_of(target_tag).unwrap()[..], []);
 }
 
