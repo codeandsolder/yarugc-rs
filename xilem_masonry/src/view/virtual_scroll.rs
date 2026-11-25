@@ -10,7 +10,7 @@ use masonry::widgets;
 use crate::core::{MessageCtx, MessageResult, Mut, View, ViewId, ViewMarker, ViewPathTracker};
 use crate::{Pod, ViewCtx, WidgetView};
 
-pub use widgets::ScrollDirection;
+pub use widgets::{ScrollDirection, ViewportRange};
 
 /// Default function-pointer handler for a virtual scroll without a custom scroll callback.
 pub type ScrollHandler<State, Action> = fn(&mut State, Range<usize>) -> MessageResult<Action>;
@@ -23,8 +23,7 @@ pub struct VirtualScroll<State, Action, ChildrenViews, F, G> {
     func: F,
     anchor_index: Option<usize>,
     len: usize,
-    start_at: f64,
-    end_at: f64,
+    viewport: ViewportRange,
     direction: ScrollDirection,
     scrolling: bool,
     on_scroll: G,
@@ -68,8 +67,7 @@ where
         func,
         anchor_index: None,
         len,
-        start_at: 0.,
-        end_at: 1.,
+        viewport: ViewportRange::FULL,
         direction: ScrollDirection::TopToBottom,
         scrolling: false,
         on_scroll: private::do_nothing::<State, Action>,
@@ -97,8 +95,7 @@ where
         func,
         anchor_index: None,
         len: usize::MAX,
-        start_at: 0.,
-        end_at: 1.,
+        viewport: ViewportRange::FULL,
         direction: ScrollDirection::TopToBottom,
         scrolling: false,
         on_scroll: private::do_nothing::<State, Action>,
@@ -115,12 +112,10 @@ impl<State, Action, ChildrenViews, F, G> VirtualScroll<State, Action, ChildrenVi
         self
     }
 
-    /// Sets the points (as ratios of width) where the first item starts and
-    /// the last item ends in the viewport.
+    /// Sets the viewport interval in scroll-direction coordinates.
     #[must_use = "Use the configured view."]
-    pub const fn start_end(mut self, start_at: f64, end_at: f64) -> Self {
-        self.start_at = start_at;
-        self.end_at = end_at;
+    pub const fn viewport(mut self, viewport: ViewportRange) -> Self {
+        self.viewport = viewport;
         self
     }
 
@@ -149,8 +144,7 @@ impl<State, Action, ChildrenViews, F, G> VirtualScroll<State, Action, ChildrenVi
             func: self.func,
             anchor_index: self.anchor_index,
             len: self.len,
-            start_at: self.start_at,
-            end_at: self.end_at,
+            viewport: self.viewport,
             direction: self.direction,
             scrolling: self.scrolling,
             on_scroll,
@@ -264,7 +258,7 @@ where
         // Setting that seems like an imperative action?
         let pod = Pod::new(
             widgets::VirtualScroll::new(self.anchor_index.unwrap_or(0), self.len)
-                .with_start_end(self.start_at, self.end_at)
+                .with_viewport(self.viewport)
                 .with_direction(self.direction)
                 .with_scrolling(self.scrolling),
         );
@@ -298,14 +292,8 @@ where
             widgets::VirtualScroll::scroll_to(&mut element, idx);
         }
 
-        let start_at = self.start_at.to_bits() != prev.start_at.to_bits();
-        if start_at {
-            widgets::VirtualScroll::set_start(&mut element, self.start_at);
-        }
-
-        let end_at = self.end_at.to_bits() != prev.end_at.to_bits();
-        if end_at {
-            widgets::VirtualScroll::set_end(&mut element, self.end_at);
+        if self.viewport != prev.viewport {
+            widgets::VirtualScroll::set_viewport(&mut element, self.viewport);
         }
 
         let direction_changed = self.direction != prev.direction;

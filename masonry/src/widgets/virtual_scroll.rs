@@ -84,6 +84,51 @@ pub enum ScrollDirection {
     RightToLeft,
 }
 
+/// The portion of the available main axis used as a virtual scroll viewport.
+///
+/// Both endpoints are fractions measured in the scroll direction, with zero
+/// at the start of the axis and one at the end. An empty viewport is valid.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ViewportRange {
+    start: f64,
+    end: f64,
+}
+
+impl ViewportRange {
+    /// Uses the full available extent.
+    pub const FULL: Self = Self { start: 0., end: 1. };
+
+    /// Constructs an ordered, finite interval within the available extent.
+    ///
+    /// Returns `None` for non-finite, out-of-bounds or reversed endpoints.
+    #[must_use = "Use the validated viewport interval."]
+    pub const fn new(start: f64, end: f64) -> Option<Self> {
+        if start >= 0. && end <= 1. && start <= end {
+            Some(Self { start, end })
+        } else {
+            None
+        }
+    }
+
+    /// Start fraction in scroll-direction coordinates.
+    #[must_use = "Use the viewport start."]
+    pub const fn start(self) -> f64 {
+        self.start
+    }
+
+    /// End fraction in scroll-direction coordinates.
+    #[must_use = "Use the viewport end."]
+    pub const fn end(self) -> f64 {
+        self.end
+    }
+}
+
+impl Default for ViewportRange {
+    fn default() -> Self {
+        Self::FULL
+    }
+}
+
 /// A virtual scrolling widget.
 ///
 /// Virtual scrolling is a technique to improve performance when scrolling through long lists, by
@@ -195,8 +240,7 @@ pub struct VirtualScroll {
     anchor_index: usize,
     range_in_viewport: Range<usize>,
 
-    start_at: f64,
-    end_at: f64,
+    viewport: ViewportRange,
     direction: ScrollDirection,
 
     scrolling: bool,
@@ -212,8 +256,7 @@ impl std::fmt::Debug for VirtualScroll {
             .field("items", &self.items.keys().collect::<Vec<_>>())
             .field("anchor_index", &self.anchor_index)
             .field("range_in_viewport", &self.range_in_viewport)
-            .field("start_at", &self.start_at)
-            .field("end_at", &self.end_at)
+            .field("viewport", &self.viewport)
             .field("direction", &self.direction)
             .field("scrolling", &self.scrolling)
             .finish()
@@ -250,8 +293,7 @@ impl VirtualScroll {
             items: BTreeMap::default(),
             anchor_index: initial_anchor,
             range_in_viewport: initial_anchor..initial_anchor,
-            start_at: 0.,
-            end_at: 1.,
+            viewport: ViewportRange::FULL,
             direction: ScrollDirection::TopToBottom,
             scrolling: false,
         }
@@ -271,12 +313,10 @@ impl VirtualScroll {
         self
     }
 
-    /// Sets the points (as ratios of the main-axis length) where the first item starts and
-    /// the last item ends in the viewport.
+    /// Sets the viewport interval in scroll-direction coordinates.
     #[must_use = "Use the returned value."]
-    pub const fn with_start_end(mut self, start_at: f64, end_at: f64) -> Self {
-        self.start_at = start_at;
-        self.end_at = end_at;
+    pub const fn with_viewport(mut self, viewport: ViewportRange) -> Self {
+        self.viewport = viewport;
         self
     }
 
@@ -465,6 +505,9 @@ impl VirtualScroll {
     /// That is, the children which the virtual scrolling area will request within.
     /// Runtime equivalent of [`with_len`](Self::with_len).
     pub fn set_len(this: &mut WidgetMut<'_, Self>, len: usize) {
+        if this.widget.virtual_list.len() == len {
+            return;
+        }
         this.widget.virtual_list.set_len(len);
         if this
             .widget
@@ -477,22 +520,20 @@ impl VirtualScroll {
         this.ctx.request_layout();
     }
 
-    /// Sets the point (as ratio of the main-axis length) where the first item starts in the viewport.
-    pub fn set_start(this: &mut WidgetMut<'_, Self>, start_at: f64) {
-        this.widget.start_at = start_at;
-        this.ctx.request_layout();
-    }
-
-    /// Sets the point (as ratio of the main-axis length) where the last item ends in the viewport.
-    pub fn set_end(this: &mut WidgetMut<'_, Self>, end_at: f64) {
-        this.widget.end_at = end_at;
-        this.ctx.request_layout();
+    /// Changes both viewport endpoints atomically.
+    pub fn set_viewport(this: &mut WidgetMut<'_, Self>, viewport: ViewportRange) {
+        if this.widget.viewport != viewport {
+            this.widget.viewport = viewport;
+            this.ctx.request_layout();
+        }
     }
 
     /// Sets the direction in which children are laid out.
     pub fn set_direction(this: &mut WidgetMut<'_, Self>, direction: ScrollDirection) {
-        this.widget.direction = direction;
-        this.ctx.request_layout();
+        if this.widget.direction != direction {
+            this.widget.direction = direction;
+            this.ctx.request_layout();
+        }
     }
 
     /// Sets scrolling state.
@@ -713,9 +754,9 @@ impl Widget for VirtualScroll {
         if let Update::RequestPanToChild { rect, .. } = event {
             let length = ctx.content_box().size().get_coord(self.direction.axis());
             let viewport = if self.direction.is_reverse() {
-                (1.0 - self.end_at) * length..(1.0 - self.start_at) * length
+                (1.0 - self.viewport.end()) * length..(1.0 - self.viewport.start()) * length
             } else {
-                self.start_at * length..self.end_at * length
+                self.viewport.start() * length..self.viewport.end() * length
             };
             let target = rect.get_coords(self.direction.axis());
             let new_pos = super::compute_pan_range(viewport.clone(), target.0..target.1).start;
@@ -795,8 +836,8 @@ impl Widget for VirtualScroll {
         }
 
         let main_axis_length = size.get_coord(self.direction.axis());
-        let start_at = self.start_at * main_axis_length;
-        let end_at = self.end_at * main_axis_length;
+        let start_at = self.viewport.start() * main_axis_length;
+        let end_at = self.viewport.end() * main_axis_length;
         self.virtual_list.set_viewport_extent(end_at - start_at);
         self.virtual_list.set_overscan(
             main_axis_length + start_at,
@@ -846,7 +887,8 @@ impl Widget for VirtualScroll {
     fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {
         let content_length = ctx.content_box().size().get_coord(self.direction.axis());
         let offset = self
-            .start_at
+            .viewport
+            .start()
             .mul_add(-content_length, self.scroll_offset_from_anchor());
         let offset = if self.direction.is_reverse() {
             content_length - self.direction.appropriate(offset)
@@ -988,6 +1030,48 @@ mod tests {
                 SizedBox::empty().size(50.px(), 50.px()).prepare().erased()
             ));
         }
+    }
+
+    #[test]
+    fn viewport_range_is_finite_ordered_and_atomic() {
+        for (start, end) in [
+            (f64::NAN, 1.),
+            (0., f64::INFINITY),
+            (f64::NEG_INFINITY, 0.),
+            (-0.1, 1.),
+            (0., 1.1),
+            (0.75, 0.25),
+        ] {
+            assert!(ViewportRange::new(start, end).is_none());
+        }
+        assert!(ViewportRange::new(0.5, 0.5).is_some());
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            VirtualScroll::new(0, 100)
+                .with_viewport(ViewportRange::new(0.1, 0.2).unwrap())
+                .prepare(),
+            (100, 200),
+        );
+        let id = harness.root_id();
+        drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::set_viewport(&mut scroll, ViewportRange::new(0.75, 1.).unwrap());
+            })
+            .unwrap();
+        drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+        assert_eq!(
+            harness
+                .root_widget()
+                .unwrap()
+                .virtual_list
+                .viewport_extent(),
+            50.
+        );
+        assert_eq!(
+            harness.root_widget().unwrap().viewport,
+            ViewportRange::new(0.75, 1.).unwrap()
+        );
     }
 
     #[test]
