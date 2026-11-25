@@ -5,149 +5,56 @@ use accesskit::Role;
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessEvent, ChildrenIds, CollectionWidget, EventCtx, Layer, LayoutCtx, MeasureCtx, NewWidget,
-    NoAction, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef,
-    RegisterCtx, TextEvent, Update, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut,
-    WidgetPod,
+    AccessEvent, ChildrenIds, EventCtx, Layer, LayoutCtx, MeasureCtx, NoAction, PointerButton,
+    PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, UsesProperty,
+    Widget, WidgetId, WidgetPod,
 };
 use crate::kurbo::{Axis, Point, Size};
 use crate::layout::{AsUnit, LayoutSize, LenDef, LenReq, Length, SizeDef};
 use crate::properties::Gap;
-use crate::widgets::{SelectionChanged, Selector};
+use crate::widgets::{Selector, SelectorItem};
 
 /// A [`Layer`] representing a list of options for a [`Selector`] widget.
 pub struct SelectorMenu {
     creator: WidgetId,
-    children: Vec<WidgetPod<dyn Widget>>,
+    children: Vec<WidgetPod<SelectorItem>>,
+    pressed: Option<usize>,
 }
 
-// --- MARK: BUILDERS
 impl SelectorMenu {
-    /// Creates a new empty menu.
-    #[must_use = "Use the returned value."]
-    pub fn new(creator: WidgetId) -> Self {
+    pub(crate) fn new(creator: WidgetId, options: &[String]) -> Self {
         Self {
             creator,
-            children: Vec::new(),
+            children: options
+                .iter()
+                .map(|option| SelectorItem::new(option.clone()).prepare().into_pod())
+                .collect(),
+            pressed: None,
         }
     }
 
-    /// Builder-style method to add a child widget.
-    #[must_use = "Use the returned value."]
-    pub fn with(mut self, child: NewWidget<impl Widget + ?Sized>) -> Self {
-        let child = child.erased().into_pod();
-        self.children.push(child);
-        self
-    }
-}
-
-impl SelectorMenu {
     fn dismiss(&self, ctx: &mut EventCtx<'_>) {
         let id = ctx.widget_id();
-        ctx.remove_layer(id);
-        ctx.mutate_later::<Selector>(self.creator, move |selector| {
-            if selector.widget.menu_layer_id == Some(id) {
-                selector.widget.menu_layer_id = None;
+        ctx.mutate_later::<Selector>(self.creator, move |mut selector| {
+            if selector.ctx.get_attached_layer::<Self>() == Some(id) {
+                selector.ctx.remove_layer(id);
             }
         });
     }
-}
 
-// --- MARK: COLLECTIONWIDGET
-impl CollectionWidget<()> for SelectorMenu {
-    collection_accessors!(child => child.id());
-
-    /// Appends a child widget to the collection.
-    fn add(
-        this: &mut WidgetMut<'_, Self>,
-        child: NewWidget<impl Widget + ?Sized>,
-        _params: impl Into<()>,
-    ) {
-        let child = child.erased().into_pod();
-        this.widget.children.push(child);
-        this.ctx.children_changed();
+    fn target_index(&self, ctx: &EventCtx<'_>) -> Option<usize> {
+        self.children
+            .iter()
+            .position(|child| ctx.target_in_child(child))
     }
 
-    /// Inserts a child widget at the given index.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `idx` is larger than the number of children.
-    fn insert(
-        this: &mut WidgetMut<'_, Self>,
-        idx: usize,
-        child: NewWidget<impl Widget + ?Sized>,
-        _params: impl Into<()>,
-    ) -> Result<(), crate::core::CollectionError> {
-        crate::check_insert_slot(idx, this.widget.children.len())?;
-        let child = child.erased().into_pod();
-        this.widget.children.insert(idx, child);
-        this.ctx.children_changed();
-        Ok(())
-    }
-
-    /// Replaces the child widget at the given index.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `idx` is out of bounds.
-    fn set(
-        this: &mut WidgetMut<'_, Self>,
-        idx: usize,
-        child: NewWidget<impl Widget + ?Sized>,
-        _params: impl Into<()>,
-    ) -> Result<(), crate::core::CollectionError> {
-        crate::check_slot(idx, this.widget.children.len())?;
-        let child = child.erased().into_pod();
-        let old_child = std::mem::replace(&mut this.widget.children[idx], child);
-        this.ctx.remove_child(old_child);
-        Ok(())
-    }
-
-    /// Not applicable.
-    fn set_params(
-        this: &mut WidgetMut<'_, Self>,
-        idx: usize,
-        _params: impl Into<()>,
-    ) -> Result<(), crate::core::CollectionError> {
-        crate::check_slot(idx, this.widget.children.len())
-    }
-
-    /// Swaps the index of two children.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `a` or `b` are out of bounds.
-    fn swap(
-        this: &mut WidgetMut<'_, Self>,
-        a: usize,
-        b: usize,
-    ) -> Result<(), crate::core::CollectionError> {
-        crate::swap_slots(&mut this.widget.children, a, b)?;
-        this.ctx.children_changed();
-        Ok(())
-    }
-
-    /// Removes the child at the given index.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `idx` is out of bounds.
-    fn remove(
-        this: &mut WidgetMut<'_, Self>,
-        idx: usize,
-    ) -> Result<(), crate::core::CollectionError> {
-        crate::check_slot(idx, this.widget.children.len())?;
-        let child = this.widget.children.remove(idx);
-        this.ctx.remove_child(child);
-        Ok(())
-    }
-
-    /// Removes all children.
-    fn clear(this: &mut WidgetMut<'_, Self>) {
-        for child in this.widget.children.drain(..) {
-            this.ctx.remove_child(child);
-        }
+    fn pick(&self, ctx: &mut EventCtx<'_>, index: usize) {
+        let id = ctx.widget_id();
+        ctx.set_focus(self.creator);
+        ctx.set_handled();
+        ctx.mutate_later::<Selector>(self.creator, move |mut selector| {
+            Selector::pick_from_menu(&mut selector, id, index);
+        });
     }
 }
 
@@ -163,86 +70,38 @@ impl Widget for SelectorMenu {
         event: &PointerEvent,
     ) {
         match event {
+            PointerEvent::Down(PointerButtonEvent {
+                button: None | Some(PointerButton::Primary),
+                ..
+            }) => {
+                self.pressed = self.target_index(ctx);
+                ctx.set_handled();
+            }
             PointerEvent::Up(PointerButtonEvent {
                 button: None | Some(PointerButton::Primary),
                 ..
             }) => {
-                let self_id = ctx.widget_id();
-
-                let Some(index) = self
-                    .children
-                    .iter()
-                    .position(|child| ctx.target_in_child(child))
-                else {
-                    return;
-                };
-
-                // FIXME - This might be subject to TOCTOU.
-                // Fix this once associated layers are implemented.
-                ctx.mutate_later::<Selector>(self.creator, move |mut selector| {
-                    if selector.widget.menu_layer_id != Some(self_id) {
-                        return;
-                    }
-                    let Some(selected_content) = selector.widget.options.get(index).cloned() else {
-                        return;
-                    };
-
-                    selector
-                        .ctx
-                        .submit_action::<SelectionChanged>(SelectionChanged {
-                            selected_content,
-                            index,
-                        });
-                    selector.ctx.remove_layer(self_id);
-                    selector.widget.menu_layer_id = None;
-                    Selector::select_option(&mut selector, index);
-                });
+                if let Some(index) = self.pressed.take()
+                    && self.target_index(ctx) == Some(index)
+                {
+                    self.pick(ctx, index);
+                }
+                ctx.set_handled();
             }
-            _ => (),
+            _ => {}
         }
     }
 
-    // TODO - Handle text selection
-    // (e.g. if options are A, B and C, typing "C" should set selected option to 2)
-    fn on_text_event(
+    fn on_access_event(
         &mut self,
         ctx: &mut EventCtx<'_>,
         _props: &mut PropertiesMut<'_>,
-        event: &TextEvent,
+        event: &AccessEvent,
     ) {
-        match event {
-            TextEvent::WindowFocusChange(false) => {
-                self.dismiss(ctx);
-            }
-            _ => (),
-        }
-    }
-
-    // TODO
-    fn on_access_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &AccessEvent,
-    ) {
-    }
-
-    fn on_anim_frame(
-        &mut self,
-        _ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _interval: u64,
-    ) {
-    }
-
-    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        // FIXME - This might be subject to TOCTOU.
-        // Fix this once associated layers are implemented.
-        if matches!(event, Update::WidgetAdded) {
-            let id = ctx.widget_id();
-            ctx.mutate_later::<Selector>(self.creator, move |selector| {
-                selector.widget.menu_layer_id = Some(id);
-            });
+        if event.action == accesskit::Action::Click
+            && let Some(index) = self.target_index(ctx)
+        {
+            self.pick(ctx, index);
         }
     }
 
@@ -327,7 +186,7 @@ impl Widget for SelectorMenu {
     }
 
     fn accessibility_role(&self) -> Role {
-        Role::GenericContainer
+        Role::Menu
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
@@ -357,20 +216,29 @@ impl Layer for SelectorMenu {
         _props: &mut PropertiesMut<'_>,
         event: &PointerEvent,
     ) {
-        let remove_this = match event {
+        match event {
             PointerEvent::Down(PointerButtonEvent { state, .. }) => {
-                let local_pos = ctx.local_position(state.position);
-
-                !ctx.border_box().contains(local_pos)
+                if !ctx
+                    .border_box()
+                    .contains(ctx.local_position(state.position))
+                {
+                    self.pressed = None;
+                    self.dismiss(ctx);
+                }
             }
-            PointerEvent::Cancel(..) => true,
-            _ => false,
-        };
-
-        if remove_this {
-            // FIXME - This might be subject to TOCTOU.
-            // Fix this once associated layers are implemented.
-            self.dismiss(ctx);
+            PointerEvent::Up(PointerButtonEvent { state, .. }) => {
+                if !ctx
+                    .border_box()
+                    .contains(ctx.local_position(state.position))
+                {
+                    self.pressed = None;
+                }
+            }
+            PointerEvent::Cancel(..) => {
+                self.pressed = None;
+                self.dismiss(ctx);
+            }
+            _ => {}
         }
     }
 }
