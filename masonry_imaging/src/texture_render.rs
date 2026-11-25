@@ -35,7 +35,11 @@ impl core::fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
 
 /// Backend-selected texture renderer for Masonry paint output.
 #[derive(Debug)]
@@ -242,12 +246,19 @@ mod imp {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             match self {
                 Self::CreateRenderer(err) => write!(f, "creating Skia renderer failed: {err}"),
-                Self::Render(err) => write!(f, "rendering with Skia failed: {err:?}"),
+                Self::Render(err) => write!(f, "rendering with Skia failed: {err}"),
             }
         }
     }
 
-    impl std::error::Error for Error {}
+    impl std::error::Error for Error {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            match self {
+                Self::CreateRenderer(err) => Some(err),
+                Self::Render(err) => Some(err),
+            }
+        }
+    }
 
     /// Runtime renderer state for the Skia backend.
     #[derive(Debug)]
@@ -318,12 +329,19 @@ mod imp {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             match self {
                 Self::CreateRenderer(err) => write!(f, "creating Vello renderer failed: {err}"),
-                Self::Render(err) => write!(f, "rendering with Vello failed: {err:?}"),
+                Self::Render(err) => write!(f, "rendering with Vello failed: {err}"),
             }
         }
     }
 
-    impl std::error::Error for Error {}
+    impl std::error::Error for Error {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            match self {
+                Self::CreateRenderer(err) => Some(err),
+                Self::Render(err) => Some(err),
+            }
+        }
+    }
 
     /// Runtime renderer state for the Vello backend.
     #[derive(Debug)]
@@ -388,12 +406,18 @@ mod imp {
     impl core::fmt::Display for Error {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             match self {
-                Self::Render(err) => write!(f, "rendering with Vello Hybrid failed: {err:?}"),
+                Self::Render(err) => write!(f, "rendering with Vello Hybrid failed: {err}"),
             }
         }
     }
 
-    impl std::error::Error for Error {}
+    impl std::error::Error for Error {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            match self {
+                Self::Render(err) => Some(err),
+            }
+        }
+    }
 
     /// Runtime renderer state for the Vello Hybrid backend.
     #[derive(Debug)]
