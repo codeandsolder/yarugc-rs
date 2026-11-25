@@ -68,7 +68,11 @@ impl Switch {
 impl Switch {
     /// Sets the switch state.
     pub fn set_on(this: &mut WidgetMut<'_, Self>, on: bool) {
+        if this.widget.on == on {
+            return;
+        }
         this.widget.on = on;
+        this.ctx.request_render();
         if on {
             this.ctx.add_class("#toggled");
         } else {
@@ -398,6 +402,27 @@ mod tests {
             harness.pop_action::<SwitchToggled>().unwrap(),
             Some((SwitchToggled(false), switch_id))
         );
+    }
+
+    #[test]
+    fn state_change_updates_accessibility_without_class_styles() {
+        let widget = Switch::new(false).prepare();
+        let mut harness =
+            TestHarness::create_with_size(crate::core::DefaultProperties::new(), widget, (60, 40));
+        let id = harness.root_id();
+        let _ = harness.redraw();
+        assert_eq!(
+            harness.access_node(id).unwrap().toggled(),
+            Some(Toggled::False)
+        );
+
+        for (on, toggled) in [(true, Toggled::True), (false, Toggled::False)] {
+            harness
+                .edit_root_widget(|mut switch| Switch::set_on(&mut switch, on))
+                .unwrap();
+            let _ = harness.redraw();
+            assert_eq!(harness.access_node(id).unwrap().toggled(), Some(toggled));
+        }
     }
 
     #[test]
