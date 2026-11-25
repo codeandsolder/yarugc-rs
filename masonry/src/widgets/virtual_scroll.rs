@@ -438,9 +438,15 @@ impl VirtualScroll {
             this.widget.active_range.contains(&idx),
             "`add_child` should only be called with an index requested by the controller."
         );
-        this.ctx.children_changed();
-        if this.widget.items.insert(idx, child.into_pod()).is_some() {
-            tracing::warn!("Tried to add child {idx} twice to VirtualScroll");
+        match this.widget.items.entry(idx) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(child.into_pod());
+                this.ctx.children_changed();
+            }
+            std::collections::btree_map::Entry::Occupied(_) => {
+                // Keep the registered widget and its retained state intact.
+                tracing::warn!("Tried to add child {idx} twice to VirtualScroll");
+            }
         }
     }
 
@@ -716,10 +722,11 @@ impl Widget for VirtualScroll {
 
         // Calculate the sizes of all children
         self.virtual_list.model_mut().clear();
-        for (idx, child) in &mut self.items {
+        let mut sizes = Vec::with_capacity(self.items.len());
+        for (idx, child) in &self.items {
             let auto_size = SizeDef::fit(size).with(self.direction.axis(), LenDef::MaxContent);
             let child_size = ctx.compute_size(child, auto_size, size.into());
-            ctx.run_layout(child, child_size);
+            sizes.push(child_size);
             let child_length = child_size.get_coord(self.direction.axis());
             self.virtual_list.model_mut().set_extent(*idx, child_length);
             total_children_length += child_length;
@@ -761,8 +768,12 @@ impl Widget for VirtualScroll {
 
         // place children
         let offset_of_anchor = self.virtual_list.offset_of(self.anchor_index);
-        for (idx, child) in &mut self.items {
-            if self.virtual_list.materialized_range().contains(idx) {
+        let materialized = self.virtual_list.materialized_range();
+        for ((idx, child), child_size) in self.items.iter_mut().zip(sizes) {
+            let visible = materialized.contains(idx);
+            ctx.set_stashed(child, !visible);
+            if visible {
+                ctx.run_layout(child, child_size);
                 let pos = self.virtual_list.offset_of(*idx) - offset_of_anchor;
                 let placed_pos = if self.direction.is_reverse() {
                     -pos - self.virtual_list.extent_of(*idx)
@@ -770,8 +781,6 @@ impl Widget for VirtualScroll {
                     pos
                 };
                 ctx.place_child(child, self.direction.axis().pack_point(placed_pos, 0.));
-            } else {
-                ctx.set_stashed(child, true);
             }
         }
     }
@@ -929,6 +938,72 @@ mod tests {
     use crate::widgets::Label;
 
     use super::*;
+
+    #[test]
+    fn delayed_driver_can_revisit_stashed_items_and_duplicate_add_preserves_identity() {
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            VirtualScroll::new(0, 1000).prepare(),
+            (100, 200),
+        );
+        let id = harness.root_id();
+        drive_to_fixpoint(&mut harness, id, |action, mut scroll| {
+            VirtualScroll::will_handle_action(&mut scroll, &action);
+            for idx in action
+                .old_active
+                .clone()
+                .filter(|idx| !action.target.contains(idx))
+            {
+                VirtualScroll::remove_child(&mut scroll, idx);
+            }
+            for idx in action
+                .target
+                .clone()
+                .filter(|idx| !action.old_active.contains(idx))
+            {
+                VirtualScroll::add_child(
+                    &mut scroll,
+                    idx,
+                    Label::new(idx.to_string()).prepare().erased(),
+                );
+            }
+        });
+        let original = harness.root_widget().unwrap().items[&0].id();
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::add_child(
+                    &mut scroll,
+                    0,
+                    Label::new("duplicate").prepare().erased(),
+                );
+            })
+            .unwrap();
+        assert_eq!(harness.root_widget().unwrap().items[&0].id(), original);
+
+        // Leave the fetch request queued while the viewport jumps away and
+        // back. The original item remains registered across both layouts.
+        harness
+            .edit_root_widget(|mut scroll| VirtualScroll::scroll_to(&mut scroll, 500))
+            .unwrap();
+        assert!(
+            harness
+                .get_widget_with_id(original)
+                .unwrap()
+                .ctx()
+                .is_stashed()
+        );
+        harness
+            .edit_root_widget(|mut scroll| VirtualScroll::scroll_to(&mut scroll, 0))
+            .unwrap();
+        assert!(
+            !harness
+                .get_widget_with_id(original)
+                .unwrap()
+                .ctx()
+                .is_stashed()
+        );
+        assert_eq!(harness.root_widget().unwrap().items[&0].id(), original);
+    }
 
     #[test]
     fn sensible_driver() {
