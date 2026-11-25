@@ -41,7 +41,10 @@ impl AppDriver for Driver {
     }
 
     fn on_async_action(&mut self, id: WindowId, ctx: &mut DriverCtx<'_>, action: ErasedAction) {
-        assert!(self.created.contains(&id));
+        assert!(
+            self.created.contains(&id),
+            "async action arrived before window {id:?} initialization"
+        );
         let value = *action.downcast::<u32>().unwrap();
         self.actions.push((id, value));
         if value == 99 {
@@ -97,63 +100,152 @@ impl Lifecycle {
         second: WindowId,
     ) {
         let old = self.prepare_surface(first);
-        assert_eq!(self.prepare_surface(second), old);
-        assert_eq!(self.state.gpu_device_id(first), Some(old));
+        assert_eq!(
+            self.prepare_surface(second),
+            old,
+            "compatible windows must share their initial GPU device"
+        );
+        assert_eq!(
+            self.state.gpu_device_id(first),
+            Some(old),
+            "surface must expose its initial device identity"
+        );
         assert_eq!(
             self.state.present_mode(first),
-            Some(wgpu::PresentMode::AutoVsync)
+            Some(wgpu::PresentMode::AutoVsync),
+            "initial surface must use the requested presentation mode"
         );
-        assert_eq!(self.driver.devices.len(), 1);
+        assert_eq!(
+            self.driver.devices.len(),
+            1,
+            "initial shared device must be announced only once"
+        );
         let device = self.driver.devices[0].clone();
 
         // Explicit destruction follows the same WGPU callback path as a lost
         // physical device. Poll to drain callbacks before delivering the event.
         device.destroy();
         let _ = self.state.render_cx.instance.poll_all(true);
-        assert!(self.state.render_cx.devices[&old].is_lost());
+        assert!(
+            self.state.render_cx.devices[&old].is_lost(),
+            "destroying the GPU device must trigger its loss callback"
+        );
         self.state.handle_user_event(
             event_loop,
             MasonryUserEvent::GpuDeviceLost(old),
             &mut self.driver,
         );
-        assert!(self.state.surfaces.is_empty());
-        assert!(self.state.render_cx.devices.is_empty());
-        assert_eq!(self.state.gpu_device_id(first), None);
-        assert_eq!(self.state.present_mode(first), None);
-        assert_eq!(self.driver.lost_devices, [old]);
-        assert!(!self.state.add_wgpu_features(wgpu::Features::empty()));
+        assert!(
+            self.state.surfaces.is_empty(),
+            "all surfaces on the destroyed device must be detached"
+        );
+        assert!(
+            self.state.render_cx.devices.is_empty(),
+            "lost device must leave the live registry"
+        );
+        assert_eq!(
+            self.state.gpu_device_id(first),
+            None,
+            "detached surface cannot report a live device"
+        );
+        assert_eq!(
+            self.state.present_mode(first),
+            None,
+            "detached surface cannot report a configured mode"
+        );
+        assert_eq!(
+            self.driver.lost_devices,
+            [old],
+            "driver must receive exactly one loss notification for the old device"
+        );
+        assert!(
+            !self.state.add_wgpu_features(wgpu::Features::empty()),
+            "device configuration must stay frozen after initial allocation"
+        );
 
         let new = self.prepare_surface(first);
-        assert_ne!(new, old);
-        assert_eq!(self.prepare_surface(second), new);
-        assert_eq!(self.state.gpu_device_id(first), Some(new));
-        assert_eq!(self.driver.devices.len(), 2);
-        assert_ne!(self.driver.devices[1], device);
+        assert_ne!(new, old, "replacement device must have a fresh identity");
+        assert_eq!(
+            self.prepare_surface(second),
+            new,
+            "both compatible surfaces must reuse the replacement device"
+        );
+        assert_eq!(
+            self.state.gpu_device_id(first),
+            Some(new),
+            "recreated surface must expose replacement identity"
+        );
+        assert_eq!(
+            self.driver.devices.len(),
+            2,
+            "replacement device must be announced exactly once"
+        );
+        assert_ne!(
+            self.driver.devices[1], device,
+            "replacement must use a distinct WGPU device"
+        );
         // Late duplicate loss notification cannot discard replacement surfaces.
         self.state.handle_user_event(
             event_loop,
             MasonryUserEvent::GpuDeviceLost(old),
             &mut self.driver,
         );
-        assert_eq!(self.state.surfaces.len(), 2);
-        assert_eq!(self.driver.lost_devices, [old]);
-        assert_eq!(self.state.render_cx.devices.len(), 1);
-        assert_eq!(self.prepare_surface(first), new);
-        assert_eq!(self.driver.devices.len(), 2);
+        assert_eq!(
+            self.state.surfaces.len(),
+            2,
+            "stale loss notifications cannot detach replacement surfaces"
+        );
+        assert_eq!(
+            self.driver.lost_devices,
+            [old],
+            "driver must receive exactly one loss notification for the old device"
+        );
+        assert_eq!(
+            self.state.render_cx.devices.len(),
+            1,
+            "only the replacement device may remain registered"
+        );
+        assert_eq!(
+            self.prepare_surface(first),
+            new,
+            "stale loss notification must not force another replacement"
+        );
+        assert_eq!(
+            self.driver.devices.len(),
+            2,
+            "replacement device must be announced exactly once"
+        );
     }
 
     fn exercise(&mut self, event_loop: &ActiveEventLoop) {
         // A task started while constructing the initial window can finish
         // before the first native resume.
         self.send_action(event_loop, self.initial, 1);
-        assert!(self.driver.actions.is_empty());
+        assert!(
+            self.driver.actions.is_empty(),
+            "actions before initial resume must remain queued"
+        );
         self.resume(event_loop);
-        assert_eq!(self.driver.starts, 1);
-        assert_eq!(self.driver.created, [self.initial]);
-        assert_eq!(self.driver.actions, [(self.initial, 1)]);
+        assert_eq!(
+            self.driver.starts, 1,
+            "startup must run only once across resumes"
+        );
+        assert_eq!(
+            self.driver.created,
+            [self.initial],
+            "initial window must be initialized exactly once"
+        );
+        assert_eq!(
+            self.driver.actions,
+            [(self.initial, 1)],
+            "only the initial action may be delivered before the next resume"
+        );
 
         self.resume(event_loop);
-        assert_eq!(self.driver.starts, 1);
+        assert_eq!(
+            self.driver.starts, 1,
+            "startup must run only once across resumes"
+        );
 
         let mut properties = DefaultProperties::new();
         let _ = properties.insert::<Label, _>(ContentColor::new(Color::WHITE));
@@ -161,7 +253,11 @@ impl Lifecycle {
         let live = window.id;
         self.state.create_window(event_loop, window).unwrap();
         self.state.handle_signals(event_loop, &mut self.driver);
-        assert_eq!(self.driver.created, [self.initial, live]);
+        assert_eq!(
+            self.driver.created,
+            [self.initial, live],
+            "new live window must be initialized without restarting app"
+        );
         let window = self.state.window_mut(live).unwrap();
         assert_eq!(
             window
@@ -171,6 +267,7 @@ impl Lifecycle {
                 .get_prop::<ContentColor>()
                 .color,
             Color::WHITE,
+            "new window must receive its per-window properties"
         );
         window.set_default_properties(None);
         assert_eq!(
@@ -181,9 +278,14 @@ impl Lifecycle {
                 .get_prop::<ContentColor>()
                 .color,
             Color::BLACK,
+            "removing an override must restore application defaults"
         );
         window.set_base_color(Color::WHITE);
-        assert_eq!(window.base_color(), Color::WHITE);
+        assert_eq!(
+            window.base_color(),
+            Color::WHITE,
+            "runtime base-color update must take effect"
+        );
 
         self.state.handle_suspended(event_loop);
         let pending = hidden_window();
@@ -195,23 +297,47 @@ impl Lifecycle {
         self.send_action(event_loop, live, 2);
         self.send_action(event_loop, pending_id, 3);
         self.send_action(event_loop, cancelled_id, 4);
-        assert!(self.state.close_window(cancelled_id));
-        assert_eq!(self.driver.actions, [(self.initial, 1)]);
-        self.resume(event_loop);
-
-        assert_eq!(self.driver.starts, 1);
-        assert_eq!(self.driver.created, [self.initial, live, pending_id]);
+        assert!(
+            self.state.close_window(cancelled_id),
+            "queued window must be cancellable before creation"
+        );
         assert_eq!(
             self.driver.actions,
-            [(self.initial, 1), (live, 2), (pending_id, 3)]
+            [(self.initial, 1)],
+            "only the initial action may be delivered before the next resume"
         );
-        assert!(self.state.suspended_actions.is_empty());
+        self.resume(event_loop);
+
+        assert_eq!(
+            self.driver.starts, 1,
+            "startup must run only once across resumes"
+        );
+        assert_eq!(
+            self.driver.created,
+            [self.initial, live, pending_id],
+            "only surviving queued window may be initialized on resume"
+        );
+        assert_eq!(
+            self.driver.actions,
+            [(self.initial, 1), (live, 2), (pending_id, 3)],
+            "resume must deliver surviving queued actions in order"
+        );
+        assert!(
+            self.state.suspended_actions.is_empty(),
+            "resume must drain the suspended action queue"
+        );
 
         self.exercise_gpu_recovery(event_loop, self.initial, live);
 
         self.send_action(event_loop, pending_id, 99);
-        assert!(self.state.exit);
-        assert!(event_loop.exiting());
+        assert!(
+            self.state.exit,
+            "async exit action must update application state"
+        );
+        assert!(
+            event_loop.exiting(),
+            "async exit must stop the native event loop without another window event"
+        );
     }
 }
 
