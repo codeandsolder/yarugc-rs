@@ -253,6 +253,30 @@ impl<S, E: crate::core::ViewElement> CollectionState<S, E> {
     }
 }
 
+// The trait entry points also share identical signatures.
+macro_rules! collection_lifecycle {
+    () => {
+        fn teardown(
+            &self,
+            view_state: &mut Self::ViewState,
+            ctx: &mut ViewCtx,
+            element: Mut<'_, Self::Element>,
+        ) {
+            view_state.teardown(&self.sequence, ctx, element);
+        }
+
+        fn message(
+            &self,
+            view_state: &mut Self::ViewState,
+            message: &mut MessageCtx,
+            element: Mut<'_, Self::Element>,
+            app_state: &mut State,
+        ) -> MessageResult<Action> {
+            view_state.message(&self.sequence, message, element, app_state)
+        }
+    };
+}
+
 // Action-producing wrappers must release their own action source even when the child is absent.
 macro_rules! action_child_teardown {
     ($widget:ident, $field:ident, $id:ident) => {

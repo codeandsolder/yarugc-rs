@@ -101,24 +101,7 @@ where
         view_state.rebuild(&self.sequence, &prev.sequence, ctx, element, app_state);
     }
 
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
-    ) {
-        view_state.teardown(&self.sequence, ctx, element);
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        view_state.message(&self.sequence, message, element, app_state)
-    }
+    collection_lifecycle!();
 }
 
 // --- MARK: ZStackExt
