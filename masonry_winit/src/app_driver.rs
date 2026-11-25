@@ -127,7 +127,10 @@ pub trait AppDriver {
         ctx.exit();
     }
 
-    /// Called when Masonry has created its WGPU device.
+    /// Called before first use of each WGPU device.
+    ///
+    /// This also runs when a lost device has been replaced. Applications must
+    /// recreate device-specific resources for the supplied device and queue.
     fn on_wgpu_ready(&mut self, _wgpu: &WgpuContext<'_>) {}
 }
 

@@ -10,6 +10,7 @@ struct Driver {
     starts: usize,
     created: Vec<WindowId>,
     actions: Vec<(WindowId, u32)>,
+    devices: Vec<wgpu::Device>,
 }
 
 impl AppDriver for Driver {
@@ -28,6 +29,10 @@ impl AppDriver for Driver {
 
     fn on_window_created(&mut self, id: WindowId, _: &mut Window) {
         self.created.push(id);
+    }
+
+    fn on_wgpu_ready(&mut self, wgpu: &WgpuContext<'_>) {
+        self.devices.push(wgpu.device.clone());
     }
 
     fn on_async_action(&mut self, id: WindowId, ctx: &mut DriverCtx<'_>, action: ErasedAction) {
@@ -65,6 +70,58 @@ impl Lifecycle {
 
     fn resume(&mut self, event_loop: &ActiveEventLoop) {
         self.state.handle_resumed(event_loop, &mut self.driver);
+    }
+
+    fn prepare_surface(&mut self, id: WindowId) -> usize {
+        let handle = self.state.handle_id(id).unwrap();
+        let window = self.state.windows.get(&handle).unwrap();
+        MasonryState::prepare_surface(
+            &mut self.state.render_cx,
+            &mut self.state.surfaces,
+            window,
+            &mut self.driver,
+        )
+        .unwrap()
+        .dev_id
+    }
+
+    fn exercise_gpu_recovery(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        first: WindowId,
+        second: WindowId,
+    ) {
+        let old = self.prepare_surface(first);
+        assert_eq!(self.prepare_surface(second), old);
+        assert_eq!(self.driver.devices.len(), 1);
+        let device = self.driver.devices[0].clone();
+
+        // Explicit destruction follows the same WGPU callback path as a lost
+        // physical device. Poll to drain callbacks before delivering the event.
+        device.destroy();
+        let _ = self.state.render_cx.instance.poll_all(true);
+        assert!(self.state.render_cx.devices[old].is_lost());
+        self.state.handle_user_event(
+            event_loop,
+            MasonryUserEvent::GpuDeviceLost(old),
+            &mut self.driver,
+        );
+        assert!(self.state.surfaces.is_empty());
+
+        let new = self.prepare_surface(first);
+        assert_ne!(new, old);
+        assert_eq!(self.prepare_surface(second), new);
+        assert_eq!(self.driver.devices.len(), 2);
+        assert_ne!(self.driver.devices[1], device);
+        // Late duplicate loss notification cannot discard replacement surfaces.
+        self.state.handle_user_event(
+            event_loop,
+            MasonryUserEvent::GpuDeviceLost(old),
+            &mut self.driver,
+        );
+        assert_eq!(self.state.surfaces.len(), 2);
+        assert_eq!(self.prepare_surface(first), new);
+        assert_eq!(self.driver.devices.len(), 2);
     }
 
     fn exercise(&mut self, event_loop: &ActiveEventLoop) {
@@ -132,6 +189,8 @@ impl Lifecycle {
         );
         assert!(self.state.suspended_actions.is_empty());
 
+        self.exercise_gpu_recovery(event_loop, self.initial, live);
+
         self.send_action(event_loop, pending_id, 99);
         assert!(self.state.exit);
         assert!(event_loop.exiting());
@@ -151,7 +210,7 @@ impl ApplicationHandler<MasonryUserEvent> for Lifecycle {
 
 #[test]
 #[ignore = "Requires an X11 display; CI runs explicitly with xvfb-run."]
-fn native_window_lifecycle_and_suspended_actions() {
+fn native_window_lifecycle_and_gpu_recovery() {
     let event_loop = EventLoop::with_user_event()
         .with_x11()
         .with_any_thread(true)

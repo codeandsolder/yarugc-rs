@@ -6,6 +6,9 @@
 //! This module is based on [`vello::util`](https://docs.rs/vello/latest/vello/util/index.html) module with modifications
 //! for transparent surfaces.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use wgpu::util::{TextureBlitter, TextureBlitterBuilder};
 use wgpu::{
     self, BlendComponent, BlendFactor, BlendState, CompositeAlphaMode, Device, Instance,
@@ -15,6 +18,7 @@ use wgpu::{
 use winit::event_loop::OwnedDisplayHandle;
 
 use crate::app_driver::WgpuLimits;
+use crate::event_loop_runner::{EventLoopProxy, MasonryUserEvent};
 
 const PREMUL_BLEND_STATE: BlendState = BlendState {
     alpha: BlendComponent::REPLACE,
@@ -73,17 +77,26 @@ pub(crate) struct RenderContext {
     pub devices: Vec<DeviceHandle>,
     requested_features: wgpu::Features,
     requested_limits: WgpuLimits,
+    event_loop_proxy: EventLoopProxy,
 }
 
 pub(crate) struct DeviceHandle {
     pub(crate) adapter: wgpu::Adapter,
     pub device: Device,
     pub queue: wgpu::Queue,
+    lost: Arc<AtomicBool>,
+    pub ready_notified: bool,
+}
+
+impl DeviceHandle {
+    pub(crate) fn is_lost(&self) -> bool {
+        self.lost.load(Ordering::Acquire)
+    }
 }
 
 impl RenderContext {
     /// Creates a render context for windows on the given `display`.
-    pub(crate) fn new(display: OwnedDisplayHandle) -> Self {
+    pub(crate) fn new(display: OwnedDisplayHandle, event_loop_proxy: EventLoopProxy) -> Self {
         let backends = wgpu::Backends::from_env().unwrap_or_default();
         let flags = wgpu::InstanceFlags::from_build_config().with_env();
         let backend_options = wgpu::BackendOptions::from_env_or_default();
@@ -100,6 +113,7 @@ impl RenderContext {
             devices: Vec::new(),
             requested_features: wgpu::Features::empty(),
             requested_limits: WgpuLimits::Default,
+            event_loop_proxy,
         }
     }
 
@@ -222,7 +236,7 @@ impl RenderContext {
         };
         let (target_texture, target_view) = create_targets(width, height, &device_handle.device);
 
-        let surface = RenderSurface {
+        let mut surface = RenderSurface {
             surface,
             config,
             dev_id,
@@ -231,8 +245,9 @@ impl RenderContext {
             target_view,
             blitter,
             resizing: false,
+            needs_reconfigure: false,
         };
-        self.configure_surface(&surface);
+        self.configure_surface(&mut surface);
         Ok(surface)
     }
 
@@ -285,6 +300,9 @@ impl RenderContext {
         surface: &mut RenderSurface<'_>,
         present_mode: PresentMode,
     ) -> bool {
+        if surface.config.present_mode == present_mode {
+            return true;
+        }
         let capabilities = surface
             .surface
             .get_capabilities(&self.devices[surface.dev_id].adapter);
@@ -296,9 +314,10 @@ impl RenderContext {
         true
     }
 
-    fn configure_surface(&self, surface: &RenderSurface<'_>) {
+    pub(crate) fn configure_surface(&self, surface: &mut RenderSurface<'_>) {
         let device = &self.devices[surface.dev_id].device;
         surface.surface.configure(device, &surface.config);
+        surface.needs_reconfigure = false;
     }
 
     /// Finds or creates a compatible device handle id.
@@ -306,7 +325,7 @@ impl RenderContext {
         if let Some(id) = self
             .devices
             .iter()
-            .position(|device| device.adapter.is_surface_supported(surface))
+            .position(|device| !device.is_lost() && device.adapter.is_surface_supported(surface))
         {
             return Ok(id);
         }
@@ -342,13 +361,25 @@ impl RenderContext {
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
         }))
         .map_err(RenderSurfaceError::RequestDevice)?;
+        let dev_id = self.devices.len();
+        let lost = Arc::new(AtomicBool::new(false));
+        let callback_lost = lost.clone();
+        let proxy = self.event_loop_proxy.clone();
+        device.set_device_lost_callback(move |reason, message| {
+            tracing::warn!(?reason, %message, dev_id, "Masonry GPU device lost");
+            if !callback_lost.swap(true, Ordering::AcqRel) {
+                let _ = proxy.send_event(MasonryUserEvent::GpuDeviceLost(dev_id));
+            }
+        });
         let device_handle = DeviceHandle {
             adapter,
             device,
             queue,
+            lost,
+            ready_notified: false,
         };
         self.devices.push(device_handle);
-        Ok(self.devices.len() - 1)
+        Ok(dev_id)
     }
 }
 
@@ -394,6 +425,7 @@ pub(crate) struct RenderSurface<'s> {
     pub target_view: TextureView,
     pub blitter: TextureBlitter,
     pub resizing: bool,
+    pub needs_reconfigure: bool,
 }
 
 impl std::fmt::Debug for RenderSurface<'_> {
@@ -407,6 +439,7 @@ impl std::fmt::Debug for RenderSurface<'_> {
             .field("target_view", &self.target_view)
             .field("blitter", &"(Not Debug)")
             .field("resizing", &self.resizing)
+            .field("needs_reconfigure", &self.needs_reconfigure)
             .finish()
     }
 }
