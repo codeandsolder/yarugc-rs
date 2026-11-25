@@ -20,6 +20,7 @@ mod divider;
 mod flex;
 mod grid;
 mod image;
+mod image_common;
 mod indexed_stack;
 mod label;
 mod pagination;

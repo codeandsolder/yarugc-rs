@@ -10,15 +10,16 @@ use resvg::usvg::Tree;
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, ArcStr, ChildrenIds, LayoutCtx, MeasureCtx, NoAction, PaintCtx, PropertiesMut,
-    PropertiesRef, Property, RegisterCtx, Update, UpdateCtx, UsesProperty, Widget, WidgetId,
-    WidgetMut,
+    AccessCtx, ArcStr, ChildrenIds, LayoutCtx, MeasureCtx, NoAction, PaintCtx, PropertiesRef,
+    Property, RegisterCtx, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Affine, Axis, Size};
 use crate::layout::{LenReq, Length};
 use crate::peniko::{ImageAlphaType, ImageBrush, ImageData, ImageFormat};
 use crate::properties::ObjectFit;
+
+use super::image_common::image_widget_methods;
 
 // TODO: Make this a configurable option of the widget
 /// The scale that the SVG is native to.
@@ -50,9 +51,16 @@ fn raster_dimension(extent: f64) -> Option<u32> {
 /// You can change the sizing of the SVG with the [`ObjectFit`] property.
 pub struct Svg {
     tree: Arc<Tree>,
-    rasterized: Option<ImageBrush>,
+    rasterized: Option<RasterizedSvg>,
     decorative: bool,
     alt_text: Option<ArcStr>,
+}
+
+struct RasterizedSvg {
+    brush: ImageBrush,
+    logical_size: Size,
+    pixel_size: (u32, u32),
+    fit: ObjectFit,
 }
 
 // --- MARK: BUILDERS
@@ -139,42 +147,55 @@ impl Svg {
     }
 }
 
+impl Svg {
+    fn rasterize(
+        &self,
+        logical_size: Size,
+        pixel_size: (u32, u32),
+        fit: ObjectFit,
+    ) -> Option<RasterizedSvg> {
+        let (width, height) = pixel_size;
+        let mut pixmap = tiny_skia::Pixmap::new(width, height)?;
+        let svg_size = self.tree.size();
+        let svg_size = Size::new(f64::from(svg_size.width()), f64::from(svg_size.height()));
+        let logical_to_pixel = Affine::scale_non_uniform(
+            f64::from(width) / logical_size.width,
+            f64::from(height) / logical_size.height,
+        );
+        let coeffs =
+            (logical_to_pixel * fit.affine(logical_size.to_rect(), svg_size.to_rect())).as_coeffs();
+        let transform = tiny_skia::Transform::from_row(
+            coeffs[0] as f32,
+            coeffs[1] as f32,
+            coeffs[2] as f32,
+            coeffs[3] as f32,
+            coeffs[4] as f32,
+            coeffs[5] as f32,
+        );
+        resvg::render(&self.tree, transform, &mut pixmap.as_mut());
+        let brush = ImageBrush::new(ImageData {
+            data: pixmap.take().into(),
+            format: ImageFormat::Rgba8,
+            alpha_type: ImageAlphaType::AlphaPremultiplied,
+            width,
+            height,
+        });
+        Some(RasterizedSvg {
+            brush,
+            logical_size,
+            pixel_size,
+            fit,
+        })
+    }
+}
+
 impl UsesProperty<ObjectFit> for Svg {}
 
 // --- MARK: IMPL WIDGET
 impl Widget for Svg {
     type Action = NoAction;
 
-    fn register_children(&mut self, _ctx: &mut RegisterCtx<'_>) {}
-
-    fn property_changed(&mut self, ctx: &mut UpdateCtx<'_>, property_type: TypeId) {
-        if ObjectFit::matches(property_type) {
-            ctx.request_layout();
-        }
-    }
-
-    fn update(
-        &mut self,
-        _ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &Update,
-    ) {
-    }
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        props: &PropertiesRef<'_>,
-        axis: Axis,
-        len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        let cache = ctx.property_cache();
-        let object_fit = props.get::<ObjectFit>(cache);
-        let preferred_size = self.preferred_size();
-
-        object_fit.measure(axis, len_req, cross_length, preferred_size)
-    }
+    image_widget_methods!();
 
     fn layout(&mut self, _ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, _size: Size) {
         self.rasterized = None;
@@ -188,82 +209,37 @@ impl Widget for Svg {
     ) {
         let content_box = ctx.content_box();
 
-        // NOTE: Ideally we would translate the SVG tree into scene draw calls.
-        //       However, until Vello API is a thing and Resvg gains that ability,
-        //       we'll just have to rasterize it using Tiny Skia and then draw the image.
-        if self.rasterized.is_none() {
-            let (Some(pixmap_width), Some(pixmap_height)) = (
-                raster_dimension(content_box.width()),
-                raster_dimension(content_box.height()),
-            ) else {
-                return;
-            };
-            let Some(mut pixmap) = tiny_skia::Pixmap::new(pixmap_width, pixmap_height) else {
-                return;
-            };
-
-            let cache = ctx.property_cache();
-            let object_fit = props.get::<ObjectFit>(cache);
-
-            // For drawing we want to scale the actual SVG data lengths, which means
-            // we need to avoid using Svg::preferred_size which does not match the data.
-            let svg_size = self.tree.size();
-            let svg_size = Size::new(f64::from(svg_size.width()), f64::from(svg_size.height()));
-
-            let coeffs = object_fit
-                .affine(content_box.size().to_rect(), svg_size.to_rect())
-                .as_coeffs();
-            let transform = tiny_skia::Transform::from_row(
-                coeffs[0] as f32,
-                coeffs[1] as f32,
-                coeffs[2] as f32,
-                coeffs[3] as f32,
-                coeffs[4] as f32,
-                coeffs[5] as f32,
-            );
-
-            resvg::render(&self.tree, transform, &mut pixmap.as_mut());
-
-            let image = ImageBrush::new(ImageData {
-                data: pixmap.data().to_vec().into(),
-                format: ImageFormat::Rgba8,
-                alpha_type: ImageAlphaType::AlphaPremultiplied,
-                width: pixmap_width,
-                height: pixmap_height,
-            });
-
-            self.rasterized = Some(image);
+        let logical_size = content_box.size();
+        let scale = ctx.scale_factor();
+        let (Some(width), Some(height)) = (
+            raster_dimension(logical_size.width * scale),
+            raster_dimension(logical_size.height * scale),
+        ) else {
+            self.rasterized = None;
+            return;
+        };
+        let cache = ctx.property_cache();
+        let fit = *props.get::<ObjectFit>(cache);
+        let pixel_size = (width, height);
+        if self.rasterized.as_ref().is_none_or(|raster| {
+            raster.logical_size != logical_size
+                || raster.pixel_size != pixel_size
+                || raster.fit != fit
+        }) {
+            self.rasterized = self.rasterize(logical_size, pixel_size, fit);
         }
-
-        let Some(image) = self.rasterized.as_ref() else {
+        let Some(raster) = self.rasterized.as_ref() else {
             return;
         };
 
+        let transform = Affine::translate(content_box.origin().to_vec2())
+            * Affine::scale_non_uniform(
+                logical_size.width / f64::from(width),
+                logical_size.height / f64::from(height),
+            );
         painter.with_fill_clip(content_box, |painter| {
-            painter.draw_image(image, Affine::IDENTITY);
+            painter.draw_image(&raster.brush, transform);
         });
-    }
-
-    fn accessibility_role(&self) -> Role {
-        Role::Image
-    }
-
-    fn accessibility(
-        &mut self,
-        _ctx: &mut AccessCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        node: &mut Node,
-    ) {
-        if let Some(alt_text) = &self.alt_text {
-            node.set_description(&**alt_text);
-        }
-        if self.decorative {
-            node.set_hidden();
-        }
-    }
-
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::new()
     }
 
     fn make_trace_span(&self, id: WidgetId) -> Span {
@@ -290,6 +266,31 @@ mod tests {
         let svg = Svg::new(Arc::new(tree)).prepare();
         let mut harness = TestHarness::create(test_property_set(), svg);
         let _ = harness.render().unwrap();
+    }
+
+    #[test]
+    fn rasterization_uses_physical_scale_without_changing_logical_fit() {
+        let xml = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>"#;
+        let tree = Tree::from_str(xml, &usvg::Options::default()).unwrap();
+        let svg = Svg::new(Arc::new(tree));
+        let logical_size = Size::new(20.0, 10.0);
+        let raster = svg
+            .rasterize(logical_size, (40, 20), ObjectFit::Contain)
+            .unwrap();
+        assert_eq!(
+            (raster.brush.image.width, raster.brush.image.height),
+            (40, 20)
+        );
+        let data = raster.brush.image.data.as_ref();
+        let pixel = |x: usize, y: usize| &data[(y * 40 + x) * 4..(y * 40 + x) * 4 + 4];
+        assert_eq!(
+            pixel(0, 10),
+            [0, 0, 0, 0],
+            "contain must letterbox in logical coordinates"
+        );
+        assert_eq!(pixel(10, 10), [255, 0, 0, 255]);
+        assert_eq!(pixel(29, 10), [255, 0, 0, 255]);
+        assert_eq!(pixel(30, 10), [0, 0, 0, 0]);
     }
 
     #[test]

@@ -7,15 +7,16 @@ use accesskit::{Node, Role};
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, ArcStr, ChildrenIds, LayoutCtx, MeasureCtx, NoAction, PaintCtx, PropertiesMut,
-    PropertiesRef, Property, RegisterCtx, Update, UpdateCtx, UsesProperty, Widget, WidgetId,
-    WidgetMut,
+    AccessCtx, ArcStr, ChildrenIds, LayoutCtx, MeasureCtx, NoAction, PaintCtx, PropertiesRef,
+    Property, RegisterCtx, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Size};
 use crate::layout::{LenReq, Length};
 use crate::peniko::ImageBrush;
 use crate::properties::ObjectFit;
+
+use super::image_common::image_widget_methods;
 
 // TODO: Make this a configurable option of the widget.
 /// The scale that the image is native to.
@@ -133,36 +134,7 @@ impl UsesProperty<ObjectFit> for Image {}
 impl Widget for Image {
     type Action = NoAction;
 
-    fn register_children(&mut self, _ctx: &mut RegisterCtx<'_>) {}
-
-    fn property_changed(&mut self, ctx: &mut UpdateCtx<'_>, property_type: TypeId) {
-        if ObjectFit::matches(property_type) {
-            ctx.request_layout();
-        }
-    }
-
-    fn update(
-        &mut self,
-        _ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &Update,
-    ) {
-    }
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        props: &PropertiesRef<'_>,
-        axis: Axis,
-        len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        let cache = ctx.property_cache();
-        let object_fit = props.get::<ObjectFit>(cache);
-        let preferred_size = self.preferred_size();
-
-        object_fit.measure(axis, len_req, cross_length, preferred_size)
-    }
+    image_widget_methods!();
 
     fn layout(&mut self, _ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, _size: Size) {}
 
@@ -186,28 +158,6 @@ impl Widget for Image {
         painter.with_fill_clip(content_box, |painter| {
             painter.draw_image(&self.brush, transform);
         });
-    }
-
-    fn accessibility_role(&self) -> Role {
-        Role::Image
-    }
-
-    fn accessibility(
-        &mut self,
-        _ctx: &mut AccessCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        node: &mut Node,
-    ) {
-        if let Some(alt_text) = &self.alt_text {
-            node.set_description(&**alt_text);
-        }
-        if self.decorative {
-            node.set_hidden();
-        }
-    }
-
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::new()
     }
 
     fn make_trace_span(&self, id: WidgetId) -> Span {
