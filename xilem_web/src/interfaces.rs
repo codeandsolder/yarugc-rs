@@ -379,55 +379,34 @@ where
     T: DomView<State, Action>,
     <T::DomNode as DomNode>::Props: WithElementProps,
     T::DomNode: AsRef<web_sys::Element>,
-    State: 'static,
 {
 }
 
-// #[cfg(feature = "HtmlAnchorElement")]
-pub trait HtmlAnchorElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlAnchorElement>>
-{
+macro_rules! dom_interface {
+    ($name:ident : $parent:ident => $target:ident { $($items:tt)* }) => {
+        pub trait $name<State: 'static, Action = ()>:
+            $parent<State, Action, DomNode: AsRef<web_sys::$target>>
+        {
+            $($items)*
+        }
+
+        impl<State, Action, T> $name<State, Action> for T
+        where
+            State: 'static,
+            T: $parent<State, Action>,
+            T::DomNode: AsRef<web_sys::$target>,
+        {}
+    };
 }
 
-// #[cfg(feature = "HtmlAnchorElement")]
-impl<State, Action, T> HtmlAnchorElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlAnchorElement>,
-    State: 'static,
-{
-}
+dom_interface!(HtmlAnchorElement: HtmlElement => HtmlAnchorElement {
+});
 
-// #[cfg(feature = "HtmlAreaElement")]
-pub trait HtmlAreaElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlAreaElement>>
-{
-}
+dom_interface!(HtmlAreaElement: HtmlElement => HtmlAreaElement {
+});
 
-// #[cfg(feature = "HtmlAreaElement")]
-impl<State, Action, T> HtmlAreaElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlAreaElement>,
-{
-}
-
-// #[cfg(feature = "HtmlAudioElement")]
-pub trait HtmlAudioElement<State: 'static, Action = ()>:
-    HtmlMediaElement<State, Action, DomNode: AsRef<web_sys::HtmlAudioElement>>
-{
-}
-
-// #[cfg(feature = "HtmlAudioElement")]
-impl<State, Action, T> HtmlAudioElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlMediaElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlAudioElement>,
-{
-}
+dom_interface!(HtmlAudioElement: HtmlMediaElement => HtmlAudioElement {
+});
 
 // #[cfg(feature = "HtmlBaseElement")]
 // pub trait HtmlBaseElement<State, Action = ()>:
@@ -459,118 +438,34 @@ where
 // {
 // }
 
-// #[cfg(feature = "HtmlBrElement")]
-pub trait HtmlBrElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlBrElement>>
-{
-}
+dom_interface!(HtmlBrElement: HtmlElement => HtmlBrElement {
+});
 
-// #[cfg(feature = "HtmlBrElement")]
-impl<State, Action, T> HtmlBrElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlBrElement>,
-{
-}
-
-// #[cfg(feature = "HtmlButtonElement")]
-pub trait HtmlButtonElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlButtonElement>>
-{
+dom_interface!(HtmlButtonElement: HtmlElement => HtmlButtonElement {
     /// See <https://developer.mozilla.org/en-US/docs/Web/HTML/Attributes/disabled> for more details
     fn disabled(self, disable: bool) -> Attr<Self, State, Action> {
         Attr::new(self, "disabled".into(), disable.into_attr_value())
     }
-}
+});
 
-// #[cfg(feature = "HtmlButtonElement")]
-impl<State, Action, T> HtmlButtonElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlButtonElement>,
-{
-}
-
-// #[cfg(feature = "HtmlCanvasElement")]
-pub trait HtmlCanvasElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlCanvasElement>>
-{
+dom_interface!(HtmlCanvasElement: HtmlElement => HtmlCanvasElement {
     /// See <https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/width> for more details
     fn width(self, value: u32) -> Attr<Self, State, Action> {
         Attr::new(self, "width".into(), value.into_attr_value())
     }
-}
+});
 
-// #[cfg(feature = "HtmlCanvasElement")]
-impl<State, Action, T> HtmlCanvasElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlCanvasElement>,
-{
-}
+dom_interface!(HtmlDataElement: HtmlElement => HtmlDataElement {
+});
 
-// #[cfg(feature = "HtmlDataElement")]
-pub trait HtmlDataElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlDataElement>>
-{
-}
+dom_interface!(HtmlDataListElement: HtmlElement => HtmlDataListElement {
+});
 
-// #[cfg(feature = "HtmlDataElement")]
-impl<State, Action, T> HtmlDataElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlDataElement>,
-{
-}
+dom_interface!(HtmlDetailsElement: HtmlElement => HtmlDetailsElement {
+});
 
-// #[cfg(feature = "HtmlDataListElement")]
-pub trait HtmlDataListElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlDataListElement>>
-{
-}
-
-// #[cfg(feature = "HtmlDataListElement")]
-impl<State, Action, T> HtmlDataListElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlDataListElement>,
-{
-}
-
-// #[cfg(feature = "HtmlDetailsElement")]
-pub trait HtmlDetailsElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlDetailsElement>>
-{
-}
-
-// #[cfg(feature = "HtmlDetailsElement")]
-impl<State, Action, T> HtmlDetailsElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlDetailsElement>,
-{
-}
-
-// #[cfg(feature = "HtmlDialogElement")]
-pub trait HtmlDialogElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlDialogElement>>
-{
-}
-
-// #[cfg(feature = "HtmlDialogElement")]
-impl<State, Action, T> HtmlDialogElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlDialogElement>,
-{
-}
+dom_interface!(HtmlDialogElement: HtmlElement => HtmlDialogElement {
+});
 
 // #[cfg(feature = "HtmlDirectoryElement")]
 // pub trait HtmlDirectoryElement<State, Action = ()>:
@@ -587,50 +482,14 @@ where
 // {
 // }
 
-// #[cfg(feature = "HtmlDivElement")]
-pub trait HtmlDivElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlDivElement>>
-{
-}
+dom_interface!(HtmlDivElement: HtmlElement => HtmlDivElement {
+});
 
-// #[cfg(feature = "HtmlDivElement")]
-impl<State, Action, T> HtmlDivElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlDivElement>,
-{
-}
+dom_interface!(HtmlDListElement: HtmlElement => HtmlDListElement {
+});
 
-// #[cfg(feature = "HtmlDListElement")]
-pub trait HtmlDListElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlDListElement>>
-{
-}
-
-// #[cfg(feature = "HtmlDListElement")]
-impl<State, Action, T> HtmlDListElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlDListElement>,
-{
-}
-
-// #[cfg(feature = "HtmlElement")]
-pub trait HtmlElement<State: 'static, Action = ()>:
-    Element<State, Action, DomNode: AsRef<web_sys::HtmlElement>>
-{
-}
-
-// #[cfg(feature = "HtmlElement")]
-impl<State, Action, T> HtmlElement<State, Action> for T
-where
-    State: 'static,
-    T: Element<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlElement>,
-{
-}
+dom_interface!(HtmlElement: Element => HtmlElement {
+});
 
 // #[cfg(feature = "HtmlUnknownElement")]
 // pub trait HtmlUnknownElement<State, Action = ()>:
@@ -647,35 +506,11 @@ where
 // {
 // }
 
-// #[cfg(feature = "HtmlEmbedElement")]
-pub trait HtmlEmbedElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlEmbedElement>>
-{
-}
+dom_interface!(HtmlEmbedElement: HtmlElement => HtmlEmbedElement {
+});
 
-// #[cfg(feature = "HtmlEmbedElement")]
-impl<State, Action, T> HtmlEmbedElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlEmbedElement>,
-{
-}
-
-// #[cfg(feature = "HtmlFieldSetElement")]
-pub trait HtmlFieldSetElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlFieldSetElement>>
-{
-}
-
-// #[cfg(feature = "HtmlFieldSetElement")]
-impl<State, Action, T> HtmlFieldSetElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlFieldSetElement>,
-{
-}
+dom_interface!(HtmlFieldSetElement: HtmlElement => HtmlFieldSetElement {
+});
 
 // #[cfg(feature = "HtmlFontElement")]
 // pub trait HtmlFontElement<State, Action = ()>:
@@ -692,20 +527,8 @@ where
 // {
 // }
 
-// #[cfg(feature = "HtmlFormElement")]
-pub trait HtmlFormElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlFormElement>>
-{
-}
-
-// #[cfg(feature = "HtmlFormElement")]
-impl<State, Action, T> HtmlFormElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlFormElement>,
-{
-}
+dom_interface!(HtmlFormElement: HtmlElement => HtmlFormElement {
+});
 
 // #[cfg(feature = "HtmlFrameElement")]
 // pub trait HtmlFrameElement<State, Action = ()>:
@@ -752,35 +575,11 @@ where
 // {
 // }
 
-// #[cfg(feature = "HtmlHeadingElement")]
-pub trait HtmlHeadingElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlHeadingElement>>
-{
-}
+dom_interface!(HtmlHeadingElement: HtmlElement => HtmlHeadingElement {
+});
 
-// #[cfg(feature = "HtmlHeadingElement")]
-impl<State, Action, T> HtmlHeadingElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlHeadingElement>,
-{
-}
-
-// #[cfg(feature = "HtmlHrElement")]
-pub trait HtmlHrElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlHrElement>>
-{
-}
-
-// #[cfg(feature = "HtmlHrElement")]
-impl<State, Action, T> HtmlHrElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlHrElement>,
-{
-}
+dom_interface!(HtmlHrElement: HtmlElement => HtmlHrElement {
+});
 
 // #[cfg(feature = "HtmlHtmlElement")]
 // pub trait HtmlHtmlElement<State, Action = ()>:
@@ -797,43 +596,19 @@ where
 // {
 // }
 
-// #[cfg(feature = "HtmlIFrameElement")]
-pub trait HtmlIFrameElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlIFrameElement>>
-{
+dom_interface!(HtmlIFrameElement: HtmlElement => HtmlIFrameElement {
     /// See <https://developer.mozilla.org/en-US/docs/Web/API/HTMLIFrameElement/src> for more details
     fn src(self, value: impl IntoAttributeValue) -> Attr<Self, State, Action> {
         Attr::new(self, "src".into(), value.into_attr_value())
     }
-}
+});
 
-// #[cfg(feature = "HtmlIFrameElement")]
-impl<State, Action, T> HtmlIFrameElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlIFrameElement>,
-{
-}
-
-// #[cfg(feature = "HtmlImageElement")]
-pub trait HtmlImageElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlImageElement>>
-{
+dom_interface!(HtmlImageElement: HtmlElement => HtmlImageElement {
     /// See <https://developer.mozilla.org/en-US/docs/Web/API/HTMLImageElement/src> for more details
     fn src(self, value: impl IntoAttributeValue) -> Attr<Self, State, Action> {
         Attr::new(self, Cow::from("src"), value.into_attr_value())
     }
-}
-
-// #[cfg(feature = "HtmlImageElement")]
-impl<State, Action, T> HtmlImageElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlImageElement>,
-{
-}
+});
 
 use crate::modifiers::html_input_element;
 // #[cfg(feature = "HtmlInputElement")]
@@ -963,10 +738,7 @@ where
 {
 }
 
-// #[cfg(feature = "HtmlLabelElement")]
-pub trait HtmlLabelElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlLabelElement>>
-{
+dom_interface!(HtmlLabelElement: HtmlElement => HtmlLabelElement {
     /// The first element in the document with an id attribute matching the value of the for attribute is the labeled control for this label element — if the element with that id is actually a labelable element.
     /// If it is not a labelable element, then the for attribute has no effect.
     /// If there are other elements that also match the id value, later in the document, they are not considered.
@@ -976,110 +748,29 @@ pub trait HtmlLabelElement<State: 'static, Action = ()>:
     fn for_(self, value: impl IntoAttributeValue) -> Attr<Self, State, Action> {
         Attr::new(self, Cow::from("for"), value.into_attr_value())
     }
-}
+});
 
-// #[cfg(feature = "HtmlLabelElement")]
-impl<State, Action, T> HtmlLabelElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlLabelElement>,
-{
-}
+dom_interface!(HtmlLegendElement: HtmlElement => HtmlLegendElement {
+});
 
-// #[cfg(feature = "HtmlLegendElement")]
-pub trait HtmlLegendElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlLegendElement>>
-{
-}
-
-// #[cfg(feature = "HtmlLegendElement")]
-impl<State, Action, T> HtmlLegendElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlLegendElement>,
-{
-}
-
-// #[cfg(feature = "HtmlLiElement")]
-pub trait HtmlLiElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlLiElement>>
-{
+dom_interface!(HtmlLiElement: HtmlElement => HtmlLiElement {
     /// See <https://developer.mozilla.org/en-US/docs/Web/HTML/Element/li#value> for more details
     fn value(self, value: i32) -> Attr<Self, State, Action> {
         Attr::new(self, "value".into(), value.into_attr_value())
     }
-}
+});
 
-// #[cfg(feature = "HtmlLiElement")]
-impl<State, Action, T> HtmlLiElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlLiElement>,
-{
-}
+dom_interface!(HtmlLinkElement: HtmlElement => HtmlLinkElement {
+});
 
-// #[cfg(feature = "HtmlLinkElement")]
-pub trait HtmlLinkElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlLinkElement>>
-{
-}
+dom_interface!(HtmlMapElement: HtmlElement => HtmlMapElement {
+});
 
-// #[cfg(feature = "HtmlLinkElement")]
-impl<State, Action, T> HtmlLinkElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlLinkElement>,
-{
-}
+dom_interface!(HtmlMediaElement: HtmlElement => HtmlMediaElement {
+});
 
-// #[cfg(feature = "HtmlMapElement")]
-pub trait HtmlMapElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlMapElement>>
-{
-}
-
-// #[cfg(feature = "HtmlMapElement")]
-impl<State, Action, T> HtmlMapElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlMapElement>,
-{
-}
-
-// #[cfg(feature = "HtmlMediaElement")]
-pub trait HtmlMediaElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlMediaElement>>
-{
-}
-
-// #[cfg(feature = "HtmlMediaElement")]
-impl<State, Action, T> HtmlMediaElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlMediaElement>,
-{
-}
-
-// #[cfg(feature = "HtmlMenuElement")]
-pub trait HtmlMenuElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlMenuElement>>
-{
-}
-
-// #[cfg(feature = "HtmlMenuElement")]
-impl<State, Action, T> HtmlMenuElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlMenuElement>,
-{
-}
+dom_interface!(HtmlMenuElement: HtmlElement => HtmlMenuElement {
+});
 
 // #[cfg(feature = "HtmlMenuItemElement")]
 // pub trait HtmlMenuItemElement<State, Action = ()>:
@@ -1111,85 +802,22 @@ where
 // {
 // }
 
-// #[cfg(feature = "HtmlMeterElement")]
-pub trait HtmlMeterElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlMeterElement>>
-{
-}
+dom_interface!(HtmlMeterElement: HtmlElement => HtmlMeterElement {
+});
 
-// #[cfg(feature = "HtmlMeterElement")]
-impl<State, Action, T> HtmlMeterElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlMeterElement>,
-{
-}
+dom_interface!(HtmlModElement: HtmlElement => HtmlModElement {
+});
 
-// #[cfg(feature = "HtmlModElement")]
-pub trait HtmlModElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlModElement>>
-{
-}
+dom_interface!(HtmlObjectElement: HtmlElement => HtmlObjectElement {
+});
 
-// #[cfg(feature = "HtmlModElement")]
-impl<State, Action, T> HtmlModElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlModElement>,
-{
-}
+dom_interface!(HtmlOListElement: HtmlElement => HtmlOListElement {
+});
 
-// #[cfg(feature = "HtmlObjectElement")]
-pub trait HtmlObjectElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlObjectElement>>
-{
-}
+dom_interface!(HtmlOptGroupElement: HtmlElement => HtmlOptGroupElement {
+});
 
-// #[cfg(feature = "HtmlObjectElement")]
-impl<State, Action, T> HtmlObjectElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlObjectElement>,
-{
-}
-
-// #[cfg(feature = "HtmlOListElement")]
-pub trait HtmlOListElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlOListElement>>
-{
-}
-
-// #[cfg(feature = "HtmlOListElement")]
-impl<State, Action, T> HtmlOListElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlOListElement>,
-{
-}
-
-// #[cfg(feature = "HtmlOptGroupElement")]
-pub trait HtmlOptGroupElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlOptGroupElement>>
-{
-}
-
-// #[cfg(feature = "HtmlOptGroupElement")]
-impl<State, Action, T> HtmlOptGroupElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlOptGroupElement>,
-{
-}
-
-// #[cfg(feature = "HtmlOptionElement")]
-pub trait HtmlOptionElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlOptionElement>>
-{
+dom_interface!(HtmlOptionElement: HtmlElement => HtmlOptionElement {
     /// A string representing the value of the `HTMLOptionElement`, i.e. the value attribute of the equivalent `<option>`.
     /// If this is not specified, the value of text is used as the value, e.g. for the associated `<select>` element's value when the form is submitted to the server.
     ///
@@ -1205,46 +833,13 @@ pub trait HtmlOptionElement<State: 'static, Action = ()>:
     fn selected(self, selected: bool) -> Attr<Self, State, Action> {
         Attr::new(self, Cow::from("selected"), selected.into_attr_value())
     }
-}
+});
 
-// #[cfg(feature = "HtmlOptionElement")]
-impl<State, Action, T> HtmlOptionElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlOptionElement>,
-{
-}
+dom_interface!(HtmlOutputElement: HtmlElement => HtmlOutputElement {
+});
 
-// #[cfg(feature = "HtmlOutputElement")]
-pub trait HtmlOutputElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlOutputElement>>
-{
-}
-
-// #[cfg(feature = "HtmlOutputElement")]
-impl<State, Action, T> HtmlOutputElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlOutputElement>,
-{
-}
-
-// #[cfg(feature = "HtmlParagraphElement")]
-pub trait HtmlParagraphElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlParagraphElement>>
-{
-}
-
-// #[cfg(feature = "HtmlParagraphElement")]
-impl<State, Action, T> HtmlParagraphElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlParagraphElement>,
-{
-}
+dom_interface!(HtmlParagraphElement: HtmlElement => HtmlParagraphElement {
+});
 
 // #[cfg(feature = "HtmlParamElement")]
 // pub trait HtmlParamElement<State, Action = ()>:
@@ -1261,85 +856,22 @@ where
 // {
 // }
 
-// #[cfg(feature = "HtmlPictureElement")]
-pub trait HtmlPictureElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlPictureElement>>
-{
-}
+dom_interface!(HtmlPictureElement: HtmlElement => HtmlPictureElement {
+});
 
-// #[cfg(feature = "HtmlPictureElement")]
-impl<State, Action, T> HtmlPictureElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlPictureElement>,
-{
-}
+dom_interface!(HtmlPreElement: HtmlElement => HtmlPreElement {
+});
 
-// #[cfg(feature = "HtmlPreElement")]
-pub trait HtmlPreElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlPreElement>>
-{
-}
+dom_interface!(HtmlProgressElement: HtmlElement => HtmlProgressElement {
+});
 
-// #[cfg(feature = "HtmlPreElement")]
-impl<State, Action, T> HtmlPreElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlPreElement>,
-{
-}
+dom_interface!(HtmlQuoteElement: HtmlElement => HtmlQuoteElement {
+});
 
-// #[cfg(feature = "HtmlProgressElement")]
-pub trait HtmlProgressElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlProgressElement>>
-{
-}
+dom_interface!(HtmlScriptElement: HtmlElement => HtmlScriptElement {
+});
 
-// #[cfg(feature = "HtmlProgressElement")]
-impl<State, Action, T> HtmlProgressElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlProgressElement>,
-{
-}
-
-// #[cfg(feature = "HtmlQuoteElement")]
-pub trait HtmlQuoteElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlQuoteElement>>
-{
-}
-
-// #[cfg(feature = "HtmlQuoteElement")]
-impl<State, Action, T> HtmlQuoteElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlQuoteElement>,
-{
-}
-
-// #[cfg(feature = "HtmlScriptElement")]
-pub trait HtmlScriptElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlScriptElement>>
-{
-}
-
-// #[cfg(feature = "HtmlScriptElement")]
-impl<State, Action, T> HtmlScriptElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlScriptElement>,
-{
-}
-
-// #[cfg(feature = "HtmlSelectElement")]
-pub trait HtmlSelectElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlSelectElement>>
-{
+dom_interface!(HtmlSelectElement: HtmlElement => HtmlSelectElement {
     /// A string representing the value of the `HTMLOptionElement`, i.e. the value attribute of the equivalent `<option>`.
     /// If this is not specified, the value of text is used as the value, e.g. for the associated `<select>` element's value when the form is submitted to the server.
     ///
@@ -1347,61 +879,16 @@ pub trait HtmlSelectElement<State: 'static, Action = ()>:
     fn value(self, value: impl IntoAttributeValue) -> Attr<Self, State, Action> {
         Attr::new(self, Cow::from("value"), value.into_attr_value())
     }
-}
+});
 
-// #[cfg(feature = "HtmlSelectElement")]
-impl<State, Action, T> HtmlSelectElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlSelectElement>,
-{
-}
+dom_interface!(HtmlSlotElement: HtmlElement => HtmlSlotElement {
+});
 
-// #[cfg(feature = "HtmlSlotElement")]
-pub trait HtmlSlotElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlSlotElement>>
-{
-}
+dom_interface!(HtmlSourceElement: HtmlElement => HtmlSourceElement {
+});
 
-// #[cfg(feature = "HtmlSlotElement")]
-impl<State, Action, T> HtmlSlotElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlSlotElement>,
-{
-}
-
-// #[cfg(feature = "HtmlSourceElement")]
-pub trait HtmlSourceElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlSourceElement>>
-{
-}
-
-// #[cfg(feature = "HtmlSourceElement")]
-impl<State, Action, T> HtmlSourceElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlSourceElement>,
-{
-}
-
-// #[cfg(feature = "HtmlSpanElement")]
-pub trait HtmlSpanElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlSpanElement>>
-{
-}
-
-// #[cfg(feature = "HtmlSpanElement")]
-impl<State, Action, T> HtmlSpanElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlSpanElement>,
-{
-}
+dom_interface!(HtmlSpanElement: HtmlElement => HtmlSpanElement {
+});
 
 // #[cfg(feature = "HtmlStyleElement")]
 // pub trait HtmlStyleElement<State, Action = ()>:
@@ -1418,140 +905,32 @@ where
 // {
 // }
 
-// #[cfg(feature = "HtmlTableCaptionElement")]
-pub trait HtmlTableCaptionElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlTableCaptionElement>>
-{
-}
+dom_interface!(HtmlTableCaptionElement: HtmlElement => HtmlTableCaptionElement {
+});
 
-// #[cfg(feature = "HtmlTableCaptionElement")]
-impl<State, Action, T> HtmlTableCaptionElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlTableCaptionElement>,
-{
-}
+dom_interface!(HtmlTableCellElement: HtmlElement => HtmlTableCellElement {
+});
 
-// #[cfg(feature = "HtmlTableCellElement")]
-pub trait HtmlTableCellElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlTableCellElement>>
-{
-}
+dom_interface!(HtmlTableColElement: HtmlElement => HtmlTableColElement {
+});
 
-// #[cfg(feature = "HtmlTableCellElement")]
-impl<State, Action, T> HtmlTableCellElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlTableCellElement>,
-{
-}
+dom_interface!(HtmlTableElement: HtmlElement => HtmlTableElement {
+});
 
-// #[cfg(feature = "HtmlTableColElement")]
-pub trait HtmlTableColElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlTableColElement>>
-{
-}
+dom_interface!(HtmlTableRowElement: HtmlElement => HtmlTableRowElement {
+});
 
-// #[cfg(feature = "HtmlTableColElement")]
-impl<State, Action, T> HtmlTableColElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlTableColElement>,
-{
-}
+dom_interface!(HtmlTableSectionElement: HtmlElement => HtmlTableSectionElement {
+});
 
-// #[cfg(feature = "HtmlTableElement")]
-pub trait HtmlTableElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlTableElement>>
-{
-}
+dom_interface!(HtmlTemplateElement: HtmlElement => HtmlTemplateElement {
+});
 
-// #[cfg(feature = "HtmlTableElement")]
-impl<State, Action, T> HtmlTableElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlTableElement>,
-{
-}
+dom_interface!(HtmlTimeElement: HtmlElement => HtmlTimeElement {
+});
 
-// #[cfg(feature = "HtmlTableRowElement")]
-pub trait HtmlTableRowElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlTableRowElement>>
-{
-}
-
-// #[cfg(feature = "HtmlTableRowElement")]
-impl<State, Action, T> HtmlTableRowElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlTableRowElement>,
-{
-}
-
-// #[cfg(feature = "HtmlTableSectionElement")]
-pub trait HtmlTableSectionElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlTableSectionElement>>
-{
-}
-
-// #[cfg(feature = "HtmlTableSectionElement")]
-impl<State, Action, T> HtmlTableSectionElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlTableSectionElement>,
-{
-}
-
-// #[cfg(feature = "HtmlTemplateElement")]
-pub trait HtmlTemplateElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlTemplateElement>>
-{
-}
-
-// #[cfg(feature = "HtmlTemplateElement")]
-impl<State, Action, T> HtmlTemplateElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlTemplateElement>,
-{
-}
-
-// #[cfg(feature = "HtmlTimeElement")]
-pub trait HtmlTimeElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlTimeElement>>
-{
-}
-
-// #[cfg(feature = "HtmlTimeElement")]
-impl<State, Action, T> HtmlTimeElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlTimeElement>,
-{
-}
-
-// #[cfg(feature = "HtmlTextAreaElement")]
-pub trait HtmlTextAreaElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlTextAreaElement>>
-{
-}
-
-// #[cfg(feature = "HtmlTextAreaElement")]
-impl<State, Action, T> HtmlTextAreaElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlTextAreaElement>,
-{
-}
+dom_interface!(HtmlTextAreaElement: HtmlElement => HtmlTextAreaElement {
+});
 
 // #[cfg(feature = "HtmlTitleElement")]
 // pub trait HtmlTitleElement<State, Action = ()>:
@@ -1568,1157 +947,234 @@ where
 // {
 // }
 
-// #[cfg(feature = "HtmlTrackElement")]
-pub trait HtmlTrackElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlTrackElement>>
-{
-}
+dom_interface!(HtmlTrackElement: HtmlElement => HtmlTrackElement {
+});
 
-// #[cfg(feature = "HtmlTrackElement")]
-impl<State, Action, T> HtmlTrackElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlTrackElement>,
-{
-}
+dom_interface!(HtmlUListElement: HtmlElement => HtmlUListElement {
+});
 
-// #[cfg(feature = "HtmlUListElement")]
-pub trait HtmlUListElement<State: 'static, Action = ()>:
-    HtmlElement<State, Action, DomNode: AsRef<web_sys::HtmlUListElement>>
-{
-}
+dom_interface!(HtmlVideoElement: HtmlMediaElement => HtmlVideoElement {
+});
 
-// #[cfg(feature = "HtmlUListElement")]
-impl<State, Action, T> HtmlUListElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlUListElement>,
-{
-}
+dom_interface!(SvgaElement: SvgGraphicsElement => SvgaElement {
+});
 
-// #[cfg(feature = "HtmlVideoElement")]
-pub trait HtmlVideoElement<State: 'static, Action = ()>:
-    HtmlMediaElement<State, Action, DomNode: AsRef<web_sys::HtmlVideoElement>>
-{
-}
+dom_interface!(SvgAnimateElement: SvgAnimationElement => SvgAnimateElement {
+});
 
-// #[cfg(feature = "HtmlVideoElement")]
-impl<State, Action, T> HtmlVideoElement<State, Action> for T
-where
-    State: 'static,
-    T: HtmlMediaElement<State, Action>,
-    T::DomNode: AsRef<web_sys::HtmlVideoElement>,
-{
-}
+dom_interface!(SvgAnimateMotionElement: SvgAnimationElement => SvgAnimateMotionElement {
+});
 
-// #[cfg(feature = "SvgaElement")]
-pub trait SvgaElement<State: 'static, Action = ()>:
-    SvgGraphicsElement<State, Action, DomNode: AsRef<web_sys::SvgaElement>>
-{
-}
+dom_interface!(SvgAnimateTransformElement: SvgAnimationElement => SvgAnimateTransformElement {
+});
 
-// #[cfg(feature = "SvgaElement")]
-impl<State, Action, T> SvgaElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgGraphicsElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgaElement>,
-{
-}
+dom_interface!(SvgAnimationElement: SvgElement => SvgAnimationElement {
+});
 
-// #[cfg(feature = "SvgAnimateElement")]
-pub trait SvgAnimateElement<State: 'static, Action = ()>:
-    SvgAnimationElement<State, Action, DomNode: AsRef<web_sys::SvgAnimateElement>>
-{
-}
+dom_interface!(SvgCircleElement: SvgGeometryElement => SvgCircleElement {
+});
 
-// #[cfg(feature = "SvgAnimateElement")]
-impl<State, Action, T> SvgAnimateElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgAnimationElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgAnimateElement>,
-{
-}
+dom_interface!(SvgClipPathElement: SvgElement => SvgClipPathElement {
+});
 
-// #[cfg(feature = "SvgAnimateMotionElement")]
-pub trait SvgAnimateMotionElement<State: 'static, Action = ()>:
-    SvgAnimationElement<State, Action, DomNode: AsRef<web_sys::SvgAnimateMotionElement>>
-{
-}
+dom_interface!(SvgComponentTransferFunctionElement: SvgElement => SvgComponentTransferFunctionElement {
+});
 
-// #[cfg(feature = "SvgAnimateMotionElement")]
-impl<State, Action, T> SvgAnimateMotionElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgAnimationElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgAnimateMotionElement>,
-{
-}
+dom_interface!(SvgDefsElement: SvgGraphicsElement => SvgDefsElement {
+});
 
-// #[cfg(feature = "SvgAnimateTransformElement")]
-pub trait SvgAnimateTransformElement<State: 'static, Action = ()>:
-    SvgAnimationElement<State, Action, DomNode: AsRef<web_sys::SvgAnimateTransformElement>>
-{
-}
+dom_interface!(SvgDescElement: SvgElement => SvgDescElement {
+});
 
-// #[cfg(feature = "SvgAnimateTransformElement")]
-impl<State, Action, T> SvgAnimateTransformElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgAnimationElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgAnimateTransformElement>,
-{
-}
-
-// #[cfg(feature = "SvgAnimationElement")]
-pub trait SvgAnimationElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgAnimationElement>>
-{
-}
-
-// #[cfg(feature = "SvgAnimationElement")]
-impl<State, Action, T> SvgAnimationElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgAnimationElement>,
-{
-}
-
-// #[cfg(feature = "SvgCircleElement")]
-pub trait SvgCircleElement<State: 'static, Action = ()>:
-    SvgGeometryElement<State, Action, DomNode: AsRef<web_sys::SvgCircleElement>>
-{
-    fn fill(self, brush: impl Into<peniko::Brush>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, brush)
-    }
-}
-
-// #[cfg(feature = "SvgCircleElement")]
-impl<State, Action, T> SvgCircleElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgGeometryElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgCircleElement>,
-{
-}
-
-// #[cfg(feature = "SvgClipPathElement")]
-pub trait SvgClipPathElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgClipPathElement>>
-{
-}
-
-// #[cfg(feature = "SvgClipPathElement")]
-impl<State, Action, T> SvgClipPathElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgClipPathElement>,
-{
-}
-
-// #[cfg(feature = "SvgComponentTransferFunctionElement")]
-pub trait SvgComponentTransferFunctionElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgComponentTransferFunctionElement>>
-{
-}
-
-// #[cfg(feature = "SvgComponentTransferFunctionElement")]
-impl<State, Action, T> SvgComponentTransferFunctionElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgComponentTransferFunctionElement>,
-{
-}
-
-// #[cfg(feature = "SvgDefsElement")]
-pub trait SvgDefsElement<State: 'static, Action = ()>:
-    SvgGraphicsElement<State, Action, DomNode: AsRef<web_sys::SvgDefsElement>>
-{
-}
-
-// #[cfg(feature = "SvgDefsElement")]
-impl<State, Action, T> SvgDefsElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgGraphicsElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgDefsElement>,
-{
-}
-
-// #[cfg(feature = "SvgDescElement")]
-pub trait SvgDescElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgDescElement>>
-{
-}
-
-// #[cfg(feature = "SvgDescElement")]
-impl<State, Action, T> SvgDescElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgDescElement>,
-{
-}
-
-// #[cfg(feature = "SvgElement")]
-pub trait SvgElement<State: 'static, Action = ()>:
-    Element<State, Action, DomNode: AsRef<web_sys::SvgElement>>
-{
-}
-
-// #[cfg(feature = "SvgElement")]
-impl<State, Action, T> SvgElement<State, Action> for T
-where
-    State: 'static,
-    T: Element<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgElement>,
-{
-}
-
-// #[cfg(feature = "SvgEllipseElement")]
-pub trait SvgEllipseElement<State: 'static, Action = ()>:
-    SvgGeometryElement<State, Action, DomNode: AsRef<web_sys::SvgEllipseElement>>
-{
-    fn fill(self, brush: impl Into<peniko::Brush>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, brush)
-    }
-}
-
-// #[cfg(feature = "SvgEllipseElement")]
-impl<State, Action, T> SvgEllipseElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgGeometryElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgEllipseElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeBlendElement")]
-pub trait SvgfeBlendElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfeBlendElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeBlendElement")]
-impl<State, Action, T> SvgfeBlendElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeBlendElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeColorMatrixElement")]
-pub trait SvgfeColorMatrixElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfeColorMatrixElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeColorMatrixElement")]
-impl<State, Action, T> SvgfeColorMatrixElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeColorMatrixElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeComponentTransferElement")]
-pub trait SvgfeComponentTransferElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfeComponentTransferElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeComponentTransferElement")]
-impl<State, Action, T> SvgfeComponentTransferElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeComponentTransferElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeCompositeElement")]
-pub trait SvgfeCompositeElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfeCompositeElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeCompositeElement")]
-impl<State, Action, T> SvgfeCompositeElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeCompositeElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeConvolveMatrixElement")]
-pub trait SvgfeConvolveMatrixElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfeConvolveMatrixElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeConvolveMatrixElement")]
-impl<State, Action, T> SvgfeConvolveMatrixElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeConvolveMatrixElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeDiffuseLightingElement")]
-pub trait SvgfeDiffuseLightingElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfeDiffuseLightingElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeDiffuseLightingElement")]
-impl<State, Action, T> SvgfeDiffuseLightingElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeDiffuseLightingElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeDisplacementMapElement")]
-pub trait SvgfeDisplacementMapElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfeDisplacementMapElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeDisplacementMapElement")]
-impl<State, Action, T> SvgfeDisplacementMapElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeDisplacementMapElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeDistantLightElement")]
-pub trait SvgfeDistantLightElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfeDistantLightElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeDistantLightElement")]
-impl<State, Action, T> SvgfeDistantLightElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeDistantLightElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeDropShadowElement")]
-pub trait SvgfeDropShadowElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfeDropShadowElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeDropShadowElement")]
-impl<State, Action, T> SvgfeDropShadowElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeDropShadowElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeFloodElement")]
-pub trait SvgfeFloodElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfeFloodElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeFloodElement")]
-impl<State, Action, T> SvgfeFloodElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeFloodElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeFuncAElement")]
-pub trait SvgfeFuncAElement<State: 'static, Action = ()>:
-    SvgComponentTransferFunctionElement<State, Action, DomNode: AsRef<web_sys::SvgfeFuncAElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeFuncAElement")]
-impl<State, Action, T> SvgfeFuncAElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgComponentTransferFunctionElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeFuncAElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeFuncBElement")]
-pub trait SvgfeFuncBElement<State: 'static, Action = ()>:
-    SvgComponentTransferFunctionElement<State, Action, DomNode: AsRef<web_sys::SvgfeFuncBElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeFuncBElement")]
-impl<State, Action, T> SvgfeFuncBElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgComponentTransferFunctionElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeFuncBElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeFuncGElement")]
-pub trait SvgfeFuncGElement<State: 'static, Action = ()>:
-    SvgComponentTransferFunctionElement<State, Action, DomNode: AsRef<web_sys::SvgfeFuncGElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeFuncGElement")]
-impl<State, Action, T> SvgfeFuncGElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgComponentTransferFunctionElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeFuncGElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeFuncRElement")]
-pub trait SvgfeFuncRElement<State: 'static, Action = ()>:
-    SvgComponentTransferFunctionElement<State, Action, DomNode: AsRef<web_sys::SvgfeFuncRElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeFuncRElement")]
-impl<State, Action, T> SvgfeFuncRElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgComponentTransferFunctionElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeFuncRElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeGaussianBlurElement")]
-pub trait SvgfeGaussianBlurElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfeGaussianBlurElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeGaussianBlurElement")]
-impl<State, Action, T> SvgfeGaussianBlurElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeGaussianBlurElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeImageElement")]
-pub trait SvgfeImageElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfeImageElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeImageElement")]
-impl<State, Action, T> SvgfeImageElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeImageElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeMergeElement")]
-pub trait SvgfeMergeElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfeMergeElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeMergeElement")]
-impl<State, Action, T> SvgfeMergeElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeMergeElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeMergeNodeElement")]
-pub trait SvgfeMergeNodeElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfeMergeNodeElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeMergeNodeElement")]
-impl<State, Action, T> SvgfeMergeNodeElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeMergeNodeElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeMorphologyElement")]
-pub trait SvgfeMorphologyElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfeMorphologyElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeMorphologyElement")]
-impl<State, Action, T> SvgfeMorphologyElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeMorphologyElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeOffsetElement")]
-pub trait SvgfeOffsetElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfeOffsetElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeOffsetElement")]
-impl<State, Action, T> SvgfeOffsetElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeOffsetElement>,
-{
-}
-
-// #[cfg(feature = "SvgfePointLightElement")]
-pub trait SvgfePointLightElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfePointLightElement>>
-{
-}
-
-// #[cfg(feature = "SvgfePointLightElement")]
-impl<State, Action, T> SvgfePointLightElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfePointLightElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeSpecularLightingElement")]
-pub trait SvgfeSpecularLightingElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfeSpecularLightingElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeSpecularLightingElement")]
-impl<State, Action, T> SvgfeSpecularLightingElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeSpecularLightingElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeSpotLightElement")]
-pub trait SvgfeSpotLightElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfeSpotLightElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeSpotLightElement")]
-impl<State, Action, T> SvgfeSpotLightElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeSpotLightElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeTileElement")]
-pub trait SvgfeTileElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfeTileElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeTileElement")]
-impl<State, Action, T> SvgfeTileElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeTileElement>,
-{
-}
-
-// #[cfg(feature = "SvgfeTurbulenceElement")]
-pub trait SvgfeTurbulenceElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgfeTurbulenceElement>>
-{
-}
-
-// #[cfg(feature = "SvgfeTurbulenceElement")]
-impl<State, Action, T> SvgfeTurbulenceElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgfeTurbulenceElement>,
-{
-}
-
-// #[cfg(feature = "SvgFilterElement")]
-pub trait SvgFilterElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgFilterElement>>
-{
-}
-
-// #[cfg(feature = "SvgFilterElement")]
-impl<State, Action, T> SvgFilterElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgFilterElement>,
-{
-}
-
-// #[cfg(feature = "SvgForeignObjectElement")]
-pub trait SvgForeignObjectElement<State: 'static, Action = ()>:
-    SvgGraphicsElement<State, Action, DomNode: AsRef<web_sys::SvgForeignObjectElement>>
-{
-}
-
-// #[cfg(feature = "SvgForeignObjectElement")]
-impl<State, Action, T> SvgForeignObjectElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgGraphicsElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgForeignObjectElement>,
-{
-}
-
-// #[cfg(feature = "SvggElement")]
-pub trait SvggElement<State: 'static, Action = ()>:
-    SvgGraphicsElement<State, Action, DomNode: AsRef<web_sys::SvggElement>>
-{
-    fn fill(self, brush: impl Into<peniko::Brush>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, brush)
+dom_interface!(SvgElement: Element => SvgElement {
+    fn fill(self, color: impl Into<peniko::Color>) -> crate::svg::Fill<Self, State, Action> {
+        crate::svg::fill(self, color)
     }
     fn stroke(
         self,
-        brush: impl Into<peniko::Brush>,
+        color: impl Into<peniko::Color>,
         style: peniko::kurbo::Stroke,
     ) -> crate::svg::Stroke<Self, State, Action> {
-        crate::svg::stroke(self, brush, style)
+        crate::svg::stroke(self, color, style)
     }
-}
+});
 
-// #[cfg(feature = "SvggElement")]
-impl<State, Action, T> SvggElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgGraphicsElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvggElement>,
-{
-}
+dom_interface!(SvgEllipseElement: SvgGeometryElement => SvgEllipseElement {
+});
 
-// #[cfg(feature = "SvgGeometryElement")]
-pub trait SvgGeometryElement<State: 'static, Action = ()>:
-    SvgGraphicsElement<State, Action, DomNode: AsRef<web_sys::SvgGeometryElement>>
-{
-    fn stroke(
-        self,
-        brush: impl Into<peniko::Brush>,
-        style: peniko::kurbo::Stroke,
-    ) -> crate::svg::Stroke<Self, State, Action> {
-        crate::svg::stroke(self, brush, style)
-    }
-}
+dom_interface!(SvgfeBlendElement: SvgElement => SvgfeBlendElement {
+});
 
-// #[cfg(feature = "SvgGeometryElement")]
-impl<State, Action, T> SvgGeometryElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgGraphicsElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgGeometryElement>,
-{
-}
+dom_interface!(SvgfeColorMatrixElement: SvgElement => SvgfeColorMatrixElement {
+});
 
-// #[cfg(feature = "SvgGradientElement")]
-pub trait SvgGradientElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgGradientElement>>
-{
-}
+dom_interface!(SvgfeComponentTransferElement: SvgElement => SvgfeComponentTransferElement {
+});
 
-// #[cfg(feature = "SvgGradientElement")]
-impl<State, Action, T> SvgGradientElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgGradientElement>,
-{
-}
+dom_interface!(SvgfeCompositeElement: SvgElement => SvgfeCompositeElement {
+});
 
-// #[cfg(feature = "SvgGraphicsElement")]
-pub trait SvgGraphicsElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgGraphicsElement>>
-{
-}
+dom_interface!(SvgfeConvolveMatrixElement: SvgElement => SvgfeConvolveMatrixElement {
+});
 
-// #[cfg(feature = "SvgGraphicsElement")]
-impl<State, Action, T> SvgGraphicsElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgGraphicsElement>,
-{
-}
+dom_interface!(SvgfeDiffuseLightingElement: SvgElement => SvgfeDiffuseLightingElement {
+});
 
-// #[cfg(feature = "SvgImageElement")]
-pub trait SvgImageElement<State: 'static, Action = ()>:
-    SvgGraphicsElement<State, Action, DomNode: AsRef<web_sys::SvgImageElement>>
-{
-}
+dom_interface!(SvgfeDisplacementMapElement: SvgElement => SvgfeDisplacementMapElement {
+});
 
-// #[cfg(feature = "SvgImageElement")]
-impl<State, Action, T> SvgImageElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgGraphicsElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgImageElement>,
-{
-}
+dom_interface!(SvgfeDistantLightElement: SvgElement => SvgfeDistantLightElement {
+});
 
-// #[cfg(feature = "SvgLinearGradientElement")]
-pub trait SvgLinearGradientElement<State: 'static, Action = ()>:
-    SvgGradientElement<State, Action, DomNode: AsRef<web_sys::SvgLinearGradientElement>>
-{
-}
+dom_interface!(SvgfeDropShadowElement: SvgElement => SvgfeDropShadowElement {
+});
 
-// #[cfg(feature = "SvgLinearGradientElement")]
-impl<State, Action, T> SvgLinearGradientElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgGradientElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgLinearGradientElement>,
-{
-}
+dom_interface!(SvgfeFloodElement: SvgElement => SvgfeFloodElement {
+});
 
-// #[cfg(feature = "SvgLineElement")]
-pub trait SvgLineElement<State: 'static, Action = ()>:
-    SvgGeometryElement<State, Action, DomNode: AsRef<web_sys::SvgLineElement>>
-{
-}
+dom_interface!(SvgfeFuncAElement: SvgComponentTransferFunctionElement => SvgfeFuncAElement {
+});
 
-// #[cfg(feature = "SvgLineElement")]
-impl<State, Action, T> SvgLineElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgGeometryElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgLineElement>,
-{
-}
+dom_interface!(SvgfeFuncBElement: SvgComponentTransferFunctionElement => SvgfeFuncBElement {
+});
 
-// #[cfg(feature = "SvgMarkerElement")]
-pub trait SvgMarkerElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgMarkerElement>>
-{
-}
+dom_interface!(SvgfeFuncGElement: SvgComponentTransferFunctionElement => SvgfeFuncGElement {
+});
 
-// #[cfg(feature = "SvgMarkerElement")]
-impl<State, Action, T> SvgMarkerElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgMarkerElement>,
-{
-}
+dom_interface!(SvgfeFuncRElement: SvgComponentTransferFunctionElement => SvgfeFuncRElement {
+});
 
-// #[cfg(feature = "SvgMaskElement")]
-pub trait SvgMaskElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgMaskElement>>
-{
-}
+dom_interface!(SvgfeGaussianBlurElement: SvgElement => SvgfeGaussianBlurElement {
+});
 
-// #[cfg(feature = "SvgMaskElement")]
-impl<State, Action, T> SvgMaskElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgMaskElement>,
-{
-}
+dom_interface!(SvgfeImageElement: SvgElement => SvgfeImageElement {
+});
 
-// #[cfg(feature = "SvgMetadataElement")]
-pub trait SvgMetadataElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgMetadataElement>>
-{
-}
+dom_interface!(SvgfeMergeElement: SvgElement => SvgfeMergeElement {
+});
 
-// #[cfg(feature = "SvgMetadataElement")]
-impl<State, Action, T> SvgMetadataElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgMetadataElement>,
-{
-}
+dom_interface!(SvgfeMergeNodeElement: SvgElement => SvgfeMergeNodeElement {
+});
 
-// #[cfg(feature = "SvgmPathElement")]
-pub trait SvgmPathElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgmPathElement>>
-{
-}
+dom_interface!(SvgfeMorphologyElement: SvgElement => SvgfeMorphologyElement {
+});
 
-// #[cfg(feature = "SvgmPathElement")]
-impl<State, Action, T> SvgmPathElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgmPathElement>,
-{
-}
+dom_interface!(SvgfeOffsetElement: SvgElement => SvgfeOffsetElement {
+});
 
-// #[cfg(feature = "SvgPathElement")]
-pub trait SvgPathElement<State: 'static, Action = ()>:
-    SvgGeometryElement<State, Action, DomNode: AsRef<web_sys::SvgPathElement>>
-{
-    fn fill(self, brush: impl Into<peniko::Brush>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, brush)
-    }
-}
+dom_interface!(SvgfePointLightElement: SvgElement => SvgfePointLightElement {
+});
 
-// #[cfg(feature = "SvgPathElement")]
-impl<State, Action, T> SvgPathElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgGeometryElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgPathElement>,
-{
-}
+dom_interface!(SvgfeSpecularLightingElement: SvgElement => SvgfeSpecularLightingElement {
+});
 
-// #[cfg(feature = "SvgPatternElement")]
-pub trait SvgPatternElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgPatternElement>>
-{
-}
+dom_interface!(SvgfeSpotLightElement: SvgElement => SvgfeSpotLightElement {
+});
 
-// #[cfg(feature = "SvgPatternElement")]
-impl<State, Action, T> SvgPatternElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgPatternElement>,
-{
-}
+dom_interface!(SvgfeTileElement: SvgElement => SvgfeTileElement {
+});
 
-// #[cfg(feature = "SvgPolygonElement")]
-pub trait SvgPolygonElement<State: 'static, Action = ()>:
-    SvgGeometryElement<State, Action, DomNode: AsRef<web_sys::SvgPolygonElement>>
-{
-    fn fill(self, brush: impl Into<peniko::Brush>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, brush)
-    }
-}
+dom_interface!(SvgfeTurbulenceElement: SvgElement => SvgfeTurbulenceElement {
+});
 
-// #[cfg(feature = "SvgPolygonElement")]
-impl<State, Action, T> SvgPolygonElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgGeometryElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgPolygonElement>,
-{
-}
+dom_interface!(SvgFilterElement: SvgElement => SvgFilterElement {
+});
 
-// #[cfg(feature = "SvgPolylineElement")]
-pub trait SvgPolylineElement<State: 'static, Action = ()>:
-    SvgGeometryElement<State, Action, DomNode: AsRef<web_sys::SvgPolylineElement>>
-{
-    fn fill(self, brush: impl Into<peniko::Brush>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, brush)
-    }
-}
+dom_interface!(SvgForeignObjectElement: SvgGraphicsElement => SvgForeignObjectElement {
+});
 
-// #[cfg(feature = "SvgPolylineElement")]
-impl<State, Action, T> SvgPolylineElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgGeometryElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgPolylineElement>,
-{
-}
+dom_interface!(SvggElement: SvgGraphicsElement => SvggElement {
+});
 
-// #[cfg(feature = "SvgRectElement")]
-pub trait SvgRectElement<State: 'static, Action = ()>:
-    SvgGeometryElement<State, Action, DomNode: AsRef<web_sys::SvgRectElement>>
-{
-    fn fill(self, brush: impl Into<peniko::Brush>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, brush)
-    }
-}
+dom_interface!(SvgGeometryElement: SvgGraphicsElement => SvgGeometryElement {
+});
 
-// #[cfg(feature = "SvgRectElement")]
-impl<State, Action, T> SvgRectElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgGeometryElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgRectElement>,
-{
-}
+dom_interface!(SvgGradientElement: SvgElement => SvgGradientElement {
+});
 
-// #[cfg(feature = "SvgScriptElement")]
-pub trait SvgScriptElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgScriptElement>>
-{
-}
+dom_interface!(SvgGraphicsElement: SvgElement => SvgGraphicsElement {
+});
 
-// #[cfg(feature = "SvgScriptElement")]
-impl<State, Action, T> SvgScriptElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgScriptElement>,
-{
-}
+dom_interface!(SvgImageElement: SvgGraphicsElement => SvgImageElement {
+});
 
-// #[cfg(feature = "SvgSetElement")]
-pub trait SvgSetElement<State: 'static, Action = ()>:
-    SvgAnimationElement<State, Action, DomNode: AsRef<web_sys::SvgSetElement>>
-{
-}
+dom_interface!(SvgLinearGradientElement: SvgGradientElement => SvgLinearGradientElement {
+});
 
-// #[cfg(feature = "SvgSetElement")]
-impl<State, Action, T> SvgSetElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgAnimationElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgSetElement>,
-{
-}
+dom_interface!(SvgLineElement: SvgGeometryElement => SvgLineElement {
+});
 
-// #[cfg(feature = "SvgStopElement")]
-pub trait SvgStopElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgStopElement>>
-{
-}
+dom_interface!(SvgMarkerElement: SvgElement => SvgMarkerElement {
+});
 
-// #[cfg(feature = "SvgStopElement")]
-impl<State, Action, T> SvgStopElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgStopElement>,
-{
-}
+dom_interface!(SvgMaskElement: SvgElement => SvgMaskElement {
+});
 
-// #[cfg(feature = "SvgStyleElement")]
-pub trait SvgStyleElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgStyleElement>>
-{
-}
+dom_interface!(SvgMetadataElement: SvgElement => SvgMetadataElement {
+});
 
-// #[cfg(feature = "SvgStyleElement")]
-impl<State, Action, T> SvgStyleElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgStyleElement>,
-{
-}
+dom_interface!(SvgmPathElement: SvgElement => SvgmPathElement {
+});
 
-// #[cfg(feature = "SvgSwitchElement")]
-pub trait SvgSwitchElement<State: 'static, Action = ()>:
-    SvgGraphicsElement<State, Action, DomNode: AsRef<web_sys::SvgSwitchElement>>
-{
-}
+dom_interface!(SvgPathElement: SvgGeometryElement => SvgPathElement {
+});
 
-// #[cfg(feature = "SvgSwitchElement")]
-impl<State, Action, T> SvgSwitchElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgGraphicsElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgSwitchElement>,
-{
-}
+dom_interface!(SvgPatternElement: SvgElement => SvgPatternElement {
+});
 
-// #[cfg(feature = "SvgSymbolElement")]
-pub trait SvgSymbolElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgSymbolElement>>
-{
-}
+dom_interface!(SvgPolygonElement: SvgGeometryElement => SvgPolygonElement {
+});
 
-// #[cfg(feature = "SvgSymbolElement")]
-impl<State, Action, T> SvgSymbolElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgSymbolElement>,
-{
-}
+dom_interface!(SvgPolylineElement: SvgGeometryElement => SvgPolylineElement {
+});
 
-// #[cfg(feature = "SvgTextContentElement")]
-pub trait SvgTextContentElement<State: 'static, Action = ()>:
-    SvgGraphicsElement<State, Action, DomNode: AsRef<web_sys::SvgTextContentElement>>
-{
-    fn fill(self, brush: impl Into<peniko::Brush>) -> crate::svg::Fill<Self, State, Action> {
-        crate::svg::fill(self, brush)
-    }
-    fn stroke(
-        self,
-        brush: impl Into<peniko::Brush>,
-        style: peniko::kurbo::Stroke,
-    ) -> crate::svg::Stroke<Self, State, Action> {
-        crate::svg::stroke(self, brush, style)
-    }
-}
+dom_interface!(SvgRectElement: SvgGeometryElement => SvgRectElement {
+});
 
-// #[cfg(feature = "SvgTextContentElement")]
-impl<State, Action, T> SvgTextContentElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgGraphicsElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgTextContentElement>,
-{
-}
+dom_interface!(SvgScriptElement: SvgElement => SvgScriptElement {
+});
 
-// #[cfg(feature = "SvgTextPathElement")]
-pub trait SvgTextPathElement<State: 'static, Action = ()>:
-    SvgTextContentElement<State, Action, DomNode: AsRef<web_sys::SvgTextPathElement>>
-{
-}
+dom_interface!(SvgSetElement: SvgAnimationElement => SvgSetElement {
+});
 
-// #[cfg(feature = "SvgTextPathElement")]
-impl<State, Action, T> SvgTextPathElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgTextContentElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgTextPathElement>,
-{
-}
+dom_interface!(SvgStopElement: SvgElement => SvgStopElement {
+});
 
-// #[cfg(feature = "SvgTextPositioningElement")]
-pub trait SvgTextPositioningElement<State: 'static, Action = ()>:
-    SvgTextContentElement<State, Action, DomNode: AsRef<web_sys::SvgTextPositioningElement>>
-{
-}
+dom_interface!(SvgStyleElement: SvgElement => SvgStyleElement {
+});
 
-// #[cfg(feature = "SvgTextPositioningElement")]
-impl<State, Action, T> SvgTextPositioningElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgTextContentElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgTextPositioningElement>,
-{
-}
+dom_interface!(SvgSwitchElement: SvgGraphicsElement => SvgSwitchElement {
+});
 
-// #[cfg(feature = "SvgtSpanElement")]
-pub trait SvgtSpanElement<State: 'static, Action = ()>:
-    SvgTextPositioningElement<State, Action, DomNode: AsRef<web_sys::SvgtSpanElement>>
-{
-}
+dom_interface!(SvgSymbolElement: SvgElement => SvgSymbolElement {
+});
 
-// #[cfg(feature = "SvgtSpanElement")]
-impl<State, Action, T> SvgtSpanElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgTextPositioningElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgtSpanElement>,
-{
-}
+dom_interface!(SvgTextContentElement: SvgGraphicsElement => SvgTextContentElement {
+});
 
-// #[cfg(feature = "SvgViewElement")]
-pub trait SvgViewElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgViewElement>>
-{
-}
+dom_interface!(SvgTextPathElement: SvgTextContentElement => SvgTextPathElement {
+});
 
-// #[cfg(feature = "SvgViewElement")]
-impl<State, Action, T> SvgViewElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgViewElement>,
-{
-}
+dom_interface!(SvgTextPositioningElement: SvgTextContentElement => SvgTextPositioningElement {
+});
 
-// #[cfg(feature = "SvgRadialGradientElement")]
-pub trait SvgRadialGradientElement<State: 'static, Action = ()>:
-    SvgGradientElement<State, Action, DomNode: AsRef<web_sys::SvgRadialGradientElement>>
-{
-}
+dom_interface!(SvgtSpanElement: SvgTextPositioningElement => SvgtSpanElement {
+});
 
-// #[cfg(feature = "SvgRadialGradientElement")]
-impl<State, Action, T> SvgRadialGradientElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgGradientElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgRadialGradientElement>,
-{
-}
+dom_interface!(SvgViewElement: SvgElement => SvgViewElement {
+});
 
-// #[cfg(feature = "SvgsvgElement")]
-pub trait SvgsvgElement<State: 'static, Action = ()>:
-    SvgGraphicsElement<State, Action, DomNode: AsRef<web_sys::SvgsvgElement>>
-{
-}
+dom_interface!(SvgRadialGradientElement: SvgGradientElement => SvgRadialGradientElement {
+});
 
-// #[cfg(feature = "SvgsvgElement")]
-impl<State, Action, T> SvgsvgElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgGraphicsElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgsvgElement>,
-{
-}
+dom_interface!(SvgsvgElement: SvgGraphicsElement => SvgsvgElement {
+});
 
-// #[cfg(feature = "SvgTextElement")]
-pub trait SvgTextElement<State: 'static, Action = ()>:
-    SvgTextPositioningElement<State, Action, DomNode: AsRef<web_sys::SvgTextElement>>
-{
-}
+dom_interface!(SvgTextElement: SvgTextPositioningElement => SvgTextElement {
+});
 
-// #[cfg(feature = "SvgTextElement")]
-impl<State, Action, T> SvgTextElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgTextPositioningElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgTextElement>,
-{
-}
+dom_interface!(SvgTitleElement: SvgElement => SvgTitleElement {
+});
 
-// #[cfg(feature = "SvgTitleElement")]
-pub trait SvgTitleElement<State: 'static, Action = ()>:
-    SvgElement<State, Action, DomNode: AsRef<web_sys::SvgTitleElement>>
-{
-}
-
-// #[cfg(feature = "SvgTitleElement")]
-impl<State, Action, T> SvgTitleElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgTitleElement>,
-{
-}
-
-// #[cfg(feature = "SvgUseElement")]
-pub trait SvgUseElement<State: 'static, Action = ()>:
-    SvgGraphicsElement<State, Action, DomNode: AsRef<web_sys::SvgUseElement>>
-{
-}
-
-// #[cfg(feature = "SvgUseElement")]
-impl<State, Action, T> SvgUseElement<State, Action> for T
-where
-    State: 'static,
-    T: SvgGraphicsElement<State, Action>,
-    T::DomNode: AsRef<web_sys::SvgUseElement>,
-{
-}
+dom_interface!(SvgUseElement: SvgGraphicsElement => SvgUseElement {
+});

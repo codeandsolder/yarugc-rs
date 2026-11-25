@@ -7,6 +7,8 @@ use core::mem::size_of;
 
 use crate::{MessageCtx, MessageResult, Mut, View, ViewMarker, ViewPathTracker};
 
+type ViewSignature<State, Action, Context> = fn() -> (State, Action, Context);
+
 /// A view which supports Memoization.
 ///
 /// The story of Memoization in Xilem is still being worked out,
@@ -15,7 +17,7 @@ use crate::{MessageCtx, MessageResult, Mut, View, ViewMarker, ViewPathTracker};
 pub struct Memoize<Data, InitView, State, Action, Context> {
     data: Data,
     init_view: InitView,
-    phantom: PhantomData<fn() -> (State, Action, Context)>,
+    phantom: PhantomData<ViewSignature<State, Action, Context>>,
 }
 
 impl<Data, InitView, State, Action, Context> Debug

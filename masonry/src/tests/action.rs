@@ -34,7 +34,7 @@ fn action_source_removed() {
         })
         .prepare()
         .with_props(Dimensions::fixed(50.px(), 50.px()))
-        .to_pod();
+        .into_pod();
     let action_source_id = action_source.id();
 
     let parent = ModularWidget::new(Some(action_source))
@@ -81,11 +81,11 @@ fn action_source_removed() {
 
     let mut harness = TestHarness::create(test_property_set(), parent);
 
-    harness.mouse_move_to(action_source_id);
+    harness.mouse_move_to(action_source_id).unwrap();
 
     // We don't expect the action to make it to the app driver,
     // because we deleted the child before it got there.
-    assert_matches!(harness.pop_action::<ArbitraryAction>(), None);
+    assert_matches!(harness.pop_action::<ArbitraryAction>().unwrap(), None);
 
     assert!(ok.load(Ordering::Acquire), "pointer event didn't happen");
 }
@@ -129,11 +129,11 @@ fn action_propagation() {
 
     let mut harness = TestHarness::create(test_property_set(), parent3);
 
-    harness.mouse_click_on(button_id, None);
+    harness.mouse_click_on(button_id, None).unwrap();
 
     // Only the translated action should reach the app driver
     assert_matches!(
-        harness.pop_action::<TranslatedAction>(),
+        harness.pop_action::<TranslatedAction>().unwrap(),
         Some((TranslatedAction, _))
     );
 

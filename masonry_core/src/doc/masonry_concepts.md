@@ -290,7 +290,7 @@ Safety rails aren't guaranteed to run and may be disabled even in debug mode for
 They should not be relied upon to check code correctness, but are meant to help you catch implementation errors early on during development.
 
 
-## BiDi handling
+## Bidirectional text handling
 
 Masonry currently doesn't have any special-case behavior for RTL (right-to-left) and vertical writing modes.
 

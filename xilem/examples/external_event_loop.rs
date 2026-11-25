@@ -11,9 +11,9 @@ use masonry::properties::types::{CrossAxisAlignment, MainAxisAlignment};
 use masonry::theme::default_property_set;
 use masonry_winit::app::{AppDriver, MasonryUserEvent};
 use winit::application::ApplicationHandler;
-use winit::error::EventLoopError;
 use winit::event::ElementState;
 use winit::keyboard::{KeyCode, PhysicalKey};
+use xilem::RunError;
 use xilem::style::Style;
 use xilem::view::{Label, button, flex_row, label, sized_box};
 use xilem::{EventLoop, WidgetView, WindowOptions, Xilem};
@@ -56,10 +56,6 @@ impl ApplicationHandler<MasonryUserEvent> for ExternalApp {
         self.masonry_state.handle_suspended(event_loop);
     }
 
-    fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        self.masonry_state.handle_about_to_wait(event_loop);
-    }
-
     fn window_event(
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
@@ -82,57 +78,32 @@ impl ApplicationHandler<MasonryUserEvent> for ExternalApp {
         self.masonry_state
             .handle_user_event(event_loop, event, self.app_driver.as_mut());
     }
-
     fn device_event(
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
-        device_id: winit::event::DeviceId,
+        _device_id: winit::event::DeviceId,
         event: winit::event::DeviceEvent,
     ) {
-        // Handle the escape key to exit the app outside of masonry/xilem
-        if let winit::event::DeviceEvent::Key(key) = &event
+        // Handle Escape directly in the external event loop.
+        if let winit::event::DeviceEvent::Key(key) = event
             && key.state == ElementState::Pressed
             && key.physical_key == PhysicalKey::Code(KeyCode::Escape)
         {
             event_loop.exit();
-            return;
         }
-
-        self.masonry_state.handle_device_event(
-            event_loop,
-            device_id,
-            event,
-            self.app_driver.as_mut(),
-        );
-    }
-
-    fn new_events(
-        &mut self,
-        event_loop: &winit::event_loop::ActiveEventLoop,
-        cause: winit::event::StartCause,
-    ) {
-        self.masonry_state.handle_new_events(event_loop, cause);
-    }
-
-    fn exiting(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        self.masonry_state.handle_exiting(event_loop);
-    }
-
-    fn memory_warning(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        self.masonry_state.handle_memory_warning(event_loop);
     }
 }
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     let window_size = winit::dpi::LogicalSize::new(800.0, 800.0);
     let window_options = WindowOptions::new("External event loop").with_min_inner_size(window_size);
 
     let xilem = Xilem::new_simple(0, app_logic, window_options);
 
-    let event_loop = EventLoop::with_user_event().build().unwrap();
+    let event_loop = EventLoop::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
     let (driver, windows) =
-        xilem.into_driver_and_windows(move |event| proxy.send_event(event).map_err(|err| err.0));
+        xilem.into_driver_and_windows(move |event| proxy.send_event(event).map_err(|err| err.0))?;
     let masonry_state = masonry_winit::app::MasonryState::new(
         event_loop.create_proxy(),
         event_loop.owned_display_handle(),
@@ -144,5 +115,5 @@ fn main() -> Result<(), EventLoopError> {
         masonry_state,
         app_driver: Box::new(driver),
     };
-    event_loop.run_app(&mut app)
+    Ok(event_loop.run_app(&mut app)?)
 }

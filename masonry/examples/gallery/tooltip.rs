@@ -10,13 +10,13 @@ use masonry::widgets::{Button, ButtonPress, Flex, Label};
 
 use crate::demo::{CONTENT_GAP, DemoPage, ShellTags, wrap_in_shell};
 
-pub(crate) struct TooltipDemo {
+pub(super) struct TooltipDemo {
     shell: ShellTags,
     show_btn: WidgetTag<Button>,
 }
 
 impl TooltipDemo {
-    pub(crate) fn new(shell: ShellTags) -> Self {
+    pub(super) fn new(shell: ShellTags) -> Self {
         Self {
             shell,
             show_btn: WidgetTag::unique(),
@@ -59,8 +59,10 @@ impl DemoPage for TooltipDemo {
             return Handled::No;
         }
 
-        let id = render_root.get_widget_with_tag(self.show_btn).unwrap().id();
-        if widget_id != id {
+        let id = render_root
+            .get_widget_with_tag(self.show_btn)
+            .map(|widget| widget.id());
+        if Some(widget_id) != id {
             return Handled::No;
         }
 

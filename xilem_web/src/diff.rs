@@ -42,11 +42,12 @@ impl<T: PartialEq, I: Iterator<Item = T>> Iterator for DiffIterator<T, I> {
             }
             if skip_count > 0 {
                 return Some(Diff::Skip(skip_count));
-            } else {
-                let new = self.next.next().unwrap();
-                self.prev.next();
-                return Some(Diff::Change(new));
             }
+            self.prev.next();
+            return self.next.next().map(Diff::Change);
+        }
+        if skip_count > 0 {
+            return Some(Diff::Skip(skip_count));
         }
         let mut remove_count = 0;
         while self.prev.next().is_some() {
@@ -59,5 +60,30 @@ impl<T: PartialEq, I: Iterator<Item = T>> Iterator for DiffIterator<T, I> {
             return Some(Diff::Add(new));
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Diff, diff_iters};
+
+    #[test]
+    fn preserves_equal_prefix_before_end_and_suffix() {
+        assert_eq!(
+            diff_iters(vec![1, 2, 3].into_iter(), vec![1, 2, 3].into_iter()).collect::<Vec<_>>(),
+            [Diff::Skip(3)]
+        );
+        assert_eq!(
+            diff_iters(vec![1, 2].into_iter(), vec![1, 2, 3].into_iter()).collect::<Vec<_>>(),
+            [Diff::Skip(2), Diff::Add(3)]
+        );
+        assert_eq!(
+            diff_iters(vec![1, 2, 3].into_iter(), vec![1, 2].into_iter()).collect::<Vec<_>>(),
+            [Diff::Skip(2), Diff::Remove(1)]
+        );
+        assert_eq!(
+            diff_iters(vec![1, 2, 3].into_iter(), vec![1, 4, 3].into_iter()).collect::<Vec<_>>(),
+            [Diff::Skip(1), Diff::Change(4), Diff::Skip(1)]
+        );
     }
 }

@@ -12,6 +12,7 @@ use crate::{
 };
 
 /// A view representing a window.
+#[must_use = "Return the window view from the app logic."]
 pub struct WindowView<State: 'static> {
     pub(crate) id: WindowId,
     pub(crate) options: WindowOptions<State>,
@@ -58,7 +59,7 @@ impl<State> WindowView<State> {
     /// Set base color of the window.
     ///
     /// This is [`masonry::theme::BACKGROUND_COLOR`] by default.
-    pub fn with_base_color(mut self, color: Color) -> Self {
+    pub const fn with_base_color(mut self, color: Color) -> Self {
         self.base_color = Some(color);
         self
     }

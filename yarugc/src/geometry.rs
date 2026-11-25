@@ -15,6 +15,7 @@ pub struct Placement {
 
 impl Placement {
     /// Place a texture over a physical-pixel rectangle.
+    #[must_use = "Use the placement."]
     pub fn rect(rect: Rect) -> Self {
         let mut placement = Self::from_transform(rect_transform(rect));
         if rect.width() <= 0.0 || rect.height() <= 0.0 {
@@ -24,6 +25,7 @@ impl Placement {
     }
 
     /// Map normalized texture coordinates to physical pixels.
+    #[must_use = "Use the placement."]
     pub fn from_transform(transform: Affine) -> Self {
         Self {
             transform,
@@ -32,6 +34,7 @@ impl Placement {
     }
 
     /// Apply an additional rectangular clip expressed in target pixels.
+    #[must_use = "Use the clipped placement."]
     pub fn clipped(mut self, rect: Rect) -> Self {
         self.clip = intersect(self.clip, &corners(Affine::IDENTITY, rect));
         self
@@ -39,6 +42,7 @@ impl Placement {
 
     /// Place a subrectangle expressed in the original normalized coordinates.
     /// The original clip is retained, even if the new rectangle extends outside it.
+    #[must_use = "Use the subrectangle placement."]
     pub fn subrect(&self, rect: Rect) -> Self {
         let transform = self.transform * rect_transform(rect);
         let clip = intersect(
@@ -49,6 +53,7 @@ impl Placement {
     }
 
     /// Move the placement and its clip by the same physical-pixel displacement.
+    #[must_use = "Use the translated placement."]
     pub fn translated(&self, offset: Vec2) -> Self {
         Self {
             transform: self.transform.then_translate(offset),
@@ -57,11 +62,13 @@ impl Placement {
     }
 
     /// Transform from normalized coordinates to physical pixels.
-    pub fn transform(&self) -> Affine {
+    #[must_use = "Use the transform."]
+    pub const fn transform(&self) -> Affine {
         self.transform
     }
 
     /// Convex visible polygon in physical pixels, in winding order.
+    #[must_use = "Use the clip polygon."]
     pub fn clip_polygon(&self) -> &[Point] {
         &self.clip
     }
@@ -77,6 +84,7 @@ impl Placement {
             || height == 0.0
             || !self.transform.is_finite()
             || self.transform.determinant() == 0.0
+            || !self.transform.determinant().is_finite()
         {
             return Vec::new();
         }
@@ -89,6 +97,12 @@ impl Placement {
             &corners(Affine::IDENTITY, Rect::new(0.0, 0.0, width, height)),
         );
         if polygon.len() < 3 {
+            return Vec::new();
+        }
+        if polygon
+            .iter()
+            .any(|p| !p.is_finite() || !(inverse * *p).is_finite())
+        {
             return Vec::new();
         }
         let vertex = |p: Point| {
@@ -120,6 +134,7 @@ pub struct SlotGeometry {
 impl SlotGeometry {
     /// Resolve the widget's content box and all ancestor clips, including scroll
     /// containers and transformed clips. Missing, hidden or empty slots return none.
+    #[must_use = "Use the resolved slot if visible."]
     pub fn resolve(root: &RenderRoot, id: WidgetId) -> Option<Self> {
         let widget = root.get_widget(id)?;
         let ctx = widget.ctx();
@@ -159,17 +174,20 @@ impl SlotGeometry {
     }
 
     /// Place this slot into its window-local GPU surface.
-    pub fn placement(&self) -> &Placement {
+    #[must_use = "Use the placement."]
+    pub const fn placement(&self) -> &Placement {
         &self.placement
     }
 
     /// Content size in logical units, before any affine transforms.
-    pub fn logical_size(&self) -> [f64; 2] {
+    #[must_use = "Use the logical dimensions."]
+    pub const fn logical_size(&self) -> [f64; 2] {
         self.logical_size
     }
 
     /// Window DPI scale.
-    pub fn scale_factor(&self) -> f64 {
+    #[must_use = "Use the DPI scale."]
+    pub const fn scale_factor(&self) -> f64 {
         self.scale_factor
     }
 }
@@ -184,6 +202,7 @@ fn corners(transform: Affine, rect: Rect) -> Vec<Point> {
         || rect.width() <= 0.0
         || rect.height() <= 0.0
         || transform.determinant() == 0.0
+        || !transform.determinant().is_finite()
     {
         return Vec::new();
     }

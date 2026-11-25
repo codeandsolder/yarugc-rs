@@ -30,43 +30,53 @@ fn request_paint() {
     let grandparent = NewWidget::new(ModularWidget::new_parent(parent));
 
     let mut harness = TestHarness::create(test_property_set(), grandparent);
-    let _ = harness.render();
-    harness.flush_records_of(target_tag);
-    harness.flush_records_of(parent_tag);
+    let _ = harness.render().unwrap();
+    harness.flush_records_of(target_tag).unwrap();
+    harness.flush_records_of(parent_tag).unwrap();
 
     // Paint
-    harness.edit_widget(target_tag, |mut widget| {
-        widget.ctx.request_paint_only();
-    });
-    let _ = harness.render();
+    harness
+        .edit_widget(target_tag, |mut widget| {
+            widget.ctx.request_paint_only();
+        })
+        .unwrap();
+    let _ = harness.render().unwrap();
 
     // Check that `Widget::paint()` is called for the child (which did request it)
     // but not the parent (which did not).
-    assert_matches!(harness.take_records_of(target_tag)[..], [Record::Paint]);
-    assert_matches!(harness.take_records_of(parent_tag)[..], []);
+    assert_matches!(
+        harness.take_records_of(target_tag).unwrap()[..],
+        [Record::Paint]
+    );
+    assert_matches!(harness.take_records_of(parent_tag).unwrap()[..], []);
 
     // Post-paint
-    harness.edit_widget(target_tag, |mut widget| {
-        widget.ctx.request_post_paint();
-    });
-    let _ = harness.render();
+    harness
+        .edit_widget(target_tag, |mut widget| {
+            widget.ctx.request_post_paint();
+        })
+        .unwrap();
+    let _ = harness.render().unwrap();
 
     // Check that `Widget::post_paint()` is called for the child (which did request it)
     // but not the parent (which did not).
-    assert_matches!(harness.take_records_of(target_tag)[..], [Record::PostPaint]);
-    assert_matches!(harness.take_records_of(parent_tag)[..], []);
+    assert_matches!(
+        harness.take_records_of(target_tag).unwrap()[..],
+        [Record::PostPaint]
+    );
+    assert_matches!(harness.take_records_of(parent_tag).unwrap()[..], []);
 
     // Check that `Widget::paint()` and `Widget::post_paint()` are not called:
     // neither widget has requested an update.
-    let _ = harness.render();
-    assert_matches!(harness.take_records_of(parent_tag)[..], []);
-    assert_matches!(harness.take_records_of(target_tag)[..], []);
+    let _ = harness.render().unwrap();
+    assert_matches!(harness.take_records_of(parent_tag).unwrap()[..], []);
+    assert_matches!(harness.take_records_of(target_tag).unwrap()[..], []);
 }
 
 #[test]
 fn paint_order() {
     const SQUARE_SIZE: f64 = 30.;
-    const SQUARE_LENGTH: Length = Length::const_px(SQUARE_SIZE);
+    const SQUARE_LENGTH: Length = crate::layout::length!(SQUARE_SIZE);
     let child1 = NewWidget::new(SizedBox::empty().width(SQUARE_LENGTH).height(SQUARE_LENGTH))
         .with_props(Background::Color(RED));
     let child2 = NewWidget::new(SizedBox::empty().width(SQUARE_LENGTH).height(SQUARE_LENGTH))
@@ -245,7 +255,53 @@ fn isolated_scene_layers_update_the_plan_without_changing_rendering() {
     let mut isolated_harness =
         TestHarness::create_with_size(test_property_set(), make_layer_split_tree(true), (40, 20));
 
-    assert_eq!(inline_harness.render(), isolated_harness.render());
+    assert_eq!(
+        inline_harness.render().unwrap(),
+        isolated_harness.render().unwrap()
+    );
+}
+
+#[test]
+fn isolated_scenes_preserve_inherited_clips() {
+    fn clipped(isolate: bool) -> NewWidget<impl Widget> {
+        NewWidget::new(
+            ModularWidget::new_parent(make_layer_split_tree(isolate))
+                .layout_fn(|child, ctx, _props, size| {
+                    ctx.run_layout(child, size);
+                    ctx.place_child(child, Point::ORIGIN);
+                    ctx.set_clip_path(crate::kurbo::Rect::new(5.0, 5.0, 30.0, 15.0));
+                })
+                .post_paint_fn(|_, _, _, scene| {
+                    scene
+                        .fill(crate::kurbo::Rect::new(32.0, 0.0, 40.0, 5.0), GREEN)
+                        .draw();
+                }),
+        )
+    }
+
+    let mut root = create_render_root(clipped(true));
+    let (plan, _) = root.redraw();
+    for layer in &plan.layers {
+        if let crate::app::VisualLayerKind::Scene(scene) = &layer.kind {
+            let mut depth = 0;
+            for command in scene.commands() {
+                use crate::imaging::record::Command;
+                match command {
+                    Command::PushClip(_) => depth += 1,
+                    Command::PopClip => {
+                        assert!(depth > 0, "clip underflow in retained scene");
+                        depth -= 1;
+                    }
+                    _ => {}
+                }
+            }
+            assert_eq!(depth, 0, "unclosed clip in retained scene");
+        }
+    }
+
+    let mut inline = TestHarness::create_with_size(test_property_set(), clipped(false), (40, 20));
+    let mut isolated = TestHarness::create_with_size(test_property_set(), clipped(true), (40, 20));
+    assert_eq!(inline.render().unwrap(), isolated.render().unwrap());
 }
 
 #[test]
@@ -266,6 +322,86 @@ fn external_placeholders_appear_in_painter_order() {
         visual_layers.layers[2].kind,
         crate::app::VisualLayerKind::Scene(_)
     ));
+}
+
+#[test]
+fn layer_declarations_survive_cached_and_partial_paints() {
+    let target = WidgetTag::named("retained-layer");
+    let child = NewWidget::new(
+        ModularWidget::new((true, true))
+            .measure_fn(|_, _, _, _, _, _| 20.px())
+            .pre_paint_fn(|state, ctx, _, _| {
+                if state.0 {
+                    ctx.set_paint_layer_mode(PaintLayerMode::IsolatedScene);
+                }
+            })
+            .paint_fn(|_, ctx, _, scene| {
+                scene.fill(ctx.content_box(), BLUE).draw();
+            })
+            .post_paint_fn(|state, ctx, _, _| {
+                if state.1 {
+                    ctx.set_paint_layer_mode(PaintLayerMode::External);
+                }
+            }),
+    )
+    .with_tag(target);
+    let leading =
+        NewWidget::new(SizedBox::empty().size(20.px(), 20.px())).with_props(Background::Color(RED));
+    let mut root = create_render_root(Flex::row().with_fixed(leading).with_fixed(child).prepare());
+    let target_id = root.get_widget_with_tag(target).unwrap().id();
+
+    // The post-paint declaration wins, and survives cached redraws and
+    // re-recording the content phase alone.
+    for _ in 0..2 {
+        let (plan, _) = root.redraw();
+        assert!(plan.layers.iter().any(|layer| layer.widget_id == target_id
+            && matches!(layer.kind, crate::app::VisualLayerKind::External { .. })));
+    }
+    root.edit_widget_with_tag(target, |mut child| child.ctx.request_paint_only())
+        .unwrap();
+    let (plan, _) = root.redraw();
+    let placeholder = plan
+        .layers
+        .iter()
+        .find(|layer| {
+            layer.widget_id == target_id
+                && matches!(layer.kind, crate::app::VisualLayerKind::External { .. })
+        })
+        .unwrap();
+    let crate::app::VisualLayerKind::External { bounds } = placeholder.kind else {
+        unreachable!()
+    };
+    let widget = root.get_widget_with_tag(target).unwrap();
+    let expected = widget
+        .ctx()
+        .window_transform()
+        .transform_rect_bbox(widget.ctx().border_box());
+    assert_eq!(placeholder.transform.transform_rect_bbox(bounds), expected);
+
+    // Clearing the later declaration reveals the earlier isolated scene.
+    root.edit_widget_with_tag(target, |mut child| {
+        child.widget.state.1 = false;
+        child.ctx.request_post_paint();
+    })
+    .unwrap();
+    let (plan, _) = root.redraw();
+    assert!(plan.layers.iter().any(|layer| layer.widget_id == target_id
+        && matches!(layer.kind, crate::app::VisualLayerKind::Scene(_))));
+    assert!(
+        !plan
+            .layers
+            .iter()
+            .any(|layer| matches!(layer.kind, crate::app::VisualLayerKind::External { .. }))
+    );
+
+    // Clearing the pre-paint declaration returns to the parent's inline scene.
+    root.edit_widget_with_tag(target, |mut child| {
+        child.widget.state.0 = false;
+        child.ctx.request_pre_paint();
+    })
+    .unwrap();
+    let (plan, _) = root.redraw();
+    assert!(!plan.layers.iter().any(|layer| layer.widget_id == target_id));
 }
 
 // Layered slightly misaligned grid layer painting:

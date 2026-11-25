@@ -32,7 +32,7 @@ use crate::{Pod, ViewCtx};
 ///     }
 /// }
 /// ```
-pub fn spinner() -> Spinner {
+pub const fn spinner() -> Spinner {
     Spinner
 }
 
@@ -47,8 +47,8 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for Spinner {
     type Element = Pod<widgets::Spinner>;
     type ViewState = ();
 
-    fn build(&self, ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
-        (ctx.create_pod(widgets::Spinner::new()), ())
+    fn build(&self, _ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
+        (Pod::new(widgets::Spinner::new()), ())
     }
 
     fn rebuild(

@@ -4,8 +4,8 @@
 //! The boilerplate run function for desktop platforms
 
 use xilem::EventLoop;
-use xilem::winit::error::EventLoopError;
+use xilem::RunError;
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     placehero::run(EventLoop::with_user_event())
 }

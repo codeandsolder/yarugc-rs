@@ -150,7 +150,7 @@ pub struct Button<State, Action, F, V> {
 
 impl<State, Action, F, V> Button<State, Action, F, V> {
     /// Set the disabled state of the widget.
-    pub fn disabled(mut self, disabled: bool) -> Self {
+    pub const fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
@@ -159,7 +159,7 @@ impl<State, Action, F, V> Button<State, Action, F, V> {
 /// Use a distinctive number here, to be able to catch bugs.
 /// In case the generational-id view path in `View::Message` leads to the wrong view.
 /// This is a randomly generated 32 bit number - 3502359742 in decimal.
-const BUTTON_CONTENT_VIEW_ID: ViewId = ViewId::new(0xd0c1c4be);
+const BUTTON_CONTENT_VIEW_ID: ViewId = ViewId::new(0xd0c1_c4be);
 
 impl<State, Action, F, V> ViewMarker for Button<State, Action, F, V> {}
 impl<F, V, State, Action> View<State, Action, ViewCtx> for Button<State, Action, F, V>
@@ -177,8 +177,8 @@ where
             View::<State, Action, _>::build(&self.child, ctx, app_state)
         });
         (
-            ctx.with_action_widget(|ctx| {
-                let mut pod = ctx.create_pod(widgets::Button::new(child.new_widget));
+            ctx.with_action_widget({
+                let mut pod = Pod::new(widgets::Button::new(child.new_widget));
                 pod.new_widget.options.disabled = self.disabled;
                 pod
             }),
@@ -198,33 +198,21 @@ where
             element.ctx.set_disabled(self.disabled);
         }
         ctx.with_id(BUTTON_CONTENT_VIEW_ID, |ctx| {
+            let Some(child_element) = widgets::Button::child_mut(&mut element) else {
+                return;
+            };
             View::<State, Action, _>::rebuild(
                 &self.child,
                 &prev.child,
                 state,
                 ctx,
-                widgets::Button::child_mut(&mut element).downcast(),
+                child_element,
                 app_state,
             );
         });
     }
 
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-    ) {
-        ctx.with_id(BUTTON_CONTENT_VIEW_ID, |ctx| {
-            View::<State, Action, _>::teardown(
-                &self.child,
-                view_state,
-                ctx,
-                widgets::Button::child_mut(&mut element).downcast(),
-            );
-        });
-        ctx.teardown_action_source(element);
-    }
+    action_child_teardown!(Button, child, BUTTON_CONTENT_VIEW_ID);
 
     fn message(
         &self,
@@ -234,23 +222,24 @@ where
         app_state: &mut State,
     ) -> MessageResult<Action> {
         match message.take_first() {
-            Some(BUTTON_CONTENT_VIEW_ID) => self.child.message(
-                view_state,
-                message,
-                widgets::Button::child_mut(&mut element).downcast(),
-                app_state,
-            ),
-            None => match message.take_message::<ButtonPress>() {
-                Some(press) => (self.callback)(app_state, press.button),
-                None => {
+            Some(BUTTON_CONTENT_VIEW_ID) => {
+                let Some(child_element) = widgets::Button::child_mut(&mut element) else {
+                    return MessageResult::Stale;
+                };
+                self.child
+                    .message(view_state, message, child_element, app_state)
+            }
+            None => {
+                let Some(press) = message.take_message::<ButtonPress>() else {
                     // TODO: Panic?
                     tracing::error!(
                         "Wrong message type in Button::message: {message:?} expected {}",
                         type_name::<ButtonPress>()
                     );
-                    MessageResult::Stale
-                }
-            },
+                    return MessageResult::Stale;
+                };
+                (self.callback)(app_state, press.button)
+            }
             _ => {
                 tracing::warn!("Got unexpected id path in Button::message");
                 MessageResult::Stale

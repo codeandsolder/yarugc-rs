@@ -7,6 +7,9 @@ use core::marker::PhantomData;
 
 use crate::{MessageCtx, MessageResult, Mut, View, ViewMarker, ViewPathTracker};
 
+type ViewSignature<ParentState, ChildState, Action, Context, V> =
+    fn(ParentState) -> (ChildState, Action, Context, V);
+
 /// The View for [`lens`].
 ///
 /// See its documentation for more context.
@@ -14,7 +17,7 @@ use crate::{MessageCtx, MessageResult, Mut, View, ViewMarker, ViewPathTracker};
 pub struct Lens<CF, V, F, ParentState, ChildState, Action, Context> {
     access_state: F,
     child_component: CF,
-    phantom: PhantomData<fn(ParentState) -> (ChildState, Action, Context, V)>,
+    phantom: PhantomData<ViewSignature<ParentState, ChildState, Action, Context, V>>,
 }
 
 impl<CF, V, F, ParentState, ChildState, Action, Context> Debug

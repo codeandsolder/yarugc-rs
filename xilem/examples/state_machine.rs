@@ -4,7 +4,7 @@
 //! A state machine to detect whether the button was pressed an even or an odd number of times.
 
 use masonry::layout::AsUnit;
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::core::one_of::{OneOf, OneOf3};
 use xilem::style::Style as _;
 use xilem::view::{flex_col, label, prose, spinner, text_button};
@@ -28,7 +28,7 @@ enum IsEven {
     Success,
 }
 
-fn state_machine(app_data: &mut StateMachine) -> impl WidgetView<StateMachine> + use<> {
+fn state_machine(app_data: &StateMachine) -> impl WidgetView<StateMachine> + use<> {
     match app_data.state {
         // The first time we use `OneOf` in a conditional statement, we need
         // to specify the number of `OneOf` variants used - 3 in this case.
@@ -74,7 +74,7 @@ fn app_logic(app_data: &mut StateMachine) -> impl WidgetView<StateMachine> + use
     .padding(15.px())
 }
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     let app_data = StateMachine {
         state: IsEven::Initial,
         history: String::new(),

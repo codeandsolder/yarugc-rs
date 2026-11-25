@@ -15,12 +15,12 @@ use crate::widgets::{DisclosureButton, Label};
 use crate::{accesskit, theme};
 
 /// Square disclosure button length.
-const BUTTON_LENGTH: Length = Length::const_px(16.);
+const BUTTON_LENGTH: Length = crate::layout::length!(16.);
 /// Padding around the separator line.
 const SEPARATOR_PAD: Padding = Padding {
-    top: Length::const_px(4.),
-    left: Length::const_px(1.),
-    right: Length::const_px(1.),
+    top: crate::layout::length!(4.),
+    left: crate::layout::length!(1.),
+    right: crate::layout::length!(1.),
     bottom: Length::ZERO,
 };
 
@@ -46,11 +46,12 @@ impl CollapsePanel {
             disclosure_button: Self::disclosure_button(collapse),
             header_label: WidgetPod::new(Label::new(header_text)),
             separator_line_y: None,
-            child: child.erased().to_pod(),
+            child: child.erased().into_pod(),
         }
     }
 
     /// Create a new [`CollapsePanel`] with a header label widget and a child widget.
+    #[must_use = "Use the returned value."]
     pub fn from_label(
         collapse: bool,
         header_label: NewWidget<Label>,
@@ -58,9 +59,9 @@ impl CollapsePanel {
     ) -> Self {
         Self {
             disclosure_button: Self::disclosure_button(collapse),
-            header_label: header_label.to_pod(),
+            header_label: header_label.into_pod(),
             separator_line_y: None,
-            child: child.erased().to_pod(),
+            child: child.erased().into_pod(),
         }
     }
 
@@ -71,23 +72,19 @@ impl CollapsePanel {
                 // TODO - Move to DefaultProperties
                 Dimensions::fixed(BUTTON_LENGTH, BUTTON_LENGTH),
             )
-            .to_pod()
+            .into_pod()
     }
 }
 
 // --- MARK: WIDGETMUT
 impl CollapsePanel {
-    /// Set the child widget.
-    pub fn set_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<impl Widget + ?Sized>) {
-        this.ctx.remove_child(std::mem::replace(
-            &mut this.widget.child,
-            child.erased().to_pod(),
-        ));
-    }
+    child_accessors!(child, set_child, child_mut, erased);
 
     /// Set whether or not the panel is collapsed.
     pub fn set_collapsed(this: &mut WidgetMut<'_, Self>, collapsed: bool) {
-        DisclosureButton::set_disclosed(&mut Self::disclosure_button_mut(this), !collapsed);
+        if let Some(mut child) = Self::disclosure_button_mut(this) {
+            DisclosureButton::set_disclosed(&mut child, !collapsed);
+        }
         this.ctx.request_layout();
     }
 
@@ -95,24 +92,21 @@ impl CollapsePanel {
     ///
     /// We enforce this to be an `ArcStr` to make the allocation explicit.
     pub fn set_text(this: &mut WidgetMut<'_, Self>, new_text: ArcStr) {
-        Label::set_text(&mut Self::header_label_mut(this), new_text);
+        if let Some(mut child) = Self::header_label_mut(this) {
+            Label::set_text(&mut child, new_text);
+        }
     }
 
     /// Get a mutable reference to the disclosure button.
     pub fn disclosure_button_mut<'t>(
         this: &'t mut WidgetMut<'_, Self>,
-    ) -> WidgetMut<'t, DisclosureButton> {
-        this.ctx.get_mut(&mut this.widget.disclosure_button)
+    ) -> Option<WidgetMut<'t, DisclosureButton>> {
+        this.ctx.get_mut(this.widget.disclosure_button.id())
     }
 
     /// Get a mutable reference to the label.
-    pub fn header_label_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, Label> {
-        this.ctx.get_mut(&mut this.widget.header_label)
-    }
-
-    /// Get a mutable reference to the child.
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
-        this.ctx.get_mut(&mut this.widget.child)
+    pub fn header_label_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, Label>> {
+        this.ctx.get_mut(this.widget.header_label.id())
     }
 }
 
@@ -168,7 +162,7 @@ impl Widget for CollapsePanel {
             Axis::Vertical => space,
         };
         let label_length = ctx.compute_length(
-            &mut self.header_label,
+            &self.header_label,
             label_auto_length,
             label_context_size,
             axis,
@@ -183,9 +177,13 @@ impl Widget for CollapsePanel {
         };
 
         // Collapsed = !Disclosed
-        let is_collapsed = !ctx.get_raw(&mut self.disclosure_button).0.is_disclosed();
+        let is_collapsed = ctx
+            .get_child(&self.disclosure_button)
+            .is_none_or(|button| !button.is_disclosed());
 
-        let child_length = if !is_collapsed {
+        let child_length = if is_collapsed {
+            Length::ZERO
+        } else {
             let child_cross_space = match cross {
                 // If we know the horizontal space, then that is also the child's horizontal space.
                 Axis::Horizontal => cross_length,
@@ -200,14 +198,12 @@ impl Widget for CollapsePanel {
                 Axis::Vertical => space.reduce(header_length.saturating_add(separator_height)),
             };
             ctx.compute_length(
-                &mut self.child,
+                &self.child,
                 child_auto_length,
                 child_context_size,
                 axis,
                 child_cross_space,
             )
-        } else {
-            Length::ZERO
         };
 
         match axis {
@@ -237,19 +233,19 @@ impl Widget for CollapsePanel {
 
         // Square button
         let button_size = Size::new(button_width, button_width);
-        ctx.run_layout(&mut self.disclosure_button, button_size);
+        ctx.run_layout(&self.disclosure_button, button_size);
 
         let label_auto_size = SizeDef::new(
             LenDef::FitContent(
-                (size.width - header_padding_width * 2. - button_size.width)
+                (header_padding_width.mul_add(-2., size.width) - button_size.width)
                     .max(0.)
                     .px(),
             ),
             LenDef::FitContent(size.height.px()),
         );
-        let label_size = ctx.compute_size(&mut self.header_label, label_auto_size, size.into());
+        let label_size = ctx.compute_size(&self.header_label, label_auto_size, size.into());
 
-        ctx.run_layout(&mut self.header_label, label_size);
+        ctx.run_layout(&self.header_label, label_size);
 
         let header_height = button_size.height.max(label_size.height);
 
@@ -258,18 +254,22 @@ impl Widget for CollapsePanel {
             header_padding_width,
             (label_size.height - button_size.height) * 0.5,
         );
-        ctx.place_child(&mut self.disclosure_button, btn_origin);
+        ctx.place_child(&self.disclosure_button, btn_origin);
 
-        let label_origin = Point::new(button_size.width + header_padding_width * 2.0, 0.0);
-        ctx.place_child(&mut self.header_label, label_origin);
+        let label_origin = Point::new(header_padding_width.mul_add(2.0, button_size.width), 0.0);
+        ctx.place_child(&self.header_label, label_origin);
 
         // Collapsed = !Disclosed
-        let is_collapsed = !ctx.get_raw(&mut self.disclosure_button).0.is_disclosed();
+        let is_collapsed = ctx
+            .get_child(&self.disclosure_button)
+            .is_none_or(|button| !button.is_disclosed());
 
         // Only render child if it's not collapsed.
-        ctx.set_stashed(&mut self.child, is_collapsed);
+        ctx.set_stashed(&self.child, is_collapsed);
 
-        if !is_collapsed {
+        if is_collapsed {
+            self.separator_line_y = None;
+        } else {
             let child_space = Size::new(
                 size.width,
                 (size.height - header_height - separator_height).max(0.),
@@ -278,17 +278,15 @@ impl Widget for CollapsePanel {
             let child_auto_size = SizeDef::fit(child_space);
             let child_context_size = child_space.into();
 
-            let child_size = ctx.compute_size(&mut self.child, child_auto_size, child_context_size);
+            let child_size = ctx.compute_size(&self.child, child_auto_size, child_context_size);
 
-            ctx.run_layout(&mut self.child, child_size);
+            ctx.run_layout(&self.child, child_size);
 
             let child_origin = Point::new(0.0, header_height + separator_height);
-            ctx.place_child(&mut self.child, child_origin);
+            ctx.place_child(&self.child, child_origin);
 
             self.separator_line_y =
-                Some(header_height + SEPARATOR_PAD.top.get() + border_width * 0.5);
-        } else {
-            self.separator_line_y = None;
+                Some(border_width.mul_add(0.5, header_height + SEPARATOR_PAD.top.get()));
         }
 
         ctx.derive_baselines(&self.header_label);

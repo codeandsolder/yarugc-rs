@@ -35,25 +35,17 @@ smallvec.workspace = true
 tracing = { workspace = true, features = ["default"] }
 tracing-core = { version = "0.1.36", default-features = false }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "time"] }
-tracing-tracy = { version = "0.11.4", optional = true }
 tree_arena.workspace = true
 ui-events.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tracing-tracy = { version = "0.11.4", optional = true }
 time = { workspace = true, features = ["macros", "formatting"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook.workspace = true
 tracing-wasm.workspace = true
 web-time.workspace = true
-
-[dev-dependencies]
-float-cmp = { version = "0.10.0", features = ["std"], default-features = false }
-image = { workspace = true, features = ["png"] }
-insta = { version = "1.46.3" }
-
-# Make wgpu use tracing for its spans.
-profiling = { version = "1.0.17", features = ["profile-with-tracing"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 tracing_android_trace = "0.1.1"

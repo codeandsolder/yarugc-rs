@@ -10,13 +10,12 @@ use tracing::{Span, trace, trace_span};
 
 use crate::core::{
     AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
-    PaintCtx, PointerEvent, PrePaintProps, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent,
-    Update, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut, WidgetPod, keyboard::Key,
-    paint_background, paint_box_shadow,
+    PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update,
+    UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut, WidgetPod, keyboard::Key,
 };
 use crate::imaging::Painter;
-use crate::kurbo::{Axis, Cap, Circle, Dashes, Join, Point, Size, Stroke};
-use crate::layout::{LayoutSize, LenReq, Length, SizeDef};
+use crate::kurbo::{Axis, Circle, Size, Stroke};
+use crate::layout::{LenReq, Length};
 use crate::properties::{BorderColor, BorderWidth, CheckmarkColor, CheckmarkStrokeWidth};
 use crate::theme;
 use crate::widgets::{Label, RadioGroup};
@@ -48,10 +47,11 @@ impl RadioButton {
     }
 
     /// Create a new `RadioButton` with the given label.
+    #[must_use = "Use the returned value."]
     pub fn from_label(checked: bool, label: NewWidget<Label>) -> Self {
         Self {
             selected: checked,
-            label: label.to_pod(),
+            label: label.into_pod(),
             parent_group: None,
         }
     }
@@ -69,23 +69,13 @@ impl RadioButton {
             return;
         };
         let self_id = this.ctx.widget_id();
-        this.ctx.mutate_later(parent_id, move |mut group| {
-            let group = group.downcast::<RadioGroup>();
-            Self::update_group(group, self_id, checked);
-        });
+        this.ctx
+            .mutate_later::<RadioGroup>(parent_id, move |group| {
+                Self::update_group(group, self_id, checked);
+            });
     }
 
-    /// Set the text.
-    ///
-    /// We enforce this to be an `ArcStr` to make the allocation explicit.
-    pub fn set_text(this: &mut WidgetMut<'_, Self>, new_text: ArcStr) {
-        Label::set_text(&mut Self::label_mut(this), new_text);
-    }
-
-    /// Get a mutable reference to the label.
-    pub fn label_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, Label> {
-        this.ctx.get_mut(&mut this.widget.label)
-    }
+    label_text_accessors!();
 }
 
 impl UsesProperty<CheckmarkColor> for RadioButton {}
@@ -107,8 +97,7 @@ impl RadioButton {
             return;
         };
         let self_id = ctx.widget_id();
-        ctx.mutate_later(parent_id, move |mut group| {
-            let group = group.downcast::<RadioGroup>();
+        ctx.mutate_later::<RadioGroup>(parent_id, move |group| {
             Self::update_group(group, self_id, true);
         });
     }
@@ -121,11 +110,12 @@ impl RadioButton {
         {
             // We don't bother checking that the button still exists,
             // the mutate pass does that for us.
-            group.ctx.mutate_later(button_id, move |mut group| {
-                let mut button = group.downcast::<Self>();
-                button.widget.selected = false;
-                button.ctx.request_render();
-            });
+            group
+                .ctx
+                .mutate_later::<Self>(button_id, move |mut button| {
+                    button.widget.selected = false;
+                    button.ctx.request_render();
+                });
             // TODO - Submit action from RadioGroup?
         }
 
@@ -230,103 +220,7 @@ impl Widget for RadioButton {
         CheckmarkColor::prop_changed(ctx, property_type);
     }
 
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        axis: Axis,
-        len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        let check_side = theme::BASIC_WIDGET_HEIGHT;
-        let check_padding = theme::WIDGET_CONTROL_COMPONENT_PADDING;
-
-        let calc_other_length = |axis| match axis {
-            Axis::Horizontal => check_side.saturating_add(check_padding),
-            Axis::Vertical => Length::ZERO,
-        };
-        let other_length = calc_other_length(axis);
-
-        let cross = axis.cross();
-        let cross_space = cross_length.map(|cross_length| {
-            let cross_other_length = calc_other_length(cross);
-            cross_length.saturating_sub(cross_other_length)
-        });
-
-        let auto_length = len_req.reduce(other_length).into();
-        let context_size = LayoutSize::maybe(cross, cross_space);
-
-        let label_length = ctx.compute_length(
-            &mut self.label,
-            auto_length,
-            context_size,
-            axis,
-            cross_space,
-        );
-
-        match axis {
-            Axis::Horizontal => label_length.saturating_add(other_length),
-            Axis::Vertical => label_length.max(check_side).saturating_add(other_length),
-        }
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let check_side = theme::BASIC_WIDGET_HEIGHT.get();
-        let check_padding = theme::WIDGET_CONTROL_COMPONENT_PADDING.get();
-
-        let space = Size::new(
-            (size.width - (check_side + check_padding)).max(0.),
-            size.height,
-        );
-
-        let label_size = ctx.compute_size(&mut self.label, SizeDef::fit(space), space.into());
-        ctx.run_layout(&mut self.label, label_size);
-
-        let label_origin = Point::new(check_side + check_padding, 0.);
-        ctx.place_child(&mut self.label, label_origin);
-
-        ctx.derive_baselines(&self.label);
-    }
-
-    fn pre_paint(
-        &mut self,
-        ctx: &mut PaintCtx<'_>,
-        props: &PropertiesRef<'_>,
-        painter: &mut Painter<'_>,
-    ) {
-        let bbox = ctx.border_box();
-        let cache = ctx.property_cache();
-        let p = PrePaintProps::fetch(props, cache);
-
-        paint_box_shadow(painter, bbox, p.box_shadow, p.corner_radius);
-        paint_background(painter, bbox, p.background, p.border_width, p.corner_radius);
-
-        // Paint focus indicator around the entire widget (box + label)
-        if ctx.is_focus_target() || ctx.is_hovered() {
-            // TODO: Replace this custom implementation with the general paint_border()
-
-            let focus_rect = bbox.inflate(2.0, 2.0);
-
-            let focus_color = p.border_color.color;
-            let focus_width = 2.0;
-            let focus_radius = 4.0;
-
-            let focus_stroke = Stroke {
-                width: focus_width,
-                join: Join::Round,
-                miter_limit: 10.0,
-                start_cap: Cap::Round,
-                end_cap: Cap::Round,
-                dash_pattern: Dashes::default(),
-                dash_offset: 0.0,
-            };
-            let focus_path = focus_rect.to_rounded_rect(focus_radius);
-            painter
-                .stroke(focus_path, &focus_stroke, focus_color)
-                .draw();
-        }
-        // Skip painting the regular border while the check border uses that property
-    }
+    super::selection_control::control_methods!();
 
     fn paint(
         &mut self,
@@ -339,12 +233,12 @@ impl Widget for RadioButton {
         let border_width = *props.get::<BorderWidth>(cache);
         let brush = *props.get::<CheckmarkColor>(cache);
 
-        let check_side = theme::BASIC_WIDGET_HEIGHT.get();
-        let check_size = Size::new(check_side, check_side);
+        let side = theme::BASIC_WIDGET_HEIGHT.get();
+        let check_size = Size::new(side, side);
 
         let border_circle = Circle::new(
             check_size.to_rect().center(),
-            (check_side - border_width.width.get()) * 0.5,
+            (side - border_width.width.get()) * 0.5,
         );
 
         // Paint the radio button border
@@ -356,7 +250,7 @@ impl Widget for RadioButton {
         // Paint the checkmark if checked
         if self.selected {
             // TODO: Create a prop for ellipse size. Default: 50% of border size
-            let check_circle = Circle::new(check_size.to_rect().center(), check_side * 0.25);
+            let check_circle = Circle::new(check_size.to_rect().center(), side * 0.25);
             painter.fill(check_circle, brush.color).draw();
         }
     }
@@ -413,29 +307,30 @@ mod tests {
         let widget = NewWidget::new(RadioGroup::new(widget));
 
         let mut harness = TestHarness::create_with_size(default_property_set(), widget, (100, 40));
-        let radio_id = harness.get_widget(radio_tag).id();
+        let radio_id = harness.get_widget(radio_tag).unwrap().id();
 
         assert_render_snapshot!(harness, "radio_button_hello_unchecked");
 
         assert!(harness.pop_action_erased().is_none());
 
-        harness.mouse_move_to(radio_id);
+        harness.mouse_move_to(radio_id).unwrap();
 
         assert_render_snapshot!(harness, "radio_button_hello_hovered");
 
-        harness.mouse_click_on(radio_id, None);
+        harness.mouse_click_on(radio_id, None).unwrap();
         assert_eq!(
-            harness.pop_action::<RadioButtonSelected>(),
+            harness.pop_action::<RadioButtonSelected>().unwrap(),
             Some((RadioButtonSelected, radio_id))
         );
 
         assert_render_snapshot!(harness, "radio_button_hello_checked");
 
-        harness.edit_root_widget(|mut group| {
-            let mut radio = RadioGroup::child_mut(&mut group);
-            let mut radio = radio.downcast();
-            RadioButton::set_checked(&mut radio, false);
-        });
+        harness
+            .edit_root_widget(|mut group| {
+                let mut radio = RadioGroup::child_mut::<RadioButton>(&mut group).unwrap();
+                RadioButton::set_checked(&mut radio, false);
+            })
+            .unwrap();
 
         // The radio button should be unchecked again, but still hovered
         assert_render_snapshot!(harness, "radio_button_hello_hovered");
@@ -476,7 +371,7 @@ mod tests {
             let mut harness =
                 TestHarness::create_with_size(default_property_set(), group, (50, 50));
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         let image_2 = {
@@ -486,21 +381,22 @@ mod tests {
             let mut harness =
                 TestHarness::create_with_size(default_property_set(), group, (50, 50));
 
-            harness.edit_root_widget(|mut group| {
-                let mut radio = RadioGroup::child_mut(&mut group);
-                let mut radio = radio.downcast();
-                RadioButton::set_checked(&mut radio, true);
-                RadioButton::set_text(
-                    &mut radio,
-                    ArcStr::from("The quick brown fox jumps over the lazy dog"),
-                );
+            harness
+                .edit_root_widget(|mut group| {
+                    let mut radio = RadioGroup::child_mut::<RadioButton>(&mut group).unwrap();
+                    RadioButton::set_checked(&mut radio, true);
+                    RadioButton::set_text(
+                        &mut radio,
+                        ArcStr::from("The quick brown fox jumps over the lazy dog"),
+                    );
 
-                let mut label = RadioButton::label_mut(&mut radio);
-                label.insert_prop(ContentColor::new(ACCENT_COLOR));
-                Label::insert_style(&mut label, StyleProperty::FontSize(20.0));
-            });
+                    let mut label = RadioButton::label_mut(&mut radio).unwrap();
+                    label.insert_prop(ContentColor::new(ACCENT_COLOR));
+                    Label::insert_style(&mut label, StyleProperty::FontSize(20.0));
+                })
+                .unwrap();
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         // We don't use assert_eq because we don't want rich assert

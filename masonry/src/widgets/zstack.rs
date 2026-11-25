@@ -38,7 +38,7 @@ impl Child {
         Self { widget, alignment }
     }
 
-    fn update_alignment(&mut self, alignment: ChildAlignment) {
+    const fn update_alignment(&mut self, alignment: ChildAlignment) {
         self.alignment = alignment;
     }
 }
@@ -71,23 +71,26 @@ impl Default for ZStack {
 // --- MARK: BUILDERS
 impl ZStack {
     /// Constructs a new empty `ZStack` widget.
+    #[must_use = "Use the returned value."]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Changes the alignment of the children.
+    #[must_use = "Use the configured value."]
     pub fn with_alignment(mut self, alignment: impl Into<UnitPoint>) -> Self {
         self.alignment = alignment.into();
         self
     }
 
     /// Appends a child widget to the `ZStack`.
+    #[must_use = "Use the configured value."]
     pub fn with(
         mut self,
         child: NewWidget<impl Widget + ?Sized>,
         alignment: impl Into<ChildAlignment>,
     ) -> Self {
-        let child = Child::new(child.erased().to_pod(), alignment.into());
+        let child = Child::new(child.erased().into_pod(), alignment.into());
         self.children.push(child);
         self
     }
@@ -106,25 +109,7 @@ impl ZStack {
 
 // --- MARK: COLLECTIONWIDGET
 impl CollectionWidget<ChildAlignment> for ZStack {
-    /// Returns the number of children.
-    fn len(&self) -> usize {
-        self.children.len()
-    }
-
-    /// Returns `true` if there are no children.
-    fn is_empty(&self) -> bool {
-        self.children.is_empty()
-    }
-
-    /// Returns a mutable reference to the child widget at the given index.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `idx` is out of bounds.
-    fn get_mut<'t>(this: &'t mut WidgetMut<'_, Self>, idx: usize) -> WidgetMut<'t, dyn Widget> {
-        let child = &mut this.widget.children[idx].widget;
-        this.ctx.get_mut(child)
-    }
+    collection_accessors!(child => child.widget.id());
 
     /// Appends a child widget to the collection.
     fn add(
@@ -132,72 +117,92 @@ impl CollectionWidget<ChildAlignment> for ZStack {
         child: NewWidget<impl Widget + ?Sized>,
         params: impl Into<ChildAlignment>,
     ) {
-        let child = Child::new(child.erased().to_pod(), params.into());
+        let child = Child::new(child.erased().into_pod(), params.into());
         this.widget.children.push(child);
         this.ctx.children_changed();
     }
 
     /// Inserts a child widget at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is larger than the number of children.
+    /// Returns an error if `idx` is larger than the number of children.
     fn insert(
         this: &mut WidgetMut<'_, Self>,
         idx: usize,
         child: NewWidget<impl Widget + ?Sized>,
         params: impl Into<ChildAlignment>,
-    ) {
-        let child = Child::new(child.erased().to_pod(), params.into());
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_insert_slot(idx, this.widget.children.len())?;
+        let child = Child::new(child.erased().into_pod(), params.into());
         this.widget.children.insert(idx, child);
         this.ctx.children_changed();
+        Ok(())
     }
 
     /// Replaces the child widget at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
+    /// Returns an error if `idx` is out of bounds.
     fn set(
         this: &mut WidgetMut<'_, Self>,
         idx: usize,
         child: NewWidget<impl Widget + ?Sized>,
         params: impl Into<ChildAlignment>,
-    ) {
-        let child = Child::new(child.erased().to_pod(), params.into());
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(idx, this.widget.children.len())?;
+        let child = Child::new(child.erased().into_pod(), params.into());
         let old_child = std::mem::replace(&mut this.widget.children[idx], child);
         this.ctx.remove_child(old_child.widget);
+        Ok(())
     }
 
     /// Sets the child alignment at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
-    fn set_params(this: &mut WidgetMut<'_, Self>, idx: usize, params: impl Into<ChildAlignment>) {
+    /// Returns an error if `idx` is out of bounds.
+    fn set_params(
+        this: &mut WidgetMut<'_, Self>,
+        idx: usize,
+        params: impl Into<ChildAlignment>,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(idx, this.widget.children.len())?;
         let child = &mut this.widget.children[idx];
         child.update_alignment(params.into());
         this.ctx.request_layout();
+        Ok(())
     }
 
     /// Swaps the index of two children.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `a` or `b` are out of bounds.
-    fn swap(this: &mut WidgetMut<'_, Self>, a: usize, b: usize) {
-        this.widget.children.swap(a, b);
+    /// Returns an error if `a` or `b` are out of bounds.
+    fn swap(
+        this: &mut WidgetMut<'_, Self>,
+        a: usize,
+        b: usize,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::swap_slots(&mut this.widget.children, a, b)?;
         this.ctx.children_changed();
+        Ok(())
     }
 
     /// Removes the child at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
-    fn remove(this: &mut WidgetMut<'_, Self>, idx: usize) {
+    /// Returns an error if `idx` is out of bounds.
+    fn remove(
+        this: &mut WidgetMut<'_, Self>,
+        idx: usize,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(idx, this.widget.children.len())?;
         let child = this.widget.children.remove(idx);
         this.ctx.remove_child(child.widget);
+        Ok(())
     }
 
     /// Removes all children.
@@ -225,13 +230,8 @@ impl Widget for ZStack {
 
         let mut length = Length::ZERO;
         for child in &mut self.children {
-            let child_length = ctx.compute_length(
-                &mut child.widget,
-                auto_length,
-                context_size,
-                axis,
-                cross_length,
-            );
+            let child_length =
+                ctx.compute_length(&child.widget, auto_length, context_size, axis, cross_length);
             length = length.max(child_length);
         }
 
@@ -244,8 +244,8 @@ impl Widget for ZStack {
         let mut min_baseline = f64::INFINITY;
         let mut max_baseline = f64::NEG_INFINITY;
         for child in &mut self.children {
-            let child_size = ctx.compute_size(&mut child.widget, auto_size, context_size);
-            ctx.run_layout(&mut child.widget, child_size);
+            let child_size = ctx.compute_size(&child.widget, auto_size, context_size);
+            ctx.run_layout(&child.widget, child_size);
 
             let child_alignment = match child.alignment {
                 ChildAlignment::SelfAligned(alignment) => alignment,
@@ -256,15 +256,15 @@ impl Widget for ZStack {
             let extra_height = size.height - child_size.height;
             let child_origin =
                 child_alignment.resolve(Rect::new(0., 0., extra_width, extra_height));
-            ctx.place_child(&mut child.widget, child_origin);
+            ctx.place_child(&child.widget, child_origin);
 
-            let child_origin = ctx.child_origin(&child.widget);
-
-            let (first_baseline, last_baseline) = ctx.child_aligned_baselines(&child.widget);
-            min_baseline = min_baseline.min(child_origin.y + first_baseline);
-            max_baseline = max_baseline.max(child_origin.y + last_baseline);
+            if let Some(placement) = ctx.child_placement(&child.widget) {
+                let (first, last) = placement.parent_baselines();
+                min_baseline = min_baseline.min(first);
+                max_baseline = max_baseline.max(last);
+            }
         }
-        if !self.children.is_empty() {
+        if min_baseline.is_finite() && max_baseline.is_finite() {
             ctx.set_baselines(min_baseline, max_baseline);
         } else {
             ctx.clear_baselines();
@@ -289,7 +289,7 @@ impl Widget for ZStack {
         self.children
             .iter()
             .map(|child| &child.widget)
-            .map(|widget_pod| widget_pod.id())
+            .map(WidgetPod::id)
             .collect()
     }
 
@@ -368,9 +368,11 @@ mod tests {
         ];
 
         for (align, name) in all_cases {
-            harness.edit_root_widget(|mut zstack| {
-                ZStack::set_alignment(&mut zstack, align);
-            });
+            harness
+                .edit_root_widget(|mut zstack| {
+                    ZStack::set_alignment(&mut zstack, align);
+                })
+                .unwrap();
             assert_render_snapshot!(harness, &format!("zstack_alignment_{name}"));
         }
     }

@@ -26,7 +26,7 @@ struct AppState {
 
 impl Default for AppState {
     fn default() -> Self {
-        AppState {
+        Self {
             text: "Hello from Xilem Web :)".to_string(),
             file_to_open: None,
             start_opening: false,
@@ -40,7 +40,6 @@ fn app_logic(state: &mut AppState) -> impl Element<AppState> + use<> {
         .start_opening
         .then(|| {
             state.file_to_open.take().map(|file| {
-                state.file_to_open = None;
                 state.start_opening = false;
                 memoized_await(
                     file,
@@ -91,10 +90,12 @@ fn open_file_input() -> impl Element<AppState> + use<> {
         .attr("accept", "text/plain")
         .on_change(|state: &mut AppState, ev| {
             ev.prevent_default();
-            let input = ev
+            let Some(input) = ev
                 .target()
-                .unwrap()
-                .unchecked_into::<web_sys::HtmlInputElement>();
+                .and_then(|target| target.dyn_into::<web_sys::HtmlInputElement>().ok())
+            else {
+                return;
+            };
             let Some(files) = input.files() else {
                 state.file_to_open = None;
                 return;
@@ -124,8 +125,9 @@ fn hidden_save_link() -> impl Element<AppState> + use<> {
         })
 }
 
-pub fn main() {
+fn main() -> Result<(), xilem_web::DomError> {
     _ = console_log::init_with_level(log::Level::Debug);
     console_error_panic_hook::set_once();
-    App::new(document_body(), AppState::default(), app_logic).run();
+    App::new(document_body()?, AppState::default(), app_logic)?.run();
+    Ok(())
 }

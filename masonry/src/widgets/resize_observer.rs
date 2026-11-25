@@ -1,8 +1,6 @@
 // Copyright 2025 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use std::mem;
-
 use crate::core::{
     AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, PaintCtx, PropertiesRef, RegisterCtx,
     Widget, WidgetMut, WidgetPod,
@@ -65,9 +63,10 @@ impl ResizeObserver {
     /// It reports the child's length as its own in [`measure`], syncing its size with the child's.
     ///
     /// [`measure`]: Widget::measure
+    #[must_use = "Use the returned value."]
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
-            child: child.erased().to_pod(),
+            child: child.erased().into_pod(),
             last_size: None,
         }
     }
@@ -75,11 +74,7 @@ impl ResizeObserver {
 
 // --- MARK: WIDGETMUT
 impl ResizeObserver {
-    /// Replaces the child widget with a new one.
-    pub fn set_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<impl Widget + ?Sized>) {
-        let old_child = mem::replace(&mut this.widget.child, child.erased().to_pod());
-        this.ctx.remove_child(old_child);
-    }
+    child_accessors!(child, set_child, child_mut, erased);
 
     /// Forces this layout observer to send a new action.
     ///
@@ -87,11 +82,6 @@ impl ResizeObserver {
     pub fn force_resend(this: &mut WidgetMut<'_, Self>) {
         this.widget.last_size = None;
         this.ctx.request_layout();
-    }
-
-    /// Returns mutable reference to the child widget.
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
-        this.ctx.get_mut(&mut this.widget.child)
     }
 }
 
@@ -128,12 +118,12 @@ impl Widget for ResizeObserver {
         _len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        ctx.redirect_measurement(&mut self.child, axis, cross_length)
+        ctx.redirect_measurement(&self.child, axis, cross_length)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        ctx.run_layout(&mut self.child, size);
-        ctx.place_child(&mut self.child, Point::ORIGIN);
+        ctx.run_layout(&self.child, size);
+        ctx.place_child(&self.child, Point::ORIGIN);
         ctx.derive_baselines(&self.child);
 
         if self.last_size.is_none_or(|it| it != size) {
@@ -195,11 +185,12 @@ mod tests {
         let flex = Flex::column().with_fixed(observer).prepare();
         let mut harness = TestHarness::create(default_property_set(), flex);
         // There will be an initial layout.
-        let (LayoutChanged, action_id) = harness.pop_action::<LayoutChanged>().unwrap();
+        let (LayoutChanged, action_id) = harness.pop_action::<LayoutChanged>().unwrap().unwrap();
         assert_eq!(action_id, observer_id);
         assert_eq!(
             harness
                 .get_widget_with_id(observer_id)
+                .unwrap()
                 .ctx()
                 .border_box()
                 .size(),
@@ -209,15 +200,18 @@ mod tests {
             }
         );
         // There shouldn't be a second layout.
-        assert!(harness.pop_action::<LayoutChanged>().is_none());
+        assert!(harness.pop_action::<LayoutChanged>().unwrap().is_none());
 
-        harness.edit_widget(tag, |mut it| SizedBox::set_height(&mut it, 200.px()));
+        harness
+            .edit_widget(tag, |mut it| SizedBox::set_height(&mut it, 200.px()))
+            .unwrap();
 
-        let (LayoutChanged, action_id) = harness.pop_action::<LayoutChanged>().unwrap();
+        let (LayoutChanged, action_id) = harness.pop_action::<LayoutChanged>().unwrap().unwrap();
         assert_eq!(action_id, observer_id);
         assert_eq!(
             harness
                 .get_widget_with_id(observer_id)
+                .unwrap()
                 .ctx()
                 .border_box()
                 .size(),
@@ -227,13 +221,15 @@ mod tests {
             }
         );
         // There shouldn't be a second layout.
-        assert!(harness.pop_action::<LayoutChanged>().is_none());
+        assert!(harness.pop_action::<LayoutChanged>().unwrap().is_none());
 
         // Resize to the same size.
-        harness.edit_widget(tag, |mut it| SizedBox::set_height(&mut it, 200.px()));
+        harness
+            .edit_widget(tag, |mut it| SizedBox::set_height(&mut it, 200.px()))
+            .unwrap();
 
         // The size hasn't changed, so no event.
-        assert!(harness.pop_action::<LayoutChanged>().is_none());
+        assert!(harness.pop_action::<LayoutChanged>().unwrap().is_none());
     }
 
     #[test]
@@ -246,11 +242,12 @@ mod tests {
         let mut harness =
             TestHarness::create_with_size(default_property_set(), observer, (200, 200));
         // There will be an initial layout.
-        let (LayoutChanged, action_id) = harness.pop_action::<LayoutChanged>().unwrap();
+        let (LayoutChanged, action_id) = harness.pop_action::<LayoutChanged>().unwrap().unwrap();
         assert_eq!(action_id, observer_id);
         assert_eq!(
             harness
                 .get_widget_with_id(observer_id)
+                .unwrap()
                 .ctx()
                 .border_box()
                 .size(),
@@ -260,15 +257,16 @@ mod tests {
             }
         );
         // There shouldn't be a second layout.
-        assert!(harness.pop_action::<LayoutChanged>().is_none());
+        assert!(harness.pop_action::<LayoutChanged>().unwrap().is_none());
 
         harness.process_window_event(WindowEvent::Resize(PhysicalSize::new(100, 150)));
 
-        let (LayoutChanged, action_id) = harness.pop_action::<LayoutChanged>().unwrap();
+        let (LayoutChanged, action_id) = harness.pop_action::<LayoutChanged>().unwrap().unwrap();
         assert_eq!(action_id, observer_id);
         assert_eq!(
             harness
                 .get_widget_with_id(observer_id)
+                .unwrap()
                 .ctx()
                 .border_box()
                 .size(),
@@ -278,12 +276,12 @@ mod tests {
             }
         );
         // There shouldn't be a second layout.
-        assert!(harness.pop_action::<LayoutChanged>().is_none());
+        assert!(harness.pop_action::<LayoutChanged>().unwrap().is_none());
 
         // Same size again.
         harness.process_window_event(WindowEvent::Resize(PhysicalSize::new(100, 150)));
 
         // The size hasn't changed, so no event.
-        assert!(harness.pop_action::<LayoutChanged>().is_none());
+        assert!(harness.pop_action::<LayoutChanged>().unwrap().is_none());
     }
 }

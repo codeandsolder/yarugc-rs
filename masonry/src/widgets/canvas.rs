@@ -13,7 +13,7 @@ use crate::kurbo::{Axis, Size};
 use crate::layout::{LenReq, Length};
 
 /// The preferred size of the square Canvas.
-const DEFAULT_LENGTH: Length = Length::const_px(100.);
+const DEFAULT_LENGTH: Length = crate::layout::length!(100.);
 
 /// A widget allowing custom drawing.
 ///
@@ -38,6 +38,7 @@ impl Canvas {
     /// If the canvas is decorative users should set alt text to `""`.
     /// If it's too hard to describe through text, the alt text should be left unset.
     /// This allows accessibility clients to know that there is no accessible description of the canvas content.
+    #[must_use = "Use the configured value."]
     pub fn with_alt_text(mut self, alt_text: impl Into<ArcStr>) -> Self {
         self.alt_text = Some(alt_text.into());
         self
@@ -47,7 +48,8 @@ impl Canvas {
 // --- MARK: METHODS
 impl Canvas {
     /// Returns the current size of the canvas, which matches its content-box size.
-    pub fn size(&self) -> Size {
+    #[must_use = "Use the returned value."]
+    pub const fn size(&self) -> Size {
         self.size
     }
 }
@@ -96,7 +98,7 @@ impl Widget for Canvas {
     ) -> Length {
         // We use all the available space or fall back to our const preferred size.
         match len_req {
-            LenReq::FitContent(space) => space,
+            LenReq::Fit(space) => space,
             _ => DEFAULT_LENGTH,
         }
     }
@@ -171,22 +173,24 @@ mod tests {
             canvas.prepare().with_props(PropertySet::default()),
         );
 
-        harness.edit_root_widget(|mut canvas| {
-            Canvas::update_scene(&mut canvas, |_ctx, scene, size| {
-                let mut painter = Painter::new(scene);
-                let scale = Affine::scale_non_uniform(size.width, size.height);
-                let mut path = BezPath::new();
-                path.move_to((0.1, 0.1));
-                path.line_to((0.9, 0.9));
-                path.line_to((0.9, 0.1));
-                path.close_path();
-                path = scale * path;
-                painter.fill(&path, Color::from_rgb8(100, 240, 150)).draw();
-                painter
-                    .stroke(&path, &Stroke::new(4.), Color::from_rgb8(200, 140, 50))
-                    .draw();
-            });
-        });
+        harness
+            .edit_root_widget(|mut canvas| {
+                Canvas::update_scene(&mut canvas, |_ctx, scene, size| {
+                    let mut painter = Painter::new(scene);
+                    let scale = Affine::scale_non_uniform(size.width, size.height);
+                    let mut path = BezPath::new();
+                    path.move_to((0.1, 0.1));
+                    path.line_to((0.9, 0.9));
+                    path.line_to((0.9, 0.1));
+                    path.close_path();
+                    path = scale * path;
+                    painter.fill(&path, Color::from_rgb8(100, 240, 150)).draw();
+                    painter
+                        .stroke(&path, &Stroke::new(4.), Color::from_rgb8(200, 140, 50))
+                        .draw();
+                });
+            })
+            .unwrap();
 
         assert_render_snapshot!(harness, "canvas_simple");
     }
@@ -203,31 +207,33 @@ mod tests {
             harness_params,
         );
 
-        harness.edit_root_widget(|mut canvas| {
-            Canvas::update_scene(&mut canvas, |ctx, scene, size| {
-                let mut painter = Painter::new(scene);
-                let (fcx, lcx) = ctx.text_contexts();
-                let mut text_layout_builder = lcx.ranged_builder(fcx, "Canvas", 1., true);
-                text_layout_builder.push_default(StyleProperty::FontFamily(FontFamily::Single(
-                    FontFamilyName::Generic(GenericFamily::Serif),
-                )));
-                text_layout_builder.push_default(StyleProperty::FontSize(size.height as f32));
-                let mut text_layout = text_layout_builder.build("Canvas");
-                text_layout.break_all_lines(None);
-                text_layout.align(None, Alignment::Start, AlignmentOptions::default());
-                let scale = Affine::scale_non_uniform(
-                    size.width / text_layout.width() as f64,
-                    size.height / text_layout.height() as f64,
-                );
-                render_text(
-                    &mut painter,
-                    scale,
-                    &text_layout,
-                    &[Color::from_rgb8(100, 240, 150).into()],
-                    true,
-                );
-            });
-        });
+        harness
+            .edit_root_widget(|mut canvas| {
+                Canvas::update_scene(&mut canvas, |ctx, scene, size| {
+                    let mut painter = Painter::new(scene);
+                    let (fcx, lcx) = ctx.text_contexts();
+                    let mut text_layout_builder = lcx.ranged_builder(fcx, "Canvas", 1., true);
+                    text_layout_builder.push_default(StyleProperty::FontFamily(
+                        FontFamily::Single(FontFamilyName::Generic(GenericFamily::Serif)),
+                    ));
+                    text_layout_builder.push_default(StyleProperty::FontSize(size.height as f32));
+                    let mut text_layout = text_layout_builder.build("Canvas");
+                    text_layout.break_all_lines(None);
+                    text_layout.align(None, Alignment::Start, AlignmentOptions::default());
+                    let scale = Affine::scale_non_uniform(
+                        size.width / text_layout.width() as f64,
+                        size.height / text_layout.height() as f64,
+                    );
+                    render_text(
+                        &mut painter,
+                        scale,
+                        &text_layout,
+                        &[Color::from_rgb8(100, 240, 150).into()],
+                        true,
+                    );
+                });
+            })
+            .unwrap();
 
         assert_render_snapshot!(harness, "canvas_text");
     }

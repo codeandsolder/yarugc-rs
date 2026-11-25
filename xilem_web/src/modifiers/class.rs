@@ -14,7 +14,7 @@ use crate::{DomView, ViewCtx};
 
 type CowStr = std::borrow::Cow<'static, str>;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 /// An modifier element to either add or remove a class of an element.
 ///
 /// It's used in [`Classes`].
@@ -25,7 +25,8 @@ pub enum ClassModifier {
 
 impl ClassModifier {
     /// Returns the class name of this modifier.
-    pub fn name(&self) -> &CowStr {
+    #[must_use = "Use the modifier class name."]
+    pub const fn name(&self) -> &CowStr {
         let (Self::Add(name) | Self::Remove(name)) = self;
         name
     }
@@ -49,7 +50,7 @@ pub trait ClassIter: PartialEq + Debug + 'static {
 
 impl<C: ClassIter> ClassIter for Option<C> {
     fn class_iter(&self) -> impl Iterator<Item = CowStr> {
-        self.iter().flat_map(|c| c.class_iter())
+        self.iter().flat_map(ClassIter::class_iter)
     }
 }
 
@@ -73,24 +74,24 @@ impl ClassIter for CowStr {
 
 impl<C: ClassIter> ClassIter for Vec<C> {
     fn class_iter(&self) -> impl Iterator<Item = CowStr> {
-        self.iter().flat_map(|c| c.class_iter())
+        self.iter().flat_map(ClassIter::class_iter)
     }
 }
 
 impl<C: ClassIter, const N: usize> ClassIter for [C; N] {
     fn class_iter(&self) -> impl Iterator<Item = CowStr> {
-        self.iter().flat_map(|c| c.class_iter())
+        self.iter().flat_map(ClassIter::class_iter)
     }
 }
 
 #[derive(Default)]
 /// An Element modifier that manages all classes of an Element.
 pub struct Classes {
-    class_name: String,
+    serialized: String,
     // It would be nice to avoid this, as this results in extra allocations, when `Strings` are used as classes.
-    classes: VecMap<CowStr, ()>,
+    names: VecMap<CowStr, ()>,
     modifiers: Vec<ClassModifier>,
-    idx: u16,
+    idx: usize,
     dirty: bool,
 }
 
@@ -113,34 +114,32 @@ impl Classes {
             modifier.dirty = false;
         } else if modifier.dirty {
             modifier.dirty = false;
-            modifier.classes.clear();
-            modifier.classes.reserve(modifier.modifiers.len());
+            modifier.names.clear();
+            modifier.names.reserve(modifier.modifiers.len());
             for m in &modifier.modifiers {
                 match m {
-                    ClassModifier::Remove(class_name) => modifier.classes.remove(class_name),
-                    ClassModifier::Add(class_name) => {
-                        modifier.classes.insert(class_name.clone(), ())
-                    }
+                    ClassModifier::Remove(class_name) => modifier.names.remove(class_name),
+                    ClassModifier::Add(class_name) => modifier.names.insert(class_name.clone(), ()),
                 };
             }
-            modifier.class_name.clear();
+            modifier.serialized.clear();
             modifier
-                .class_name
-                .reserve_exact(modifier.classes.keys().map(|k| k.len() + 1).sum());
-            let last_idx = modifier.classes.len().saturating_sub(1);
-            for (idx, class) in modifier.classes.keys().enumerate() {
-                modifier.class_name += class;
+                .serialized
+                .reserve_exact(modifier.names.keys().map(|k| k.len() + 1).sum());
+            let last_idx = modifier.names.len().saturating_sub(1);
+            for (idx, class) in modifier.names.keys().enumerate() {
+                modifier.serialized += class;
                 if idx != last_idx {
-                    modifier.class_name += " ";
+                    modifier.serialized += " ";
                 }
             }
             // Svg elements do have issues with className, see https://developer.mozilla.org/en-US/docs/Web/API/Element/className
             if element.dyn_ref::<web_sys::SvgElement>().is_some() {
                 element
-                    .set_attribute(wasm_bindgen::intern("class"), &modifier.class_name)
+                    .set_attribute(wasm_bindgen::intern("class"), &modifier.serialized)
                     .unwrap_throw();
             } else {
-                element.set_class_name(&modifier.class_name);
+                element.set_class_name(&modifier.serialized);
             }
         }
     }
@@ -149,7 +148,7 @@ impl Classes {
     /// Rebuilds the current element, while ensuring that the order of the modifiers stays correct.
     /// Any children should be rebuilt in inside `f`, *before* modifying any other properties of [`Classes`].
     pub fn rebuild<E: WithModifier<Self>>(mut element: E, prev_len: usize, f: impl FnOnce(E)) {
-        element.modifier().modifier.idx -= prev_len as u16;
+        element.modifier().modifier.idx -= prev_len;
         f(element);
     }
 
@@ -183,9 +182,7 @@ impl Classes {
         // TODO this could potentially be expensive, maybe think about `VecSplice` again.
         // Although in the average case, this is likely not relevant, as usually very few attributes are used, thus shifting is probably good enough
         // I.e. a `VecSplice` is probably less optimal (either more complicated code, and/or more memory usage)
-        this.modifier
-            .modifiers
-            .insert(this.modifier.idx as usize, modifier);
+        this.modifier.modifiers.insert(this.modifier.idx, modifier);
         this.modifier.idx += 1;
     }
 
@@ -203,7 +200,7 @@ impl Classes {
         this.flags.set_needs_update();
         let idx = this.modifier.idx;
         this.modifier.idx += 1;
-        f(&mut this.modifier.modifiers[idx as usize])
+        f(&mut this.modifier.modifiers[idx])
     }
 
     #[inline]
@@ -215,7 +212,7 @@ impl Classes {
             !this.flags.was_created(),
             "This should never be called, when the underlying element was (re)created"
         );
-        this.modifier.idx += count as u16;
+        this.modifier.idx += count;
     }
 
     #[inline]
@@ -227,7 +224,7 @@ impl Classes {
             !this.flags.was_created(),
             "This should never be called, when the underlying element was (re)created."
         );
-        let start = this.modifier.idx as usize;
+        let start = this.modifier.idx;
         this.modifier.dirty = true;
         this.flags.set_needs_update();
         this.modifier.modifiers.drain(start..(start + count));
@@ -250,7 +247,7 @@ impl Classes {
         let prev_len = this.modifier.modifiers.len();
         this.modifier.modifiers.extend(modifiers);
         let new_len = this.modifier.modifiers.len() - prev_len;
-        this.modifier.idx += new_len as u16;
+        this.modifier.idx += new_len;
         new_len
     }
 

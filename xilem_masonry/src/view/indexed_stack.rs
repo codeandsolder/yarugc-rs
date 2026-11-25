@@ -76,7 +76,7 @@ pub struct IndexedStack<Seq, State, Action = ()> {
 impl<Seq, State, Action> IndexedStack<Seq, State, Action> {
     /// Set the active item for this stack.
     #[track_caller]
-    pub fn active(mut self, active: usize) -> Self {
+    pub const fn active(mut self, active: usize) -> Self {
         // TODO: validate this against the sequence. Currently,
         // the sequence has no way to get the length.
         self.active_child = active;
@@ -121,7 +121,7 @@ where
             widget = widget.with(element.child.new_widget);
         }
         widget = widget.with_active_child(self.active_child);
-        let pod = ctx.create_pod(widget);
+        let pod = Pod::new(widget);
         (
             pod,
             IndexedStackState {
@@ -149,7 +149,10 @@ where
         // set the active child after updating the sequence to
         // ensure the index remains consistent with the children list
         if self.active_child != element.widget.active_child() {
-            widgets::IndexedStack::set_active_child(&mut element, self.active_child);
+            super::collection_succeeded(widgets::IndexedStack::set_active_child(
+                &mut element,
+                self.active_child,
+            ));
         }
     }
 
@@ -181,31 +184,7 @@ where
 }
 
 // Used to become a reference form for editing. It's provided to rebuild and teardown.
-impl ViewElement for IndexedStackElement {
-    type Mut<'w> = IndexedStackElementMut<'w>;
-}
-
-// Used to allow the item to be used as a generic item in ViewSequence.
-impl SuperElement<Self, ViewCtx> for IndexedStackElement {
-    fn upcast(_ctx: &mut ViewCtx, child: Self) -> Self {
-        child
-    }
-
-    fn with_downcast_val<R>(
-        mut this: Mut<'_, Self>,
-        f: impl FnOnce(Mut<'_, Self>) -> R,
-    ) -> (Self::Mut<'_>, R) {
-        let r = {
-            let parent = this.parent.reborrow_mut();
-            let reborrow = IndexedStackElementMut {
-                idx: this.idx,
-                parent,
-            };
-            f(reborrow)
-        };
-        (this, r)
-    }
-}
+impl_indexed_element!(IndexedStackElement, IndexedStackElementMut);
 
 impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for IndexedStackElement {
     fn upcast(_: &mut ViewCtx, child: Pod<W>) -> Self {
@@ -217,12 +196,8 @@ impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for Index
     fn with_downcast_val<R>(
         mut this: Mut<'_, Self>,
         f: impl FnOnce(Mut<'_, Pod<W>>) -> R,
-    ) -> (Mut<'_, Self>, R) {
-        let ret = {
-            let mut child = widgets::IndexedStack::get_mut(&mut this.parent, this.idx);
-            let downcast = child.downcast();
-            f(downcast)
-        };
+    ) -> (Mut<'_, Self>, Option<R>) {
+        let ret = { widgets::IndexedStack::get_mut(&mut this.parent, this.idx).map(f) };
 
         (this, ret)
     }
@@ -230,54 +205,9 @@ impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for Index
 
 // Used for building and rebuilding the ViewSequence
 impl ElementSplice<IndexedStackElement> for IndexedStackSplice<'_, '_> {
-    fn with_scratch<R>(&mut self, f: impl FnOnce(&mut AppendVec<IndexedStackElement>) -> R) -> R {
-        let ret = f(self.scratch);
-        for element in self.scratch.drain() {
-            widgets::IndexedStack::insert(
-                &mut self.element,
-                self.idx,
-                element.child.new_widget,
-                (),
-            );
-            self.idx += 1;
-        }
-        ret
-    }
+    collection_splice_insert!(IndexedStack, IndexedStackElement, child, element => ());
 
-    fn insert(&mut self, element: IndexedStackElement) {
-        widgets::IndexedStack::insert(&mut self.element, self.idx, element.child.new_widget, ());
-        self.idx += 1;
-    }
-
-    fn mutate<R>(&mut self, f: impl FnOnce(Mut<'_, IndexedStackElement>) -> R) -> R {
-        let child = IndexedStackElementMut {
-            parent: self.element.reborrow_mut(),
-            idx: self.idx,
-        };
-        let ret = f(child);
-        self.idx += 1;
-        ret
-    }
-
-    fn skip(&mut self, n: usize) {
-        self.idx += n;
-    }
-
-    fn index(&self) -> usize {
-        self.idx
-    }
-
-    fn delete<R>(&mut self, f: impl FnOnce(Mut<'_, IndexedStackElement>) -> R) -> R {
-        let ret = {
-            let child = IndexedStackElementMut {
-                parent: self.element.reborrow_mut(),
-                idx: self.idx,
-            };
-            f(child)
-        };
-        widgets::IndexedStack::remove(&mut self.element, self.idx);
-        ret
-    }
+    collection_splice_cursor!(IndexedStack, IndexedStackElement, IndexedStackElementMut);
 }
 
 /// `IndexedStackSequence` is what allows an input to the indexed stack that contains all the stack elements.
@@ -305,21 +235,5 @@ pub struct IndexedStackElementMut<'w> {
 }
 
 // Used for manipulating the ViewSequence.
-struct IndexedStackSplice<'w, 's> {
-    idx: usize,
-    element: WidgetMut<'w, widgets::IndexedStack>,
-    scratch: &'s mut AppendVec<IndexedStackElement>,
-}
-
-impl<'w, 's> IndexedStackSplice<'w, 's> {
-    fn new(
-        element: WidgetMut<'w, widgets::IndexedStack>,
-        scratch: &'s mut AppendVec<IndexedStackElement>,
-    ) -> Self {
-        Self {
-            idx: 0,
-            element,
-            scratch,
-        }
-    }
-}
+type IndexedStackSplice<'w, 's> =
+    super::CollectionSplice<'w, 's, widgets::IndexedStack, IndexedStackElement>;

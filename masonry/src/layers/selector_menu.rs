@@ -1,16 +1,15 @@
 // Copyright 2026 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use accesskit::{Node, Role};
+use accesskit::Role;
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, AccessEvent, ChildrenIds, CollectionWidget, ComposeCtx, EventCtx, Layer, LayoutCtx,
-    MeasureCtx, NewWidget, NoAction, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent,
-    PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, UsesProperty, Widget,
-    WidgetId, WidgetMut, WidgetPod,
+    AccessEvent, ChildrenIds, CollectionWidget, EventCtx, Layer, LayoutCtx, MeasureCtx, NewWidget,
+    NoAction, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef,
+    RegisterCtx, TextEvent, Update, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut,
+    WidgetPod,
 };
-use crate::imaging::Painter;
 use crate::kurbo::{Axis, Point, Size};
 use crate::layout::{AsUnit, LayoutSize, LenDef, LenReq, Length, SizeDef};
 use crate::properties::Gap;
@@ -25,6 +24,7 @@ pub struct SelectorMenu {
 // --- MARK: BUILDERS
 impl SelectorMenu {
     /// Creates a new empty menu.
+    #[must_use = "Use the returned value."]
     pub fn new(creator: WidgetId) -> Self {
         Self {
             creator,
@@ -33,34 +33,29 @@ impl SelectorMenu {
     }
 
     /// Builder-style method to add a child widget.
+    #[must_use = "Use the returned value."]
     pub fn with(mut self, child: NewWidget<impl Widget + ?Sized>) -> Self {
-        let child = child.erased().to_pod();
+        let child = child.erased().into_pod();
         self.children.push(child);
         self
     }
 }
 
+impl SelectorMenu {
+    fn dismiss(&self, ctx: &mut EventCtx<'_>) {
+        let id = ctx.widget_id();
+        ctx.remove_layer(id);
+        ctx.mutate_later::<Selector>(self.creator, move |selector| {
+            if selector.widget.menu_layer_id == Some(id) {
+                selector.widget.menu_layer_id = None;
+            }
+        });
+    }
+}
+
 // --- MARK: COLLECTIONWIDGET
 impl CollectionWidget<()> for SelectorMenu {
-    /// Returns the number of children.
-    fn len(&self) -> usize {
-        self.children.len()
-    }
-
-    /// Returns `true` if there are no children.
-    fn is_empty(&self) -> bool {
-        self.children.is_empty()
-    }
-
-    /// Returns a mutable reference to the child widget at the given index.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `idx` is out of bounds.
-    fn get_mut<'t>(this: &'t mut WidgetMut<'_, Self>, idx: usize) -> WidgetMut<'t, dyn Widget> {
-        let child = &mut this.widget.children[idx];
-        this.ctx.get_mut(child)
-    }
+    collection_accessors!(child => child.id());
 
     /// Appends a child widget to the collection.
     fn add(
@@ -68,64 +63,84 @@ impl CollectionWidget<()> for SelectorMenu {
         child: NewWidget<impl Widget + ?Sized>,
         _params: impl Into<()>,
     ) {
-        let child = child.erased().to_pod();
+        let child = child.erased().into_pod();
         this.widget.children.push(child);
         this.ctx.children_changed();
     }
 
     /// Inserts a child widget at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is larger than the number of children.
+    /// Returns an error if `idx` is larger than the number of children.
     fn insert(
         this: &mut WidgetMut<'_, Self>,
         idx: usize,
         child: NewWidget<impl Widget + ?Sized>,
         _params: impl Into<()>,
-    ) {
-        let child = child.erased().to_pod();
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_insert_slot(idx, this.widget.children.len())?;
+        let child = child.erased().into_pod();
         this.widget.children.insert(idx, child);
         this.ctx.children_changed();
+        Ok(())
     }
 
     /// Replaces the child widget at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
+    /// Returns an error if `idx` is out of bounds.
     fn set(
         this: &mut WidgetMut<'_, Self>,
         idx: usize,
         child: NewWidget<impl Widget + ?Sized>,
         _params: impl Into<()>,
-    ) {
-        let child = child.erased().to_pod();
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(idx, this.widget.children.len())?;
+        let child = child.erased().into_pod();
         let old_child = std::mem::replace(&mut this.widget.children[idx], child);
         this.ctx.remove_child(old_child);
+        Ok(())
     }
 
     /// Not applicable.
-    fn set_params(_this: &mut WidgetMut<'_, Self>, _idx: usize, _params: impl Into<()>) {}
+    fn set_params(
+        this: &mut WidgetMut<'_, Self>,
+        idx: usize,
+        _params: impl Into<()>,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(idx, this.widget.children.len())
+    }
 
     /// Swaps the index of two children.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `a` or `b` are out of bounds.
-    fn swap(this: &mut WidgetMut<'_, Self>, a: usize, b: usize) {
-        this.widget.children.swap(a, b);
+    /// Returns an error if `a` or `b` are out of bounds.
+    fn swap(
+        this: &mut WidgetMut<'_, Self>,
+        a: usize,
+        b: usize,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::swap_slots(&mut this.widget.children, a, b)?;
         this.ctx.children_changed();
+        Ok(())
     }
 
     /// Removes the child at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
-    fn remove(this: &mut WidgetMut<'_, Self>, idx: usize) {
+    /// Returns an error if `idx` is out of bounds.
+    fn remove(
+        this: &mut WidgetMut<'_, Self>,
+        idx: usize,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(idx, this.widget.children.len())?;
         let child = this.widget.children.remove(idx);
         this.ctx.remove_child(child);
+        Ok(())
     }
 
     /// Removes all children.
@@ -154,21 +169,23 @@ impl Widget for SelectorMenu {
             }) => {
                 let self_id = ctx.widget_id();
 
-                // Note: this only works because all children are expected to be
-                // SelectorItem, whose only possible child is a Label.
-                // We might want to find a more robust system.
-                let clicked_id = ctx.target();
-                let index = self
+                let Some(index) = self
                     .children
                     .iter()
-                    .position(|child| child.id() == clicked_id)
-                    .unwrap();
+                    .position(|child| ctx.target_in_child(child))
+                else {
+                    return;
+                };
 
                 // FIXME - This might be subject to TOCTOU.
                 // Fix this once associated layers are implemented.
-                ctx.mutate_later(self.creator, move |mut selector| {
-                    let mut selector = selector.downcast::<Selector>();
-                    let selected_content = selector.widget.options[index].clone();
+                ctx.mutate_later::<Selector>(self.creator, move |mut selector| {
+                    if selector.widget.menu_layer_id != Some(self_id) {
+                        return;
+                    }
+                    let Some(selected_content) = selector.widget.options.get(index).cloned() else {
+                        return;
+                    };
 
                     selector
                         .ctx
@@ -195,7 +212,7 @@ impl Widget for SelectorMenu {
     ) {
         match event {
             TextEvent::WindowFocusChange(false) => {
-                ctx.remove_layer(ctx.widget_id());
+                self.dismiss(ctx);
             }
             _ => (),
         }
@@ -221,10 +238,9 @@ impl Widget for SelectorMenu {
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         // FIXME - This might be subject to TOCTOU.
         // Fix this once associated layers are implemented.
-        if let Update::WidgetAdded = event {
+        if matches!(event, Update::WidgetAdded) {
             let id = ctx.widget_id();
-            ctx.mutate_later(self.creator, move |mut selector| {
-                let selector = selector.downcast::<Selector>();
+            ctx.mutate_later::<Selector>(self.creator, move |selector| {
                 selector.widget.menu_layer_id = Some(id);
             });
         }
@@ -244,8 +260,8 @@ impl Widget for SelectorMenu {
         let gap_length = gap.gap.get();
 
         let (len_req, min_result) = match len_req {
-            LenReq::MinContent | LenReq::MaxContent => (len_req, Length::ZERO),
-            LenReq::FitContent(space) => (LenReq::MinContent, space),
+            LenReq::Min | LenReq::Max => (len_req, Length::ZERO),
+            LenReq::Fit(space) => (LenReq::Min, space),
         };
 
         let auto_length = len_req.into();
@@ -262,9 +278,9 @@ impl Widget for SelectorMenu {
         }
 
         if axis == Axis::Vertical {
-            let gap_count = (self.children.len() - 1) as f64;
-            let gaps_length = gap_count * gap_length;
-            length = length.saturating_add(gaps_length.px());
+            let gap_count = crate::layout_count(self.children.len().saturating_sub(1));
+            let total_gap = gap_count * gap_length;
+            length = length.saturating_add(total_gap.px());
         }
 
         min_result.max(length)
@@ -274,10 +290,15 @@ impl Widget for SelectorMenu {
         let cache = ctx.property_cache();
         let gap = props.get::<Gap>(cache);
 
-        let gap_count = (self.children.len() - 1) as f64;
+        if self.children.is_empty() {
+            ctx.clear_baselines();
+            return;
+        }
+        let gap_count = crate::layout_count(self.children.len().saturating_sub(1));
         let gap_length = gap.gap.get();
-        let total_child_vertical_space = size.height - gap_length * gap_count;
-        let child_vertical_space = total_child_vertical_space / self.children.len() as f64;
+        let total_child_vertical_space = gap_length.mul_add(-gap_count, size.height);
+        let child_vertical_space =
+            total_child_vertical_space / crate::layout_count(self.children.len());
 
         let width_def = LenDef::FitContent(size.width.px());
         let height_def = LenDef::FitContent(child_vertical_space.max(0.).px());
@@ -293,43 +314,20 @@ impl Widget for SelectorMenu {
             y_offset += child_size.height + gap_length;
         }
 
-        if !self.children.is_empty() {
-            let first_child = self.children.first().unwrap();
-            let (first_baseline, _) = ctx.child_aligned_baselines(first_child);
-            let first_child_origin = ctx.child_origin(first_child);
-            let first_baseline = first_child_origin.y + first_baseline;
-
-            let last_child = self.children.last().unwrap();
-            let (_, last_baseline) = ctx.child_aligned_baselines(last_child);
-            let last_child_origin = ctx.child_origin(last_child);
-            let last_baseline = last_child_origin.y + last_baseline;
-
-            ctx.set_baselines(first_baseline, last_baseline);
+        let mut placements = self
+            .children
+            .iter()
+            .filter_map(|child| ctx.child_placement(child));
+        if let Some(first) = placements.next() {
+            let last = placements.next_back().unwrap_or(first);
+            ctx.set_baselines(first.parent_baselines().0, last.parent_baselines().1);
         } else {
             ctx.clear_baselines();
         }
     }
 
-    fn compose(&mut self, _ctx: &mut ComposeCtx<'_>) {}
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-    }
-
     fn accessibility_role(&self) -> Role {
         Role::GenericContainer
-    }
-
-    fn accessibility(
-        &mut self,
-        _ctx: &mut AccessCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _node: &mut Node,
-    ) {
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
@@ -339,7 +337,7 @@ impl Widget for SelectorMenu {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        self.children.iter().map(|child| child.id()).collect()
+        self.children.iter().map(WidgetPod::id).collect()
     }
 
     fn as_layer(&mut self) -> Option<&mut dyn Layer> {
@@ -372,11 +370,7 @@ impl Layer for SelectorMenu {
         if remove_this {
             // FIXME - This might be subject to TOCTOU.
             // Fix this once associated layers are implemented.
-            ctx.remove_layer(ctx.widget_id());
-            ctx.mutate_later(self.creator, move |mut selector| {
-                let selector = selector.downcast::<Selector>();
-                selector.widget.menu_layer_id = None;
-            });
+            self.dismiss(ctx);
         }
     }
 }

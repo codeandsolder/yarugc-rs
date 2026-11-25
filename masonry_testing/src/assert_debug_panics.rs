@@ -9,18 +9,18 @@ macro_rules! assert_debug_panics {
     ($expr:expr) => {
         $crate::assert_debug_panics_inner(
             || {
-                $expr;
+                let _ = $expr;
             },
-            "".into(),
+            "",
         )
     };
 
     ($expr:expr, $needle:expr) => {
         $crate::assert_debug_panics_inner(
             || {
-                $expr;
+                let _ = $expr;
             },
-            ($needle).to_string(),
+            $needle,
         )
     };
 }
@@ -29,7 +29,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 #[track_caller]
 #[doc(hidden)]
-pub fn assert_debug_panics_inner(callback: impl FnOnce(), needle: String) {
+pub fn assert_debug_panics_inner(callback: impl FnOnce(), needle: &str) {
     if cfg!(not(debug_assertions)) {
         return;
     }
@@ -40,33 +40,17 @@ pub fn assert_debug_panics_inner(callback: impl FnOnce(), needle: String) {
     // See https://doc.rust-lang.org/std/panic/trait.UnwindSafe.html for details.
     let callback = AssertUnwindSafe(callback);
 
-    let res = catch_unwind(callback);
-
-    let Err(err) = res else {
-        panic!("test did not panic as expected");
-    };
-
-    // The panic payload is virtually always a `&'static str` or `String`.
-    // See https://doc.rust-lang.org/src/std/panic.rs.html for details
-    // Or https://github.com/rust-lang/rust/blob/213d946a384b46989f6fd9c8ae9c547b4e354455/library/std/src/panic.rs#L62-L69
-
-    let message;
-    if let Some(s) = err.downcast_ref::<&str>() {
-        message = s.to_string();
-    } else if let Some(s) = err.downcast_ref::<String>() {
-        message = s.clone();
-    } else {
-        panic!("panic had unexpected type");
-    }
-
-    if !message.contains(&needle) {
-        panic!(
-            concat!(
-                "panic did not contain expected string\n",
-                "      panic message: {}\n",
-                " expected substring: {}",
-            ),
-            message, needle,
+    let result = catch_unwind(callback);
+    assert!(result.is_err(), "test did not panic as expected");
+    if let Err(payload) = result {
+        let message = payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| payload.downcast_ref::<String>().map(String::as_str));
+        assert!(message.is_some(), "panic had unexpected type");
+        assert!(
+            message.is_some_and(|message| message.contains(needle)),
+            "panic did not contain expected substring {needle:?}; message: {message:?}"
         );
     }
 }

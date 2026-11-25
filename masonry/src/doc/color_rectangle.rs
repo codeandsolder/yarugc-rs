@@ -47,7 +47,8 @@ pub struct ColorRectangle {
 }
 
 impl ColorRectangle {
-    pub fn new(color: Color) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn new(color: Color) -> Self {
         Self { color }
     }
 }
@@ -134,11 +135,11 @@ impl Widget for ColorRectangle {
         _cross_length: Option<Length>,
     ) -> Length {
         match len_req {
-            LenReq::MinContent | LenReq::MaxContent => match axis {
+            LenReq::Min | LenReq::Max => match axis {
                 Axis::Horizontal => 200.px(),
                 Axis::Vertical => 100.px(),
             },
-            LenReq::FitContent(space) => space,
+            LenReq::Fit(space) => space,
         }
     }
 
@@ -218,6 +219,11 @@ impl Widget for ColorRectangle {
 // Implementation from "Reading widget properties" tutorial.
 #[expect(dead_code, reason = "example code")]
 impl ColorRectangle {
+    #[expect(clippy::unused_self, reason = "Tutorial mirrors Widget::paint")]
+    #[expect(
+        clippy::needless_pass_by_ref_mut,
+        reason = "Tutorial mirrors Widget::paint"
+    )]
     fn paint(
         &mut self,
         ctx: &mut PaintCtx<'_>,
@@ -267,7 +273,7 @@ mod tests {
 
         let mut harness = TestHarness::create(default_property_set(), widget);
 
-        assert_debug_snapshot!(harness.root_widget());
+        assert_debug_snapshot!(harness.root_widget().unwrap());
 
         // ---
 
@@ -287,7 +293,7 @@ mod tests {
 
         // Computes the rect's layout and sends an PointerEvent
         // placing the mouse at its center.
-        harness.mouse_move_to(rect_id);
+        harness.mouse_move_to(rect_id).unwrap();
         assert_render_snapshot!(harness, "rect_hovered_rectangle");
     }
 
@@ -302,10 +308,12 @@ mod tests {
 
         let mut harness = TestHarness::create(default_property_set(), widget);
 
-        harness.edit_root_widget(|mut rect| {
-            rect.insert_prop(Dimensions::fixed(50.px(), 50.px()));
-            ColorRectangle::set_color(&mut rect, RED);
-        });
+        harness
+            .edit_root_widget(|mut rect| {
+                rect.insert_prop(Dimensions::fixed(50.px(), 50.px()));
+                ColorRectangle::set_color(&mut rect, RED);
+            })
+            .unwrap();
 
         assert_render_snapshot!(harness, "rect_big_red_rectangle");
     }
@@ -321,9 +329,9 @@ mod tests {
         let mut harness = TestHarness::create(default_property_set(), widget);
         let rect_id = harness.root_id();
 
-        harness.mouse_click_on(rect_id, None);
+        harness.mouse_click_on(rect_id, None).unwrap();
         assert!(matches!(
-            harness.pop_action::<ColorRectanglePress>(),
+            harness.pop_action::<ColorRectanglePress>().unwrap(),
             Some((ColorRectanglePress, _))
         ));
     }

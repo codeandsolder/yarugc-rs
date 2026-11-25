@@ -50,14 +50,16 @@ impl Prose {
     /// Creates a new `Prose` with the given text.
     ///
     /// To use non-default text properties, use [`from_text_area`](Self::from_text_area) instead.
+    #[must_use = "Use the returned value."]
     pub fn new(text: &str) -> Self {
         Self::from_text_area(TextArea::new_immutable(text).prepare())
     }
 
     /// Creates a new `Prose` from a styled text area.
+    #[must_use = "Use the returned value."]
     pub fn from_text_area(text: NewWidget<TextArea<false>>) -> Self {
         Self {
-            text: text.to_pod(),
+            text: text.into_pod(),
             clip: false,
         }
     }
@@ -68,7 +70,8 @@ impl Prose {
     /// wraps a text area with [word wrapping](TextArea::with_word_wrap) enabled.
     ///
     /// To modify this on active prose, use [`set_clip`](Self::set_clip).
-    pub fn with_clip(mut self, clip: bool) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_clip(mut self, clip: bool) -> Self {
         self.clip = clip;
         self
     }
@@ -79,7 +82,8 @@ impl Prose {
     /// Returns the `WidgetPod` of the underlying text area. Useful for getting its ID.
     // This is a bit of a hack, to work around `from_text_area_pod` not being
     // able to set padding.
-    pub fn text_area_pod(&self) -> &WidgetPod<TextArea<false>> {
+    #[must_use = "Use the returned value."]
+    pub const fn text_area_pod(&self) -> &WidgetPod<TextArea<false>> {
         &self.text
     }
 }
@@ -89,8 +93,10 @@ impl Prose {
     /// Returns the underlying text area.
     ///
     /// Used to modify most properties of the text.
-    pub fn text_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, TextArea<false>> {
-        this.ctx.get_mut(&mut this.widget.text)
+    pub fn text_mut<'t>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> Option<WidgetMut<'t, TextArea<false>>> {
+        this.ctx.get_mut(this.widget.text.id())
     }
 
     /// Whether to clip the text to the available space.
@@ -152,53 +158,33 @@ impl Widget for Prose {
     }
 
     fn property_changed(&mut self, ctx: &mut UpdateCtx<'_>, property_type: TypeId) {
-        // FIXME - Find more elegant way to propagate property to child.
         if property_type == TypeId::of::<CaretColor>() {
-            ctx.mutate_self_later(|mut input| {
-                let mut input = input.downcast::<Self>();
-                let color = *input.get_prop::<CaretColor>();
-                let mut text_area = Self::text_mut(&mut input);
-                text_area.insert_prop(color);
-            });
+            super::text_area::inherit_property::<CaretColor, CaretColor, TextArea<false>>(
+                ctx,
+                self.text.id(),
+                std::convert::identity,
+            );
         } else if property_type == TypeId::of::<ContentColor>() {
-            ctx.mutate_self_later(|mut input| {
-                let mut input = input.downcast::<Self>();
-                let color = *input.get_prop::<ContentColor>();
-                let mut text_area = Self::text_mut(&mut input);
-                text_area.insert_prop(color);
-            });
+            super::text_area::inherit_property::<ContentColor, ContentColor, TextArea<false>>(
+                ctx,
+                self.text.id(),
+                std::convert::identity,
+            );
         } else if property_type == TypeId::of::<SelectionColor>() {
-            ctx.mutate_self_later(|mut input| {
-                let mut input = input.downcast::<Self>();
-                let color = *input.get_prop::<SelectionColor>();
-                let mut text_area = Self::text_mut(&mut input);
-                text_area.insert_prop(color);
-            });
+            super::text_area::inherit_property::<SelectionColor, SelectionColor, TextArea<false>>(
+                ctx,
+                self.text.id(),
+                std::convert::identity,
+            );
         }
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
             Update::WidgetAdded => {
-                // FIXME - Find more elegant way to propagate property to child.
-                ctx.mutate_self_later(|mut input| {
-                    let mut input = input.downcast::<Self>();
-                    let color = *input.get_prop::<CaretColor>();
-                    let mut text_area = Self::text_mut(&mut input);
-                    text_area.insert_prop(color);
-                });
-                ctx.mutate_self_later(|mut input| {
-                    let mut input = input.downcast::<Self>();
-                    let color = *input.get_prop::<ContentColor>();
-                    let mut text_area = Self::text_mut(&mut input);
-                    text_area.insert_prop(color);
-                });
-                ctx.mutate_self_later(|mut input| {
-                    let mut input = input.downcast::<Self>();
-                    let color = *input.get_prop::<SelectionColor>();
-                    let mut text_area = Self::text_mut(&mut input);
-                    text_area.insert_prop(color);
-                });
+                self.property_changed(ctx, TypeId::of::<CaretColor>());
+                self.property_changed(ctx, TypeId::of::<ContentColor>());
+                self.property_changed(ctx, TypeId::of::<SelectionColor>());
             }
             _ => {}
         }
@@ -212,12 +198,12 @@ impl Widget for Prose {
         _len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        ctx.redirect_measurement(&mut self.text, axis, cross_length)
+        ctx.redirect_measurement(&self.text, axis, cross_length)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        ctx.run_layout(&mut self.text, size);
-        ctx.place_child(&mut self.text, Point::ORIGIN);
+        ctx.run_layout(&self.text, size);
+        ctx.place_child(&self.text, Point::ORIGIN);
         ctx.derive_baselines(&self.text);
 
         if self.clip {
@@ -342,21 +328,23 @@ mod tests {
         assert_render_snapshot!(harness, "prose_outline");
 
         let mut text_area_id = None;
-        harness.edit_root_widget(|mut prose| {
-            let mut prose = Prose::text_mut(&mut prose);
-            text_area_id = Some(prose.ctx.widget_id());
+        harness
+            .edit_root_widget(|mut prose| {
+                let mut prose = Prose::text_mut(&mut prose).unwrap();
+                text_area_id = Some(prose.ctx.widget_id());
 
-            TextArea::select_text(&mut prose, "contents");
-        });
+                TextArea::select_text(&mut prose, "contents");
+            })
+            .unwrap();
         harness.focus_on(text_area_id);
 
         assert_render_snapshot!(harness, "prose_selection");
 
-        harness.process_text_event(TextEvent::WindowFocusChange(false));
+        harness.process_text_event(&TextEvent::WindowFocusChange(false));
 
         assert_render_snapshot!(harness, "prose_selection_unfocused");
 
-        harness.process_text_event(TextEvent::WindowFocusChange(true));
+        harness.process_text_event(&TextEvent::WindowFocusChange(true));
         harness.animate_ms(500 + 1);
 
         assert_render_snapshot!(harness, "prose_cursor_blink");
@@ -371,7 +359,7 @@ mod tests {
 
             let mut harness = TestHarness::create_with_size(test_property_set(), prose, (50, 50));
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         let image_2 = {
@@ -379,15 +367,17 @@ mod tests {
 
             let mut harness = TestHarness::create_with_size(test_property_set(), prose, (50, 50));
 
-            harness.edit_root_widget(|mut prose| {
-                prose.insert_prop(ContentColor::new(ACCENT_COLOR));
-                TextArea::reset_text(
-                    &mut Prose::text_mut(&mut prose),
-                    "The quick brown fox jumps over the lazy dog",
-                );
-            });
+            harness
+                .edit_root_widget(|mut prose| {
+                    prose.insert_prop(ContentColor::new(ACCENT_COLOR));
+                    TextArea::reset_text(
+                        &mut Prose::text_mut(&mut prose).unwrap(),
+                        "The quick brown fox jumps over the lazy dog",
+                    );
+                })
+                .unwrap();
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         // We don't use assert_eq because we don't want rich assert

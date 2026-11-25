@@ -4,7 +4,13 @@
 use std::any::TypeId;
 use std::fmt::Debug;
 
-use crate::core::{FromDynWidget, MutateCtx, Property, Widget, WidgetId};
+use tree_arena::ArenaMut;
+
+use crate::app::RenderRootState;
+use crate::core::{
+    FromDynWidget, MutateCtx, PropertiesMut, Property, PropertyArena, PropertyStackId, Widget,
+    WidgetArenaNode, WidgetId, WidgetState,
+};
 use crate::kurbo::Affine;
 use crate::properties::core_property_changed;
 
@@ -54,15 +60,46 @@ impl<W: Widget + ?Sized> Debug for WidgetMut<'_, W> {
     }
 }
 
+impl<'a, W: Widget + FromDynWidget + ?Sized> WidgetMut<'a, W> {
+    pub(crate) fn from_node(
+        node: ArenaMut<'a, WidgetArenaNode>,
+        global_state: &'a mut RenderRootState,
+        property_arena: &'a PropertyArena,
+        parent_widget_state: Option<&'a mut WidgetState>,
+    ) -> Option<Self> {
+        let widget = W::from_dyn_mut(&mut *node.item.widget)?;
+        let state = &mut node.item.state;
+        let type_id = widget.as_dyn().type_id();
+        let stack = property_arena.get(state.property_stack_id, type_id);
+        Some(Self {
+            widget,
+            ctx: MutateCtx {
+                global_state,
+                parent_widget_state,
+                widget_state: state,
+                properties: PropertiesMut {
+                    local: &mut node.item.properties,
+                    default_map: property_arena.default_properties.for_widget(type_id),
+                    stack,
+                    class_set: &node.item.class_set,
+                },
+                children: node.children,
+                property_arena,
+            },
+        })
+    }
+}
+
 impl<W: Widget + ?Sized> WidgetMut<'_, W> {
     /// Returns the [`WidgetId`] of the current widget.
-    pub fn id(&self) -> WidgetId {
+    #[must_use = "Use the widget identifier."]
+    pub const fn id(&self) -> WidgetId {
         self.ctx.widget_state.id
     }
 
     /// Returns a `WidgetMut` for the same underlying widget with a shorter lifetime.
     pub fn reborrow_mut(&mut self) -> WidgetMut<'_, W> {
-        let widget = &mut self.widget;
+        let widget = &mut *self.widget;
         WidgetMut {
             widget,
             ctx: self.ctx.reborrow_mut(),
@@ -72,15 +109,15 @@ impl<W: Widget + ?Sized> WidgetMut<'_, W> {
     /// Returns `true` if the widget has a local property of type `T`.
     ///
     /// Does not check default properties.
+    #[must_use = "Inspect whether the property is locally set."]
     pub fn contains_prop<T: Property>(&self) -> bool {
         self.ctx.properties.contains::<T>()
     }
 
     /// Returns the value of property `T`.
     ///
-    /// If the widget has an entry for `P`, returns that entry.
-    /// If the default property set has an entry for `P`, returns that entry.
-    /// Otherwise returns [`Property::static_default()`].
+    /// Precedence is local property, matching stack layer, widget default,
+    /// then the property's static default.
     pub fn get_prop<T: Property>(&mut self) -> &T {
         self.ctx
             .properties
@@ -115,10 +152,27 @@ impl<W: Widget + ?Sized> WidgetMut<'_, W> {
         value
     }
 
+    /// Sets the property stack and immediately uses it for subsequent reads.
+    /// Passing None restores the default stack for the concrete widget type.
+    pub fn set_property_stack(&mut self, stack_id: Option<PropertyStackId>) {
+        let state = &mut *self.ctx.widget_state;
+        if state.property_stack_id == stack_id {
+            return;
+        }
+        state.set_request_update_props(true);
+        state.set_needs_update_props(true);
+        state.property_cache.invalidate();
+        state.property_stack_id = stack_id;
+        self.ctx.properties.stack = self
+            .ctx
+            .property_arena
+            .get(stack_id, self.widget.as_dyn().type_id());
+    }
+
     /// Sets the local transform of this widget.
     ///
     /// It behaves similarly as CSS transforms.
-    pub fn set_transform(&mut self, transform: Affine) {
+    pub const fn set_transform(&mut self, transform: Affine) {
         self.ctx.set_transform(transform);
     }
 
@@ -130,29 +184,6 @@ impl<W: Widget + ?Sized> WidgetMut<'_, W> {
             ctx: self.ctx.reborrow_mut(),
             widget: W2::from_dyn_mut(self.widget.as_mut_dyn())?,
         })
-    }
-
-    /// Downcasts to `WidgetMut` of concrete widget type.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the downcast fails, with an error message that shows the
-    /// discrepancy between the expected and actual types.
-    pub fn downcast<W2: Widget + FromDynWidget + ?Sized>(&mut self) -> WidgetMut<'_, W2> {
-        let w1_name = self.widget.type_name();
-        match W2::from_dyn_mut(self.widget.as_mut_dyn()) {
-            Some(widget) => WidgetMut {
-                widget,
-                ctx: self.ctx.reborrow_mut(),
-            },
-            None => {
-                panic!(
-                    "failed to downcast widget: expected widget of type `{}`, found `{}`",
-                    std::any::type_name::<W2>(),
-                    w1_name,
-                );
-            }
-        }
     }
 }
 

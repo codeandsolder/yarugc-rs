@@ -19,7 +19,7 @@ fn github_to_raw(repo: &str) -> Result<String, ()> {
 
     // Handle some common variants such as https://github.com/<owner>/<repo>.git
     let rest = rest.trim_end_matches('/');
-    let rest = rest.trim_end_matches(".git").to_string();
+    let rest = rest.strip_suffix(".git").unwrap_or(rest);
 
     // Parse "<owner>/<repo>" part of the URL
     let mut parts = rest.split('/');
@@ -42,8 +42,12 @@ fn compile_error(msg: &str, span: Span) -> TokenStream {
     super::compile_error(msg, span).into()
 }
 
-pub(crate) fn include_doc_path_impl(
-    relative_path: String,
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "The proc-macro crate requires non-macro helpers to remain internal; unreachable_pub rejects unrestricted visibility."
+)]
+pub(super) fn include_doc_path_impl(
+    relative_path: &str,
     span: Span,
     force_local: bool,
     force_url: bool,
@@ -58,22 +62,22 @@ pub(crate) fn include_doc_path_impl(
             span,
         )
     } else {
-        literal_string(&relative_path, span)
+        literal_string(relative_path, span)
     };
 
     let Some(manifest_dir) = env("CARGO_MANIFEST_DIR") else {
         return cargo_env_fallback;
     };
-    let mut doc_file_path = Path::new(&manifest_dir)
-        .join(&relative_path)
-        .to_str()
-        .unwrap()
-        .to_string();
-    if cfg!(windows) {
-        // On Windows, both "/" and "\\" are valid separators, but "\\" will be
-        // encoded as %5C by rustdoc.
-        doc_file_path = doc_file_path.replace("\\", "/");
-    }
+    let file_path = Path::new(&manifest_dir).join(relative_path);
+    let Some(doc_file_path) = file_path.to_str() else {
+        return compile_error("Documentation path is not valid UTF-8", span);
+    };
+    // On Windows, backslashes would be encoded as %5C by rustdoc.
+    let doc_file_path = if cfg!(windows) {
+        std::borrow::Cow::Owned(doc_file_path.replace('\\', "/"))
+    } else {
+        std::borrow::Cow::Borrowed(doc_file_path)
+    };
 
     let Some(repo_url) = env("CARGO_PKG_REPOSITORY") else {
         return cargo_env_fallback;
@@ -109,7 +113,7 @@ pub(crate) fn include_doc_path_impl(
     // ACTUAL FALLBACK LOGIC
 
     // First, check if the local file exists
-    if std::fs::metadata(&doc_file_path).is_ok() {
+    if std::fs::metadata(&file_path).is_ok() {
         return literal_string(&doc_file_path, span);
     }
 

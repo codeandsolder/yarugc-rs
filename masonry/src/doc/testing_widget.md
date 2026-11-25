@@ -47,7 +47,7 @@ mod tests {
 
         let mut harness = TestHarness::create(default_property_set(), widget);
 
-        assert_debug_snapshot!(harness.root_widget());
+        assert_debug_snapshot!(harness.root_widget().unwrap());
 
         // ...
     }
@@ -126,7 +126,7 @@ Let's create another snapshot test to check that our widget correctly changes co
 
         // Computes the rect's layout and sends an PointerEvent
         // placing the mouse at its center.
-        harness.mouse_move_to(rect_id);
+        harness.mouse_move_to(rect_id).unwrap();
         assert_render_snapshot!(harness, "rect_hovered_rectangle");
     }
 ```
@@ -162,7 +162,7 @@ Let's add a test that changes a rectangle's color, then checks its visual appear
         harness.edit_root_widget(|mut rect| {
             rect.insert_prop(Dimensions::fixed(50.px(), 50.px()));
             ColorRectangle::set_color(&mut rect, RED);
-        });
+        }).unwrap();
 
         assert_render_snapshot!(harness, "rect_big_red_rectangle");
     }
@@ -189,9 +189,9 @@ The `TestHarness` is also capable of reading actions emitted by our widget with 
         let mut harness = TestHarness::create(default_property_set(), widget);
         let rect_id = harness.root_id();
 
-        harness.mouse_click_on(rect_id, None);
+        harness.mouse_click_on(rect_id, None).unwrap();
         assert!(matches!(
-            harness.pop_action::<ColorRectanglePress>(),
+            harness.pop_action::<ColorRectanglePress>().unwrap(),
             Some((ColorRectanglePress, _))
         ));
     }

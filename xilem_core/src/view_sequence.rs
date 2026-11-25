@@ -27,38 +27,38 @@ pub enum Count {
 
 impl Count {
     /// Combine the counts of multiple children.
+    #[must_use = "Use the combined element count."]
     pub const fn combine<const N: usize>(vals: [Self; N]) -> Self {
-        #![expect(clippy::use_self, reason = "Easier to read in this case as `Count`.")]
-        let mut idx = 0;
-        let mut current_count = Count::Zero;
-        while idx < N {
-            idx += 1;
-            match vals[idx] {
-                Count::Zero => {}
-                Count::One if matches!(current_count, Count::Zero) => {
-                    current_count = Count::One;
-                }
-                Count::One if matches!(current_count, Count::One) => {
-                    current_count = Count::Many;
-                }
-                Count::One => {}
-                // Many overwrites everything, including unknown
-                // Because if we have one "many" child, we definitely have several
-                Count::Many => {
-                    current_count = Count::Many;
-                }
-                Count::Unknown if !matches!(current_count, Count::Many) => {
-                    current_count = Count::Unknown;
-                }
-                _ => panic!("How to report this properly"),
+        let mut index = 0;
+        let mut has_one = false;
+        let mut has_unknown = false;
+        while index < N {
+            match vals[index] {
+                Self::Many => return Self::Many,
+                Self::One if has_one => return Self::Many,
+                Self::One => has_one = true,
+                Self::Unknown => has_unknown = true,
+                Self::Zero => {}
             }
+            index += 1;
         }
-        current_count
+        if has_unknown {
+            Self::Unknown
+        } else if has_one {
+            Self::One
+        } else {
+            Self::Zero
+        }
     }
 
     /// The resulting count if there are (potentially) multiple of this sequence.
+    #[must_use = "Use the element count of the repeated sequence."]
     pub const fn multiple(self) -> Self {
-        Self::combine([self, self])
+        match self {
+            Self::Zero => Self::Zero,
+            Self::One | Self::Many => Self::Many,
+            Self::Unknown => Self::Unknown,
+        }
     }
 }
 
@@ -107,7 +107,7 @@ where
     const ELEMENTS_COUNT: Count;
 
     /// Build the associated widgets into `elements` and initialize all states.
-    #[must_use]
+    #[must_use = "Keep the returned sequence state for rebuild and routing."]
     fn seq_build(
         &self,
         ctx: &mut Context,
@@ -197,9 +197,12 @@ where
     ) {
         // Mutate the item we added in `seq_build`
         elements.mutate(|this_element| {
-            Element::with_downcast(this_element, |element| {
+            let (_, matched) = Element::with_downcast(this_element, |element| {
                 self.rebuild(prev, seq_state, ctx, element, app_state);
             });
+            if !matched {
+                tracing::error!("Sequence element type does not match its rebuild view");
+            }
         });
     }
     fn seq_teardown(
@@ -209,9 +212,12 @@ where
         elements: &mut impl ElementSplice<Element>,
     ) {
         elements.delete(|this_element| {
-            Element::with_downcast(this_element, |element| {
+            let (_, matched) = Element::with_downcast(this_element, |element| {
                 self.teardown(seq_state, ctx, element);
             });
+            if !matched {
+                tracing::error!("Sequence element type does not match its teardown view");
+            }
         });
     }
 
@@ -227,6 +233,37 @@ where
                 self.message(seq_state, message, element, app_state)
             })
             .1
+            .unwrap_or(MessageResult::Stale)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Count;
+
+    #[test]
+    fn count_combination_is_total_and_order_independent() {
+        let values = [Count::Zero, Count::One, Count::Many, Count::Unknown];
+        assert_eq!(Count::combine([]), Count::Zero);
+        for a in values {
+            assert_eq!(Count::combine([a]), a);
+            for b in values {
+                for c in values {
+                    let triple = [a, b, c];
+                    let ones = triple.iter().filter(|value| **value == Count::One).count();
+                    let expected = if triple.contains(&Count::Many) || ones > 1 {
+                        Count::Many
+                    } else if triple.contains(&Count::Unknown) {
+                        Count::Unknown
+                    } else if ones == 1 {
+                        Count::One
+                    } else {
+                        Count::Zero
+                    };
+                    assert_eq!(Count::combine(triple), expected);
+                }
+            }
+        }
     }
 }

@@ -367,3 +367,31 @@ fn option_message_some_none_some_stale() {
         assert!(matches!(result, MessageResult::Stale));
     });
 }
+
+#[test]
+fn malformed_sequence_paths_are_stale() {
+    use xilem_core::{ViewId, ViewSequence};
+
+    fn check<Seq: ViewSequence<(), Action, TestCtx, TestElement>>(seq: Seq, paths: &[&[u64]]) {
+        let view = sequence(0, seq);
+        let mut ctx = TestCtx::default();
+        let (mut element, mut state) = view.build(&mut ctx, &mut ());
+        for path in paths {
+            let path = path.iter().copied().map(ViewId::new).collect();
+            ctx.with_message_context(path, DynMessage::new(()), |ctx| {
+                assert!(matches!(
+                    view.message(&mut state, ctx, &mut element, &mut ()),
+                    MessageResult::Stale
+                ));
+            });
+        }
+    }
+    check((), &[&[], &[0]]);
+    check([record_ops(0), record_ops(1)], &[&[], &[2], &[u64::MAX]]);
+    check((record_ops(0), record_ops(1)), &[&[], &[2], &[u64::MAX]]);
+    check(Some(record_ops(0)), &[&[], &[1], &[u64::MAX]]);
+    check(
+        vec![record_ops(0)],
+        &[&[], &[0], &[1, 0], &[0, 1], &[u64::MAX, 0]],
+    );
+}

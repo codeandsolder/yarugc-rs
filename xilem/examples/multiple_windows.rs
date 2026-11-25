@@ -7,8 +7,9 @@
 #![windows_subsystem = "windows"]
 
 use std::collections::HashMap;
+use std::fmt::Write;
 
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::view::{flex_col, label, text_button, text_input};
 use xilem::{AppState, Color, EventLoop, EventLoopBuilder, WindowId, WindowView, Xilem, window};
 
@@ -32,18 +33,16 @@ impl AppState for State {
 }
 
 fn app_logic(state: &mut State) -> impl Iterator<Item = WindowView<State>> + use<> {
+    let mut summary = String::new();
+    for Counter { name, value, .. } in state.counters.values() {
+        let _ = writeln!(summary, "{name}: {value}");
+    }
     std::iter::once(
         window(
             state.main_window_id,
             "Multiple windows",
             flex_col((
-                label(
-                    state
-                        .counters
-                        .values()
-                        .map(|Counter { name, value, .. }| format!("{name}: {value}\n"))
-                        .collect::<String>(),
-                ),
+                label(summary),
                 text_input(
                     state.new_counter_name.clone(),
                     |state: &mut State, new_name| {
@@ -87,10 +86,14 @@ fn app_logic(state: &mut State) -> impl Iterator<Item = WindowView<State>> + use
                     flex_col((
                         label(format!("count: {value}")),
                         text_button("+".to_string(), move |state: &mut State| {
-                            state.counters.get_mut(&window_id).unwrap().value += 1;
+                            if let Some(counter) = state.counters.get_mut(&window_id) {
+                                counter.value = counter.value.saturating_add(1);
+                            }
                         }),
                         text_button("-".to_string(), move |state: &mut State| {
-                            state.counters.get_mut(&window_id).unwrap().value -= 1;
+                            if let Some(counter) = state.counters.get_mut(&window_id) {
+                                counter.value = counter.value.saturating_sub(1);
+                            }
                         }),
                     )),
                 )
@@ -109,7 +112,7 @@ fn app_logic(state: &mut State) -> impl Iterator<Item = WindowView<State>> + use
     .into_iter()
 }
 
-fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
+fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
     let data = State {
         new_counter_name: String::new(),
         counters: HashMap::new(),
@@ -120,6 +123,6 @@ fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
     app.run_in(event_loop)
 }
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     run(EventLoop::with_user_event())
 }

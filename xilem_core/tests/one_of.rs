@@ -92,65 +92,65 @@ impl
     fn with_downcast_a<R>(
         elem: &mut Mut<'_, Self::OneOfElement>,
         f: impl FnOnce(Mut<'_, TestElement>) -> R,
-    ) -> R {
-        f(elem)
+    ) -> Option<R> {
+        Some(f(elem))
     }
 
     fn with_downcast_b<R>(
         elem: &mut Mut<'_, Self::OneOfElement>,
         f: impl FnOnce(Mut<'_, TestElement>) -> R,
-    ) -> R {
-        f(elem)
+    ) -> Option<R> {
+        Some(f(elem))
     }
 
     // when one of the following would be invoked, it would be an error in the impl of `OneOfN`
     fn with_downcast_c<R>(
         _elem: &mut Mut<'_, Self::OneOfElement>,
         _f: impl FnOnce(Mut<'_, <Self as PhantomElementCtx>::PhantomElement>) -> R,
-    ) -> R {
-        unreachable!()
+    ) -> Option<R> {
+        None
     }
 
     fn with_downcast_d<R>(
         _elem: &mut Mut<'_, Self::OneOfElement>,
         _f: impl FnOnce(Mut<'_, <Self as PhantomElementCtx>::PhantomElement>) -> R,
-    ) -> R {
-        unreachable!()
+    ) -> Option<R> {
+        None
     }
 
     fn with_downcast_e<R>(
         _elem: &mut Mut<'_, Self::OneOfElement>,
         _f: impl FnOnce(Mut<'_, <Self as PhantomElementCtx>::PhantomElement>) -> R,
-    ) -> R {
-        unreachable!()
+    ) -> Option<R> {
+        None
     }
 
     fn with_downcast_f<R>(
         _elem: &mut Mut<'_, Self::OneOfElement>,
         _f: impl FnOnce(Mut<'_, <Self as PhantomElementCtx>::PhantomElement>) -> R,
-    ) -> R {
-        unreachable!()
+    ) -> Option<R> {
+        None
     }
 
     fn with_downcast_g<R>(
         _elem: &mut Mut<'_, Self::OneOfElement>,
         _f: impl FnOnce(Mut<'_, <Self as PhantomElementCtx>::PhantomElement>) -> R,
-    ) -> R {
-        unreachable!()
+    ) -> Option<R> {
+        None
     }
 
     fn with_downcast_h<R>(
         _elem: &mut Mut<'_, Self::OneOfElement>,
         _f: impl FnOnce(Mut<'_, <Self as PhantomElementCtx>::PhantomElement>) -> R,
-    ) -> R {
-        unreachable!()
+    ) -> Option<R> {
+        None
     }
 
     fn with_downcast_i<R>(
         _elem: &mut Mut<'_, Self::OneOfElement>,
         _f: impl FnOnce(Mut<'_, <Self as PhantomElementCtx>::PhantomElement>) -> R,
-    ) -> R {
-        unreachable!()
+    ) -> Option<R> {
+        None
     }
 }
 

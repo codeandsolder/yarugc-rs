@@ -6,6 +6,7 @@ use tracing::info_span;
 use tree_arena::ArenaMut;
 
 use crate::app::{RenderRoot, RenderRootState};
+use crate::core::WidgetState;
 use crate::core::{ComposeCtx, PropertyArena, WidgetArenaNode};
 use crate::passes::{enter_span_if, recurse_on_children};
 
@@ -21,11 +22,16 @@ fn compose_widget(
     let widget = &mut *node.item.widget;
     let state = &mut node.item.state;
     let id = state.id;
-    let _span = enter_span_if(global_state.trace.compose, state);
+    let _span = enter_span_if(
+        global_state
+            .trace
+            .enabled(crate::passes::TracePass::Compose),
+        state,
+    );
 
-    let transformed = parent_transformed || state.transform_changed;
+    let transformed = parent_transformed || state.transform_changed();
 
-    if !transformed && !state.needs_compose {
+    if !transformed && !state.needs_compose() {
         return;
     }
 
@@ -41,18 +47,18 @@ fn compose_widget(
         children: children.reborrow_mut(),
         property_arena,
     };
-    if ctx.widget_state.request_compose {
+    if ctx.widget_state.request_compose() {
         widget.compose(&mut ctx);
     }
 
     // We need to update the accessibility node's coordinates and repaint it at the new position.
-    state.request_accessibility = true;
-    state.needs_accessibility = true;
-    state.needs_paint = true;
+    state.set_request_accessibility(true);
+    state.set_needs_accessibility(true);
+    state.set_needs_paint(true);
 
-    state.needs_compose = false;
-    state.request_compose = false;
-    state.transform_changed = false;
+    state.set_needs_compose(false);
+    state.set_request_compose(false);
+    state.set_transform_changed(false);
 
     let parent_transform = state.window_transform;
     let parent_state = state;
@@ -70,7 +76,7 @@ fn compose_widget(
             parent_state.bounding_box = parent_bounding_box.union(child_bounding_box);
         }
 
-        parent_state.merge_up(&mut node.item.state);
+        parent_state.merge_up(&node.item.state);
     });
 }
 
@@ -81,11 +87,13 @@ pub(crate) fn run_compose_pass(root: &mut RenderRoot) {
 
     // If widgets have moved, pointer-related info may be stale.
     // For instance, the "hovered" widget may have moved and no longer be under the pointer.
-    if root.root_state().needs_compose {
-        root.global_state.needs_pointer_pass = true;
+    if root.root_state().is_some_and(WidgetState::needs_compose) {
+        root.global_state.set_needs_pointer_pass(true);
     }
 
-    let root_node = root.widget_arena.get_node_mut(root.root_id());
+    let Some(root_node) = root.widget_arena.nodes.find_mut(root.root_id()) else {
+        return;
+    };
     compose_widget(
         &mut root.global_state,
         &root.property_arena,

@@ -4,51 +4,20 @@
 use tracing::info_span;
 
 use crate::app::RenderRoot;
-use crate::core::{MutateCtx, PropertiesMut, Widget, WidgetId, WidgetMut};
+use crate::core::{FromDynWidget, Widget, WidgetId, WidgetMut};
 use crate::passes::merge_state_up;
 
-pub(crate) fn mutate_widget<R>(
+pub(crate) fn mutate_widget<R, W: Widget + FromDynWidget + ?Sized>(
     root: &mut RenderRoot,
     id: WidgetId,
-    mutate_fn: impl FnOnce(WidgetMut<'_, dyn Widget>) -> R,
-) -> R {
-    // TODO - This panics if id can't be found.
-    // Should it return Option instead?
-    let node = root.widget_arena.get_node_mut(id);
-    let children = node.children;
-    let widget = &mut *node.item.widget;
-    let state = &mut node.item.state;
-    let properties = &mut node.item.properties;
-    let class_set = &node.item.class_set;
-    let id = state.id;
-    let stack = root
-        .property_arena
-        .get(state.property_stack_id, widget.type_id());
-
-    let _span = info_span!("mutate_widget", name = widget.short_type_name()).entered();
-
-    // NOTE - we can set parent_widget_state to None here, because the loop below will merge the
-    // states up to the root.
-
-    let root_widget = WidgetMut {
-        ctx: MutateCtx {
-            global_state: &mut root.global_state,
-            parent_widget_state: None,
-            widget_state: state,
-            properties: PropertiesMut {
-                local: properties,
-                default_map: root
-                    .property_arena
-                    .default_properties
-                    .for_widget(widget.type_id()),
-                stack,
-                class_set,
-            },
-            children,
-            property_arena: &root.property_arena,
-        },
-        widget,
-    };
+    mutate_fn: impl FnOnce(WidgetMut<'_, W>) -> R,
+) -> Option<R> {
+    let node = root.widget_arena.nodes.find_mut(id)?;
+    // The ancestor path is merged after the callback, so the handle itself
+    // need not retain a mutable reference to its parent.
+    let root_widget: WidgetMut<'_, W> =
+        WidgetMut::from_node(node, &mut root.global_state, &root.property_arena, None)?;
+    let _span = info_span!("mutate_widget", name = root_widget.widget.short_type_name()).entered();
 
     let result = mutate_fn(root_widget);
 
@@ -60,7 +29,7 @@ pub(crate) fn mutate_widget<R>(
         current_id = parent_id;
     }
 
-    result
+    Some(result)
 }
 
 /// Apply any deferred mutations (created using `...Ctx::mutate_later`)
@@ -69,10 +38,7 @@ pub(crate) fn mutate_widget<R>(
 pub(crate) fn run_mutate_pass(root: &mut RenderRoot) {
     let callbacks = std::mem::take(&mut root.global_state.mutate_callbacks);
     for callback in callbacks {
-        // Skip callbacks whose target was removed since they were emitted.
-        if !root.widget_arena.has(callback.id) {
-            continue;
-        }
-        mutate_widget(root, callback.id, callback.callback);
+        // A target may have been removed since the callback was queued.
+        let _ = mutate_widget(root, callback.id, callback.callback);
     }
 }

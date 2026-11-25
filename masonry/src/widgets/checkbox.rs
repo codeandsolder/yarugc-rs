@@ -10,13 +10,12 @@ use tracing::{Span, trace, trace_span};
 use crate::core::keyboard::Key;
 use crate::core::{
     AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
-    PaintCtx, PointerEvent, PrePaintProps, PropertiesMut, PropertiesRef, Property, RegisterCtx,
-    TextEvent, Update, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut, WidgetPod,
-    paint_background, paint_box_shadow,
+    PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, Property, RegisterCtx, TextEvent, Update,
+    UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
-use crate::kurbo::{Axis, BezPath, Cap, Dashes, Join, Point, Size, Stroke};
-use crate::layout::{LayoutSize, LenReq, Length, SizeDef};
+use crate::kurbo::{Axis, BezPath, Cap, Dashes, Join, Size, Stroke};
+use crate::layout::{LenReq, Length};
 use crate::properties::{
     BorderColor, BorderWidth, CheckmarkColor, CheckmarkStrokeWidth, CornerRadius,
 };
@@ -55,10 +54,11 @@ impl Checkbox {
     }
 
     /// Creates a new `Checkbox` with the given label.
+    #[must_use = "Use the returned value."]
     pub fn from_label(checked: bool, label: NewWidget<Label>) -> Self {
         Self {
             checked,
-            label: label.to_pod(),
+            label: label.into_pod(),
         }
     }
 }
@@ -72,17 +72,7 @@ impl Checkbox {
         this.ctx.request_render();
     }
 
-    /// Sets the text.
-    ///
-    /// We enforce this to be an `ArcStr` to make the allocation explicit.
-    pub fn set_text(this: &mut WidgetMut<'_, Self>, new_text: ArcStr) {
-        Label::set_text(&mut Self::label_mut(this), new_text);
-    }
-
-    /// Returns a mutable reference to the label.
-    pub fn label_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, Label> {
-        this.ctx.get_mut(&mut this.widget.label)
-    }
+    label_text_accessors!();
 }
 
 impl UsesProperty<CheckmarkStrokeWidth> for Checkbox {}
@@ -181,103 +171,7 @@ impl Widget for Checkbox {
         }
     }
 
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        axis: Axis,
-        len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        let check_side = theme::BASIC_WIDGET_HEIGHT;
-        let check_padding = theme::WIDGET_CONTROL_COMPONENT_PADDING;
-
-        let calc_other_length = |axis| match axis {
-            Axis::Horizontal => check_side.saturating_add(check_padding),
-            Axis::Vertical => Length::ZERO,
-        };
-        let other_length = calc_other_length(axis);
-
-        let cross = axis.cross();
-        let cross_space = cross_length.map(|cross_length| {
-            let cross_other_length = calc_other_length(cross);
-            cross_length.saturating_sub(cross_other_length)
-        });
-
-        let auto_length = len_req.reduce(other_length).into();
-        let context_size = LayoutSize::maybe(cross, cross_space);
-
-        let label_length = ctx.compute_length(
-            &mut self.label,
-            auto_length,
-            context_size,
-            axis,
-            cross_space,
-        );
-
-        match axis {
-            Axis::Horizontal => label_length.saturating_add(other_length),
-            Axis::Vertical => label_length.max(check_side).saturating_add(other_length),
-        }
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let check_side = theme::BASIC_WIDGET_HEIGHT.get();
-        let check_padding = theme::WIDGET_CONTROL_COMPONENT_PADDING.get();
-
-        let space = Size::new(
-            (size.width - (check_side + check_padding)).max(0.),
-            size.height,
-        );
-
-        let label_size = ctx.compute_size(&mut self.label, SizeDef::fit(space), space.into());
-        ctx.run_layout(&mut self.label, label_size);
-
-        let label_origin = Point::new(check_side + check_padding, 0.);
-        ctx.place_child(&mut self.label, label_origin);
-
-        ctx.derive_baselines(&self.label);
-    }
-
-    fn pre_paint(
-        &mut self,
-        ctx: &mut PaintCtx<'_>,
-        props: &PropertiesRef<'_>,
-        painter: &mut Painter<'_>,
-    ) {
-        let bbox = ctx.border_box();
-        let cache = ctx.property_cache();
-        let p = PrePaintProps::fetch(props, cache);
-
-        paint_box_shadow(painter, bbox, p.box_shadow, p.corner_radius);
-        paint_background(painter, bbox, p.background, p.border_width, p.corner_radius);
-
-        // Paint focus indicator around the entire widget (box + label)
-        if ctx.is_focus_target() || ctx.is_hovered() {
-            // TODO: Replace this custom implementation with the general paint_border()
-
-            let focus_rect = bbox.inflate(2.0, 2.0);
-
-            let focus_color = p.border_color.color;
-            let focus_width = 2.0;
-            let focus_radius = 4.0;
-
-            let focus_stroke = Stroke {
-                width: focus_width,
-                join: Join::Round,
-                miter_limit: 10.0,
-                start_cap: Cap::Round,
-                end_cap: Cap::Round,
-                dash_pattern: Dashes::default(),
-                dash_offset: 0.0,
-            };
-            let focus_path = focus_rect.to_rounded_rect(focus_radius);
-            painter
-                .stroke(focus_path, &focus_stroke, focus_color)
-                .draw();
-        }
-        // Skip painting the regular border while the check border uses that property
-    }
+    super::selection_control::control_methods!();
 
     fn paint(
         &mut self,
@@ -285,14 +179,14 @@ impl Widget for Checkbox {
         props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
-        let check_side = theme::BASIC_WIDGET_HEIGHT.get();
-        let check_size = Size::new(check_side, check_side);
+        let side = theme::BASIC_WIDGET_HEIGHT.get();
+        let check_size = Size::new(side, side);
 
         let cache = ctx.property_cache();
         let border_width = *props.get::<BorderWidth>(cache);
         let border_radius = *props.get::<CornerRadius>(cache);
 
-        let border_rect = border_width.border_rect(check_size.to_rect(), &border_radius);
+        let border_rect = border_width.border_rect(check_size.to_rect(), border_radius);
 
         let border_color = *props.get::<BorderColor>(cache);
 
@@ -382,15 +276,17 @@ mod tests {
 
         assert!(harness.pop_action_erased().is_none());
 
-        harness.mouse_click_on(checkbox_id, None);
+        harness.mouse_click_on(checkbox_id, None).unwrap();
         assert_eq!(
-            harness.pop_action::<CheckboxToggled>(),
+            harness.pop_action::<CheckboxToggled>().unwrap(),
             Some((CheckboxToggled(true), checkbox_id))
         );
 
         assert_render_snapshot!(harness, "checkbox_hello_hovered");
 
-        harness.edit_root_widget(|mut checkbox| Checkbox::set_checked(&mut checkbox, true));
+        harness
+            .edit_root_widget(|mut checkbox| Checkbox::set_checked(&mut checkbox, true))
+            .unwrap();
 
         assert_render_snapshot!(harness, "checkbox_hello_checked");
 
@@ -398,10 +294,10 @@ mod tests {
         harness.press_tab_key(false);
         assert_eq!(harness.focused_widget().map(|w| w.id()), Some(checkbox_id));
 
-        harness.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
-        harness.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        harness.process_text_event(&TextEvent::key_down(Key::Character(" ".into())));
+        harness.process_text_event(&TextEvent::key_up(Key::Character(" ".into())));
         assert_eq!(
-            harness.pop_action::<CheckboxToggled>(),
+            harness.pop_action::<CheckboxToggled>().unwrap(),
             Some((CheckboxToggled(false), checkbox_id))
         );
     }
@@ -449,7 +345,7 @@ mod tests {
             let mut harness =
                 TestHarness::create_with_size(test_property_set(), checkbox, (50, 50));
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         let image_2 = {
@@ -458,19 +354,21 @@ mod tests {
             let mut harness =
                 TestHarness::create_with_size(test_property_set(), checkbox, (50, 50));
 
-            harness.edit_root_widget(|mut checkbox| {
-                Checkbox::set_checked(&mut checkbox, true);
-                Checkbox::set_text(
-                    &mut checkbox,
-                    ArcStr::from("The quick brown fox jumps over the lazy dog"),
-                );
+            harness
+                .edit_root_widget(|mut checkbox| {
+                    Checkbox::set_checked(&mut checkbox, true);
+                    Checkbox::set_text(
+                        &mut checkbox,
+                        ArcStr::from("The quick brown fox jumps over the lazy dog"),
+                    );
 
-                let mut label = Checkbox::label_mut(&mut checkbox);
-                label.insert_prop(ContentColor::new(ACCENT_COLOR));
-                Label::insert_style(&mut label, StyleProperty::FontSize(20.0));
-            });
+                    let mut label = Checkbox::label_mut(&mut checkbox).unwrap();
+                    label.insert_prop(ContentColor::new(ACCENT_COLOR));
+                    Label::insert_style(&mut label, StyleProperty::FontSize(20.0));
+                })
+                .unwrap();
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         // We don't use assert_eq because we don't want rich assert

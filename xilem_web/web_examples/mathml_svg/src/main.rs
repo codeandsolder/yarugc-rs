@@ -3,11 +3,8 @@
 
 //! Shows using mathml and SVG on the web
 
-#![expect(clippy::cast_possible_truncation, reason = "Deferred: Noisy")]
-
-use wasm_bindgen::{JsCast, UnwrapThrowExt};
 use xilem_web::elements::{html, mathml as ml, svg};
-use xilem_web::interfaces::*;
+use xilem_web::interfaces::{Element, HtmlInputElement, SvgTextElement};
 use xilem_web::modifiers::style as s;
 use xilem_web::{App, document_body};
 
@@ -16,23 +13,21 @@ struct Triangle {
     b: u32,
 }
 
-fn get_value(event: web_sys::Event) -> u32 {
-    event
-        .target()
-        .unwrap_throw()
-        .dyn_ref::<web_sys::HtmlInputElement>()
-        .unwrap_throw()
-        .value_as_number() as u32
+fn get_value(event: &web_sys::Event, max: u32) -> Option<u32> {
+    xilem_web::input_event_target_value(event)?
+        .parse::<u32>()
+        .ok()
+        .filter(|value| (1..=max).contains(value))
 }
 
 fn label(
-    l: impl ToString,
+    l: String,
     x: u32,
     y: u32,
     dy: &'static str,
     anchor: &'static str,
 ) -> impl SvgTextElement<Triangle> {
-    svg::text(l.to_string())
+    svg::text(l)
         .attr("x", x)
         .attr("y", y)
         .attr("dy", dy)
@@ -52,9 +47,9 @@ fn slider(
         .on_input(cb)
 }
 
-fn main() {
+fn main() -> Result<(), xilem_web::DomError> {
     console_error_panic_hook::set_once();
-    App::new(document_body(), Triangle { a: 200, b: 100 }, |t| {
+    App::new(document_body()?, Triangle { a: 200, b: 100 }, |t| {
         let x1 = 390;
         let y1 = 30;
         let x2 = x1;
@@ -62,9 +57,9 @@ fn main() {
         let x3 = x1 - t.a;
         let y3 = 30 + t.b;
 
-        let a_label_x = (x1 + x3) / 2;
-        let b_label_y = (y2 + y1) / 2;
-        let c = ((t.a * t.a + t.b * t.b) as f32).sqrt();
+        let a_label_x = u32::midpoint(x1, x3);
+        let b_label_y = u32::midpoint(y2, y1);
+        let c = f64::from(t.a).hypot(f64::from(t.b));
 
         html::div((
             html::h1("Pythagorean theorem"),
@@ -76,15 +71,23 @@ fn main() {
                         s("stroke", "green"),
                         s("stroke-width", "1"),
                     ]),
-                label(t.a, a_label_x, y3, "1em", "middle"),
-                label(t.b, x1, b_label_y, "0.5em", "start"),
-                label(c, a_label_x, b_label_y, "0em", "end"),
+                label(t.a.to_string(), a_label_x, y3, "1em", "middle"),
+                label(t.b.to_string(), x1, b_label_y, "0.5em", "start"),
+                label(c.to_string(), a_label_x, b_label_y, "0em", "end"),
             ))
             .attr("width", 500)
             .attr("height", 200),
             html::div((
-                slider(300, t.a, |t, e| t.a = get_value(e)),
-                slider(150, t.b, |t, e| t.b = get_value(e)),
+                slider(300, t.a, |t, e| {
+                    if let Some(value) = get_value(&e, 300) {
+                        t.a = value;
+                    }
+                }),
+                slider(150, t.b, |t, e| {
+                    if let Some(value) = get_value(&e, 150) {
+                        t.b = value;
+                    }
+                }),
             )),
             ml::math(ml::mrow((
                 ml::msup((ml::mi(t.a), ml::mn(2))),
@@ -94,6 +97,7 @@ fn main() {
                 ml::msup((ml::mi(c), ml::mn(2))),
             ))),
         ))
-    })
+    })?
     .run();
+    Ok(())
 }

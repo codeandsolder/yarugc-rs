@@ -46,7 +46,8 @@ impl Default for CheckmarkColor {
 
 impl CheckmarkColor {
     /// Creates new `CheckmarkColor` with given value.
-    pub fn new(color: AlphaColor<Srgb>) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn new(color: AlphaColor<Srgb>) -> Self {
         Self { color }
     }
 

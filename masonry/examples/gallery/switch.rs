@@ -8,14 +8,14 @@ use masonry::widgets::{Flex, Label, Switch, SwitchToggled};
 
 use crate::demo::{CONTENT_GAP, DemoPage, ShellTags, wrap_in_shell};
 
-pub(crate) struct SwitchDemo {
+pub(super) struct SwitchDemo {
     shell: ShellTags,
     state_label: WidgetTag<Label>,
     switch: WidgetTag<Switch>,
 }
 
 impl SwitchDemo {
-    pub(crate) fn new(shell: ShellTags) -> Self {
+    pub(super) fn new(shell: ShellTags) -> Self {
         Self {
             shell,
             state_label: WidgetTag::unique(),
@@ -59,15 +59,17 @@ impl DemoPage for SwitchDemo {
         };
         let toggled = toggled.0;
 
-        let switch_id = render_root.get_widget_with_tag(self.switch).unwrap().id();
-        if widget_id != switch_id {
+        let switch_id = render_root
+            .get_widget_with_tag(self.switch)
+            .map(|widget| widget.id());
+        if Some(widget_id) != switch_id {
             return Handled::No;
         }
 
-        render_root.edit_widget_with_tag(self.state_label, |mut label| {
+        let _ = render_root.edit_widget_with_tag(self.state_label, |mut label| {
             Label::set_text(&mut label, format!("On: {toggled}"));
         });
-        render_root.edit_widget_with_tag(self.switch, |mut switch| {
+        let _ = render_root.edit_widget_with_tag(self.switch, |mut switch| {
             Switch::set_on(&mut switch, toggled);
         });
         Handled::Yes

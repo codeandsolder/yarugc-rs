@@ -4,6 +4,10 @@
 //! A playground used in the development for new Xilem Masonry features.
 
 #[expect(dead_code, reason = "original main is unused")]
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Shared example entry point is internal in this wrapper."
+)]
 #[path = "../mason.rs"]
 mod mason;
 
@@ -22,5 +26,7 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
     let mut event_loop = EventLoop::with_user_event();
     event_loop.with_android_app(app);
 
-    run(event_loop).expect("Can create app");
+    if let Err(error) = run(event_loop) {
+        tracing::error!(%error, "Could not start app");
+    }
 }

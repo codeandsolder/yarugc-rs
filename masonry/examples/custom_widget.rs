@@ -43,7 +43,10 @@ impl AppDriver for Driver {
 
 /// A widget with a custom implementation of the Widget trait.
 #[derive(Debug)]
-pub struct CustomWidget(pub String);
+pub struct CustomWidget(
+    /// Text displayed by the widget.
+    pub String,
+);
 
 impl Widget for CustomWidget {
     type Action = NoAction;
@@ -93,9 +96,9 @@ impl Widget for CustomWidget {
 
         // Return a result based on the parent's request
         match len_req {
-            LenReq::MinContent => min_length,
-            LenReq::MaxContent => max_length,
-            LenReq::FitContent(space) => space.clamp(min_length, max_length),
+            LenReq::Min => min_length,
+            LenReq::Max => max_length,
+            LenReq::Fit(space) => space.max(min_length).min(max_length),
         }
     }
 
@@ -194,7 +197,7 @@ impl Widget for CustomWidget {
     }
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let my_string = "Masonry + Vello".to_string();
     let window_attributes = Window::default_attributes().with_title("Fancy colors");
 
@@ -205,8 +208,8 @@ fn main() {
         )],
         Driver,
         default_property_set(),
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }
 
 fn make_image_data(width: usize, height: usize) -> Vec<u8> {

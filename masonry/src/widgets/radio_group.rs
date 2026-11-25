@@ -1,16 +1,10 @@
 // Copyright 2026 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use accesskit::{Node, Role};
+use accesskit::Role;
 use tracing::{Span, trace_span};
 
-use crate::core::{
-    AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesRef,
-    RegisterCtx, Widget, WidgetId, WidgetMut, WidgetPod,
-};
-use crate::imaging::Painter;
-use crate::kurbo::{Axis, Point, Size};
-use crate::layout::{LenReq, Length};
+use crate::core::{FromDynWidget, NewWidget, NoAction, Widget, WidgetId, WidgetMut, WidgetPod};
 
 /// A radio group container that holds radio buttons.
 pub struct RadioGroup {
@@ -20,9 +14,10 @@ pub struct RadioGroup {
 
 impl RadioGroup {
     /// Create a new `RadioGroup`.
+    #[must_use = "Use the returned value."]
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
-            child: child.erased().to_pod(),
+            child: child.erased().into_pod(),
             selected_button: None,
         }
     }
@@ -31,9 +26,10 @@ impl RadioGroup {
 // --- MARK: WIDGETMUT
 impl RadioGroup {
     /// Get mutable reference to the child widget.
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
-        let child = &mut this.widget.child;
-        this.ctx.get_mut(child)
+    pub fn child_mut<'t, W: Widget + FromDynWidget + ?Sized>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> Option<WidgetMut<'t, W>> {
+        this.ctx.get_mut(this.widget.child.id())
     }
 }
 
@@ -43,49 +39,10 @@ impl Widget for RadioGroup {
 
     // TODO: navigation shortcuts.
 
-    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.child);
-    }
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        axis: Axis,
-        _len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        ctx.redirect_measurement(&mut self.child, axis, cross_length)
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        ctx.run_layout(&mut self.child, size);
-        ctx.place_child(&mut self.child, Point::ORIGIN);
-        ctx.derive_baselines(&self.child);
-    }
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-    }
+    masonry_core::single_child_container!(child, fill);
 
     fn accessibility_role(&self) -> Role {
         Role::RadioGroup
-    }
-
-    fn accessibility(
-        &mut self,
-        _ctx: &mut AccessCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _node: &mut Node,
-    ) {
-    }
-
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.child.id()])
     }
 
     fn make_trace_span(&self, id: WidgetId) -> Span {

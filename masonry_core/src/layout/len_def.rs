@@ -13,6 +13,7 @@ use crate::layout::{LenReq, Length};
 /// [`Dim`]: crate::layout::Dim
 /// [`Dim::Auto`]: crate::layout::Dim::Auto
 #[derive(Copy, Clone, Debug, PartialEq)]
+#[must_use = "Use the resolved length definition."]
 pub enum LenDef {
     /// Specific fixed border-box [`Length`].
     Fixed(Length),
@@ -39,18 +40,19 @@ pub enum LenDef {
 impl From<LenReq> for LenDef {
     fn from(len_req: LenReq) -> Self {
         match len_req {
-            LenReq::MinContent => Self::MinContent,
-            LenReq::MaxContent => Self::MaxContent,
-            LenReq::FitContent(space) => Self::FitContent(space),
+            LenReq::Min => Self::MinContent,
+            LenReq::Max => Self::MaxContent,
+            LenReq::Fit(space) => Self::FitContent(space),
         }
     }
 }
 
 impl LenDef {
     /// Returns the specific fixed border-box length if it is present.
-    pub fn fixed(&self) -> Option<Length> {
+    #[must_use = "Use the fixed length if present."]
+    pub const fn fixed(self) -> Option<Length> {
         match self {
-            Self::Fixed(val) => Some(*val),
+            Self::Fixed(val) => Some(val),
             _ => None,
         }
     }
@@ -64,7 +66,7 @@ impl LenDef {
     /// [`FitContent`]: Self::FitContent
     /// [`MinContent`]: Self::MinContent
     /// [`MaxContent`]: Self::MaxContent
-    pub fn reduce(self, delta: Length) -> Self {
+    pub const fn reduce(self, delta: Length) -> Self {
         match self {
             Self::Fixed(val) => Self::Fixed(val.saturating_sub(delta)),
             Self::MinContent | Self::MaxContent => self,

@@ -5,10 +5,10 @@ use std::marker::PhantomData;
 
 use masonry::kurbo::{Axis, Cap};
 use masonry::layout::Length;
-use masonry::util::debug_panic;
 use masonry::widgets::{self, DashFit, Placement};
 use smallvec::SmallVec;
 
+use super::optional_child::OptionalChildState;
 use crate::core::{MessageCtx, MessageResult, Mut, View, ViewId, ViewMarker, ViewPathTracker};
 use crate::view::Spinner;
 use crate::{Pod, ViewCtx, WidgetView};
@@ -28,7 +28,7 @@ pub fn divider<State: 'static, Action, V: WidgetView<State, Action>>(
         start_cap: Cap::Butt,
         end_cap: Cap::Butt,
         placement: Placement::default(),
-        pad: Length::const_px(5.),
+        pad: masonry::layout::length!(5.),
         content: content.into(),
 
         phantom: PhantomData,
@@ -36,11 +36,13 @@ pub fn divider<State: 'static, Action, V: WidgetView<State, Action>>(
 }
 
 /// Creates a new horizontal [`Divider`] with no content.
+#[must_use = "Use the returned value."]
 pub fn divider_h<State: 'static, Action>() -> Divider<State, Action> {
     divider(Axis::Horizontal, None)
 }
 
 /// Creates a new vertical [`Divider`] with no content.
+#[must_use = "Use the returned value."]
 pub fn divider_v<State: 'static, Action>() -> Divider<State, Action> {
     divider(Axis::Vertical, None)
 }
@@ -67,126 +69,20 @@ pub struct Divider<State, Action, V = Spinner> {
 }
 
 impl<State: 'static, Action, V: WidgetView<State, Action>> Divider<State, Action, V> {
-    /// Returns `self` with the given line `thickness`.
-    pub fn thickness(mut self, thickness: Length) -> Self {
-        self.thickness = Some(thickness);
-        self
-    }
-
-    /// Returns `self` with the line thickness set to hairline, i.e. 1 device pixel.
-    pub fn hairline(mut self) -> Self {
-        self.thickness = None;
-        self
-    }
-
-    /// Returns `self` with the given `dash_fit`.
-    pub fn dash_fit(mut self, dash_fit: DashFit) -> Self {
-        self.dash_fit = dash_fit;
-        self
-    }
-
-    /// Returns `self` with the given `dash_pattern`.
-    ///
-    /// The pattern defines the lengths of dashes in alternating on/off order.
-    /// * `10` - 10px dashes and 10px gaps
-    /// * `10, 5` - 10px dashes with 5px gaps
-    /// * `10, 5, 20, 30` - 10 px dash, 5px gap, 20px dash, 30px gap
-    ///
-    /// The pattern can be even longer and in any case will repeat to fill the whole divider space.
-    ///
-    /// The pattern must contain an even number of lengths. With exceptions for zero and one, where
-    /// zero lengths means a solid line and one length will be used for both the dash and the gap.
-    /// When given any other uneven number of the lengths, the last length will be ignored.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `dash_pattern` contains an uneven number of entries of 3 or more
-    /// and debug assertions are enabled.
-    pub fn dash_pattern(mut self, dash_pattern: &[Length]) -> Self {
-        let mut dash_pattern = SmallVec::from_slice(dash_pattern);
-        // Paint code assumes an even number for simplicity of implementation.
-        let len = dash_pattern.len();
-        if len == 1 {
-            dash_pattern.push(dash_pattern[0]);
-        } else if len > 0 && !len.is_multiple_of(2) {
-            debug_panic!(
-                "The divider dash pattern must have an even number of lengths. Received {len}"
-            );
-            dash_pattern.pop();
-        }
-        self.dash_pattern = dash_pattern;
-        self
-    }
-
-    /// Returns `self` with the given `cap` used both for start and end.
-    ///
-    /// Use [`start_cap`] or [`end_cap`] to set different edge caps.
-    ///
-    /// Defaults to [`Cap::Butt`].
-    ///
-    /// [`start_cap`]: Self::start_cap
-    /// [`end_cap`]: Self::end_cap
-    pub fn cap(mut self, cap: Cap) -> Self {
-        self.start_cap = cap;
-        self.end_cap = cap;
-        self
-    }
-
-    /// Returns `self` with the given starting `cap`.
-    ///
-    /// Use [`cap`] to set the cap for both the start and the end.
-    ///
-    /// Defaults to [`Cap::Butt`].
-    ///
-    /// [`cap`]: Self::cap
-    pub fn start_cap(mut self, cap: Cap) -> Self {
-        self.start_cap = cap;
-        self
-    }
-
-    /// Returns `self` with the given ending `cap`.
-    ///
-    /// Use [`cap`] to set the cap for both the start and the end.
-    ///
-    /// Defaults to [`Cap::Butt`].
-    ///
-    /// [`cap`]: Self::cap
-    pub fn end_cap(mut self, cap: Cap) -> Self {
-        self.end_cap = cap;
-        self
-    }
-
-    /// Returns `self` with the given content `placement`.
-    ///
-    /// Defaults to [`Placement::Center`].
-    pub fn placement(mut self, placement: Placement) -> Self {
-        self.placement = placement;
-        self
-    }
-
-    /// Returns `self` with the given `pad`.
-    ///
-    /// This `pad` determines the amount of space between the divider line and the content.
-    /// It does nothing when there is no content.
-    ///
-    /// The default value is 5px.
-    pub fn pad(mut self, pad: Length) -> Self {
-        self.pad = pad;
-        self
-    }
+    masonry::divider_style_builders!();
 }
 
 /// Use a distinctive number here, to be able to catch bugs.
 /// In case the generational-id view path in `View::Message` leads to the wrong view.
 /// This is a randomly generated 32 bit number - 2799496121 in decimal.
-const DIVIDER_CONTENT_VIEW_ID: ViewId = ViewId::new(0xA6DCEBB9);
+const DIVIDER_CONTENT_VIEW_ID: ViewId = ViewId::new(0xA6DC_EBB9);
 
 impl<State, Action, V> ViewMarker for Divider<State, Action, V> {}
 impl<State: 'static, Action: 'static, V: WidgetView<State, Action>> View<State, Action, ViewCtx>
     for Divider<State, Action, V>
 {
     type Element = Pod<widgets::Divider>;
-    type ViewState = Option<V::ViewState>;
+    type ViewState = OptionalChildState<V::ViewState>;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let mut divider = widgets::Divider::new(self.axis)
@@ -201,15 +97,13 @@ impl<State: 'static, Action: 'static, V: WidgetView<State, Action>> View<State, 
         } else {
             divider = divider.hairline();
         }
-        let mut view_state = None;
-        if let Some(content) = &self.content {
-            let (content, content_state) = ctx.with_id(DIVIDER_CONTENT_VIEW_ID, |ctx| {
-                View::<State, Action, _>::build(content, ctx, app_state)
-            });
-            divider = divider.content(content.new_widget);
-            view_state = Some(content_state);
+        let (child, view_state) = ctx.with_id(DIVIDER_CONTENT_VIEW_ID, |ctx| {
+            OptionalChildState::build(self.content.as_ref(), ctx, app_state)
+        });
+        if let Some(child) = child {
+            divider = divider.content(child);
         }
-        (ctx.create_pod(divider), view_state)
+        (Pod::new(divider), view_state)
     }
 
     fn rebuild(
@@ -248,34 +142,15 @@ impl<State: 'static, Action: 'static, V: WidgetView<State, Action>> View<State, 
         if prev.pad != self.pad {
             widgets::Divider::set_pad(&mut element, self.pad);
         }
-        match (&prev.content, &self.content) {
-            (Some(prev_content), Some(content)) => {
-                ctx.with_id(DIVIDER_CONTENT_VIEW_ID, |ctx| {
-                    View::<State, Action, _>::rebuild(
-                        content,
-                        prev_content,
-                        view_state.as_mut().unwrap(),
-                        ctx,
-                        widgets::Divider::content_mut(&mut element)
-                            .unwrap()
-                            .downcast(),
-                        app_state,
-                    );
-                });
-            }
-            (Some(_prev_content), None) => {
-                widgets::Divider::clear_content(&mut element);
-                *view_state = None;
-            }
-            (None, Some(content)) => {
-                let (content, content_state) = ctx.with_id(DIVIDER_CONTENT_VIEW_ID, |ctx| {
-                    View::<State, Action, _>::build(content, ctx, app_state)
-                });
-                widgets::Divider::set_content(&mut element, content.new_widget);
-                *view_state = Some(content_state);
-            }
-            (None, None) => (),
-        }
+        ctx.with_id(DIVIDER_CONTENT_VIEW_ID, |ctx| {
+            view_state.rebuild(
+                self.content.as_ref(),
+                prev.content.as_ref(),
+                ctx,
+                &mut element,
+                app_state,
+            );
+        });
     }
 
     fn teardown(
@@ -284,18 +159,9 @@ impl<State: 'static, Action: 'static, V: WidgetView<State, Action>> View<State, 
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
-        if let Some(content) = &self.content {
-            ctx.with_id(DIVIDER_CONTENT_VIEW_ID, |ctx| {
-                View::<State, Action, _>::teardown(
-                    content,
-                    view_state.as_mut().unwrap(),
-                    ctx,
-                    widgets::Divider::content_mut(&mut element)
-                        .unwrap()
-                        .downcast(),
-                );
-            });
-        }
+        ctx.with_id(DIVIDER_CONTENT_VIEW_ID, |ctx| {
+            view_state.teardown(self.content.as_ref(), ctx, &mut element);
+        });
     }
 
     fn message(
@@ -307,19 +173,7 @@ impl<State: 'static, Action: 'static, V: WidgetView<State, Action>> View<State, 
     ) -> MessageResult<Action> {
         match message.take_first() {
             Some(DIVIDER_CONTENT_VIEW_ID) => {
-                if let Some(content) = &self.content {
-                    content.message(
-                        view_state.as_mut().unwrap(),
-                        message,
-                        widgets::Divider::content_mut(&mut element)
-                            .unwrap()
-                            .downcast(),
-                        app_state,
-                    )
-                } else {
-                    tracing::warn!("Got message for Divider content that no longer exists");
-                    MessageResult::Stale
-                }
+                view_state.message(self.content.as_ref(), message, &mut element, app_state)
             }
             None => {
                 tracing::error!(

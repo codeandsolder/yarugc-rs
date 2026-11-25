@@ -47,29 +47,22 @@ where
     /// Convert from the child to this element type.
     fn upcast(ctx: &mut Context, child: Child) -> Self;
 
-    /// Perform a reborrowing downcast to the child reference type.
+    /// Attempts a reborrowing downcast to the child reference type.
     ///
-    /// This may panic if `this` is not the reference form of a value created by
-    /// `Self::upcast`.
-    /// For example, this may perform a downcasting operation, which would fail
-    /// if the value is not of the expected type.
-    /// You can safely use this methods in contexts where it is known that the
-    ///
-    /// If you need to return a value, see [`with_downcast_val`](SuperElement::with_downcast_val).
-    fn with_downcast(this: Mut<'_, Self>, f: impl FnOnce(Mut<'_, Child>)) -> Mut<'_, Self> {
-        let (this, ()) = Self::with_downcast_val(this, f);
-        this
+    /// Returns the original element and whether the callback ran.
+    fn with_downcast(this: Mut<'_, Self>, f: impl FnOnce(Mut<'_, Child>)) -> (Mut<'_, Self>, bool) {
+        let (this, result) = Self::with_downcast_val(this, f);
+        (this, result.is_some())
     }
-    /// Perform a reborrowing downcast.
+
+    /// Attempts a reborrowing downcast and runs the callback if it succeeds.
     ///
-    /// This may panic if `this` is not the reference form of a value created by
-    /// `Self::upcast`.
-    ///
-    /// If you don't need to return a value, see [`with_downcast`](SuperElement::with_downcast).
+    /// The original element is returned even if its type is incorrect. The
+    /// callback is not invoked on a type mismatch.
     fn with_downcast_val<R>(
         this: Mut<'_, Self>,
         f: impl FnOnce(Mut<'_, Child>) -> R,
-    ) -> (Self::Mut<'_>, R);
+    ) -> (Self::Mut<'_>, Option<R>);
 }
 
 /// An element which can be used for an [`AnyView`](crate::AnyView) containing `Child`.
@@ -102,7 +95,7 @@ impl<Context> SuperElement<Self, Context> for NoElement {
     fn with_downcast_val<R>(
         this: Mut<'_, Self>,
         f: impl FnOnce(Mut<'_, Self>) -> R,
-    ) -> (Self::Mut<'_>, R) {
-        ((), f(this))
+    ) -> (Self::Mut<'_>, Option<R>) {
+        ((), Some(f(this)))
     }
 }

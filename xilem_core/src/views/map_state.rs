@@ -6,14 +6,17 @@ use core::marker::PhantomData;
 
 use crate::{MessageCtx, MessageResult, Mut, View, ViewMarker, ViewPathTracker};
 
+type ViewSignature<ParentState, ChildState, Action, Context> =
+    fn(ParentState) -> (ChildState, Action, Context);
+
 /// The View for [`map_state`].
 ///
 /// See its documentation for more context.
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct MapState<V, F, ParentState, ChildState, Action, Context> {
-    map_state: F,
+    access_state: F,
     child: V,
-    phantom: PhantomData<fn(ParentState) -> (ChildState, Action, Context)>,
+    phantom: PhantomData<ViewSignature<ParentState, ChildState, Action, Context>>,
 }
 
 impl<V, F, ParentState, ChildState, Action, Context> Debug
@@ -22,7 +25,7 @@ where
     V: Debug,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("MapAction")
+        f.debug_struct("MapState")
             .field("child", &self.child)
             .finish_non_exhaustive()
     }
@@ -68,7 +71,7 @@ where
     MapState<V, F, ParentState, ChildState, Action, Context>: View<ParentState, Action, Context>,
 {
     MapState {
-        map_state: f,
+        access_state: f,
         child: view,
         phantom: PhantomData,
     }
@@ -96,7 +99,7 @@ where
         ctx: &mut Context,
         app_state: &mut ParentState,
     ) -> (Self::Element, Self::ViewState) {
-        self.child.build(ctx, (self.map_state)(app_state))
+        self.child.build(ctx, (self.access_state)(app_state))
     }
 
     fn rebuild(
@@ -112,7 +115,7 @@ where
             view_state,
             ctx,
             element,
-            (self.map_state)(app_state),
+            (self.access_state)(app_state),
         );
     }
 
@@ -133,6 +136,6 @@ where
         app_state: &mut ParentState,
     ) -> MessageResult<Action> {
         self.child
-            .message(view_state, message, element, (self.map_state)(app_state))
+            .message(view_state, message, element, (self.access_state)(app_state))
     }
 }

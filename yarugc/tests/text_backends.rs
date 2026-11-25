@@ -58,7 +58,7 @@ fn shape(fs: &mut FontSystem, text: &str) -> Buffer {
         None,
     );
     b.shape_until_scroll(fs, false);
-    assert_eq!(b.layout_runs().count(), 1);
+    assert_eq!(b.layout_runs().count(), 1, "readout should fit one line");
     b
 }
 
@@ -95,7 +95,7 @@ fn read_buffer(device: &Device, buffer: &wgpu::Buffer) -> Vec<u8> {
 
 fn pixels(device: &Device, queue: &Queue, target: &Surface) -> Vec<u8> {
     let [w, h] = target.size();
-    assert_eq!(w * 4 % 256, 0);
+    assert_eq!(w * 4 % 256, 0, "readback rows must be aligned");
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: u64::from(w) * u64::from(h) * 4,

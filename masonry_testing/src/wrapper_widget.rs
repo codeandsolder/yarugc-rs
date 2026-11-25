@@ -6,17 +6,11 @@
     reason = "Widgets are not expected to implement Debug"
 )]
 
-use std::any::TypeId;
-
 use masonry_core::accesskit::{Node, Role};
 use masonry_core::core::{
-    AccessCtx, AccessEvent, ChildrenIds, ComposeCtx, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
-    NoAction, PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update,
-    UpdateCtx, Widget, WidgetMut, WidgetPod,
+    AccessCtx, FromDynWidget, NewWidget, NoAction, PropertiesRef, Widget, WidgetMut, WidgetPod,
 };
-use masonry_core::imaging::Painter;
-use masonry_core::kurbo::{Axis, Point, Size};
-use masonry_core::layout::{LayoutSize, LenReq, Length, SizeDef};
+use masonry_core::layout::UnitPoint;
 
 /// A basic wrapper widget that can replace its child.
 pub struct WrapperWidget {
@@ -27,15 +21,18 @@ impl WrapperWidget {
     /// Creates a new `WrapperWidget`.
     ///
     /// The `child` is the initial child widget.
+    #[must_use = "Use the wrapped test widget."]
     pub fn new(child: NewWidget<impl Widget>) -> Self {
         Self {
-            child: child.erased().to_pod(),
+            child: child.erased().into_pod(),
         }
     }
 
     /// Returns mutable reference to the child widget.
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
-        this.ctx.get_mut(&mut this.widget.child)
+    pub fn child_mut<'t, W: Widget + FromDynWidget + ?Sized>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> Option<WidgetMut<'t, W>> {
+        this.ctx.get_mut(this.widget.child.id())
     }
 }
 
@@ -43,7 +40,7 @@ impl WrapperWidget {
     /// Replaces the container's child widget.
     pub fn set_child(this: &mut WidgetMut<'_, Self>, child: impl Widget) {
         // FIXME - Take NewWidget argument
-        Self::set_child_pod(this, NewWidget::new(child).erased().to_pod());
+        Self::set_child_pod(this, NewWidget::new(child).erased().into_pod());
     }
 
     /// Replaces the container's child widget with a `WidgetPod`.
@@ -56,83 +53,7 @@ impl WrapperWidget {
 impl Widget for WrapperWidget {
     type Action = NoAction;
 
-    fn on_pointer_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &PointerEvent,
-    ) {
-    }
-
-    fn on_text_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &TextEvent,
-    ) {
-    }
-
-    fn on_access_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &AccessEvent,
-    ) {
-    }
-
-    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.child);
-    }
-
-    fn update(
-        &mut self,
-        _ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &Update,
-    ) {
-    }
-
-    fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: TypeId) {}
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        axis: Axis,
-        len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        let auto_length = len_req.into();
-        let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-
-        ctx.compute_length(
-            &mut self.child,
-            auto_length,
-            context_size,
-            axis,
-            cross_length,
-        )
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let child_size = ctx.compute_size(&mut self.child, SizeDef::fit(size), size.into());
-        ctx.run_layout(&mut self.child, child_size);
-
-        let child_origin = Point::ORIGIN;
-        ctx.place_child(&mut self.child, child_origin);
-
-        ctx.derive_baselines(&self.child);
-    }
-
-    fn compose(&mut self, _ctx: &mut ComposeCtx<'_>) {}
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-    }
+    masonry_core::single_child_container!(child, UnitPoint::TOP_LEFT);
 
     fn accessibility_role(&self) -> Role {
         Role::GenericContainer
@@ -144,9 +65,5 @@ impl Widget for WrapperWidget {
         _props: &PropertiesRef<'_>,
         _node: &mut Node,
     ) {
-    }
-
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.child.id()])
     }
 }

@@ -34,10 +34,10 @@ fn vec_in_tuple() {
     let child = &seq_children.active[1];
     assert_eq!(child.operations, &[Operation::Build(1)]);
     // (Tuple then vec)
-    assert_eq!(child.view_path.len(), 2);
+    assert_eq!(child.view_path.len(), 3);
     let child = &seq_children.active[2];
     assert_eq!(child.operations, &[Operation::Build(2)]);
-    assert_eq!(child.view_path.len(), 2);
+    assert_eq!(child.view_path.len(), 3);
 
     // Rebuild
     let view2 = sequence(5, (record_ops(4), vec![]));
@@ -55,7 +55,7 @@ fn vec_in_tuple() {
 
     let (child_idx, child) = &seq_children.deleted[0];
     assert_eq!(*child_idx, 1);
-    assert_eq!(child.view_path.len(), 2);
+    assert_eq!(child.view_path.len(), 3);
     assert_eq!(
         child.operations,
         &[Operation::Build(1), Operation::Teardown(1)]
@@ -63,7 +63,7 @@ fn vec_in_tuple() {
     let (child_idx, child) = &seq_children.deleted[1];
     // N.B. we delete the item with the index we see it with (i.e. after the previous item has been deleted)
     assert_eq!(*child_idx, 1);
-    assert_eq!(child.view_path.len(), 2);
+    assert_eq!(child.view_path.len(), 3);
     assert_eq!(
         child.operations,
         &[Operation::Build(2), Operation::Teardown(2)]

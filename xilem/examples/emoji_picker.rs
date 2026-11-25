@@ -4,7 +4,7 @@
 //! A simple emoji picker.
 
 use masonry::layout::{AsUnit, Dim};
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::core::View;
 use xilem::style::Style;
 use xilem::view::{
@@ -21,18 +21,18 @@ fn app_logic(data: &mut EmojiPagination) -> impl WidgetView<EmojiPagination> + u
         flex_row((
             // TODO: Expose that this is a "zoom out" button accessibly
             text_button("🔍-", |data: &mut EmojiPagination| {
-                data.size = (data.size + 1).min(5);
+                data.size = (data.size.saturating_add(1)).min(5);
             }),
             // TODO: Expose that this is a "zoom in" button accessibly
             text_button("🔍+", |data: &mut EmojiPagination| {
-                data.size = (data.size - 1).max(2);
+                data.size = (data.size.saturating_sub(1)).max(2);
             }),
         ))
         .main_axis_alignment(MainAxisAlignment::Center),
         picker(data).flex(1.0),
         paginate(
             data.start_index,
-            (data.size * data.size) as usize,
+            usize::from(data.size) * usize::from(data.size),
             data.emoji.len(),
         )
         .map_state(|state: &mut EmojiPagination| &mut state.start_index),
@@ -42,11 +42,11 @@ fn app_logic(data: &mut EmojiPagination) -> impl WidgetView<EmojiPagination> + u
     ))
 }
 
-fn picker(data: &mut EmojiPagination) -> impl WidgetView<EmojiPagination> + use<> {
+fn picker(data: &EmojiPagination) -> impl WidgetView<EmojiPagination> + use<> {
     let mut grid_items = vec![];
-    'outer: for y in 0..data.size as usize {
-        let row_idx = data.start_index + y * data.size as usize;
-        for x in 0..data.size as usize {
+    'outer: for y in 0..usize::from(data.size) {
+        let row_idx = data.start_index + y * usize::from(data.size);
+        for x in 0..usize::from(data.size) {
             let idx = row_idx + x;
             let emoji = data.emoji.get(idx);
             let Some(emoji) = emoji else {
@@ -56,7 +56,7 @@ fn picker(data: &mut EmojiPagination) -> impl WidgetView<EmojiPagination> + use<
             let view = flex_col((
                 // TODO: Expose that this button corresponds to the label below for accessibility?
                 button(
-                    label(emoji.display).text_size(200.0 / data.size as f32),
+                    label(emoji.display).text_size(200.0 / f32::from(data.size)),
                     move |data: &mut EmojiPagination| {
                         data.last_selected = Some(idx);
                     },
@@ -79,11 +79,11 @@ fn picker(data: &mut EmojiPagination) -> impl WidgetView<EmojiPagination> + use<
 
     grid(grid_items)
         .columns(repeat_tracks(
-            data.size.try_into().unwrap(),
+            usize::from(data.size),
             GridTrackSize::FRACTION,
         ))
         .rows(repeat_tracks(
-            data.size.try_into().unwrap(),
+            usize::from(data.size),
             GridTrackSize::FRACTION,
         ))
         .gap(10.px())
@@ -95,9 +95,15 @@ fn paginate(
     count_per_page: usize,
     max_count: usize,
 ) -> impl WidgetView<usize> {
-    let current_end = (current_start + count_per_page).min(max_count);
-    let percentage_start = (current_start * 100) / max_count;
-    let percentage_end = (current_end * 100) / max_count;
+    let current_end = current_start.saturating_add(count_per_page).min(max_count);
+    let percentage_start = current_start
+        .saturating_mul(100)
+        .checked_div(max_count)
+        .unwrap_or(0);
+    let percentage_end = current_end
+        .saturating_mul(100)
+        .checked_div(max_count)
+        .unwrap_or(0);
 
     flex_row((
         // TODO: Expose that this is a previous page button to accessibility
@@ -112,7 +118,7 @@ fn paginate(
         button(
             label("➡️").text_size(24.0),
             move |page_number: &mut usize| {
-                let new_idx = current_start + count_per_page;
+                let new_idx = current_start.saturating_add(count_per_page);
                 if new_idx < max_count {
                     *page_number = new_idx;
                 }
@@ -124,13 +130,13 @@ fn paginate(
 }
 
 struct EmojiPagination {
-    size: u32,
+    size: u8,
     last_selected: Option<usize>,
     start_index: usize,
     emoji: Vec<EmojiInfo>,
 }
 
-pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
+pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
     let emoji = EmojiInfo::parse_file();
     let data = EmojiPagination {
         size: 4,
@@ -153,17 +159,16 @@ impl EmojiInfo {
     fn parse_file() -> Vec<Self> {
         let mut lines = EMOJI_NAMES_CSV.lines();
         let first_line = lines.next();
-        assert_eq!(
-            first_line,
-            Some("display,name"),
-            "Probably wrong CSV-like file"
-        );
-        lines.flat_map(Self::parse_single).collect()
+        if first_line != Some("display,name") {
+            tracing::error!("Invalid emoji CSV header");
+            return Vec::new();
+        }
+        lines.filter_map(Self::parse_single).collect()
     }
 
     fn parse_single(line: &'static str) -> Option<Self> {
         let (display, name) = line.split_once(',')?;
-        Some(Self { display, name })
+        Some(Self { name, display })
     }
 }
 
@@ -177,6 +182,6 @@ const EMOJI_NAMES_CSV: &str = include_str!(concat!(
 
 // Boilerplate code: Identical across all applications which support Android
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     run(EventLoop::with_user_event())
 }

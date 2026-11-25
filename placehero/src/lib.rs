@@ -17,13 +17,12 @@
 //!
 //! - `default`: Enables the default features of [Xilem][xilem].
 
-#![expect(clippy::todo, reason = "Landing intentionally in-progress work.")]
-
 use std::sync::Arc;
 
 use megalodon::entities::{Context, Instance, Status};
 use megalodon::error::{Kind, OwnError};
 use megalodon::{Megalodon, mastodon};
+use xilem::RunError;
 use xilem::core::one_of::{Either, OneOf, OneOf3, OneOf6};
 use xilem::core::{NoElement, View, fork, lens, map_action, map_state};
 use xilem::masonry::layout::AsUnit;
@@ -33,13 +32,32 @@ use xilem::view::{
     CrossAxisAlignment, FlexExt, MainAxisAlignment, flex_col, flex_row, label, prose, sized_box,
     spinner, split, task_raw, text_button, text_input, worker_raw,
 };
-use xilem::winit::error::EventLoopError;
 use xilem::{EventLoopBuilder, ViewCtx, WidgetView, WindowOptions, Xilem, tokio};
 
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Internal types must remain crate-visible, not public API."
+)]
 mod actions;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Internal types must remain crate-visible, not public API."
+)]
 mod avatars;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Internal types must remain crate-visible, not public API."
+)]
 mod components;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Internal types must remain crate-visible, not public API."
+)]
 mod html_content;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Internal types must remain crate-visible, not public API."
+)]
 mod login_flow;
 
 pub(crate) use avatars::Avatars;
@@ -57,16 +75,15 @@ use crate::login_flow::PlaceheroWithLogin;
 /// We also do not plan to support non-Mastodon servers at the moment.
 /// However, keeping this type definition means a greater chance of a port to
 /// outside Mastodon working.
-#[expect(
-    clippy::disallowed_types,
-    reason = "We want to allow using the type only through this path"
-)]
 type Mastodon = Arc<mastodon::Mastodon>;
 
 /// Execute the app in the given winit event loop.
-pub fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
+///
+/// # Errors
+/// Returns an error if the application runtime or window event loop fails.
+pub fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
     Xilem::new_simple(
-        MainState::Selecting,
+        MainState::Selecting(None),
         select_app,
         WindowOptions::new("Placehero: A placeholder named Mastodon client"),
     )
@@ -79,22 +96,26 @@ pub fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
 /// the main Placehero.
 #[expect(clippy::large_enum_variant, reason = "Not passed around.")]
 enum MainState {
-    Selecting,
+    Selecting(Option<String>),
     Old(Placehero),
     New(PlaceheroWithLogin),
 }
 
 fn select_app(state: &mut MainState) -> impl WidgetView<MainState> + use<> {
     match state {
-        MainState::Selecting => OneOf3::A(
+        MainState::Selecting(error) => OneOf3::A(
             flex_col((
                 prose("Welcome to Placehero. This is an example of the Xilem GUI framework, which is a Mastodon client.\n\
                     We currently have decent support for browsing anonymously, and are currently developing our logged-in support in parallel to avoid regressions.")
                     .text_alignment(xilem::TextAlign::Center)
                     .flex(CrossAxisAlignment::Center),
+                error.as_ref().map(|err| prose(err.clone())),
                 flex_row((
                     text_button("Browse Anonymously", |state: &mut MainState| {
-                        *state = MainState::Old(Placehero::default());
+                        *state = match Placehero::new() {
+                            Ok(app) => MainState::Old(app),
+                            Err(err) => MainState::Selecting(Some(format!("Could not initialize Mastodon client: {err}"))),
+                        };
                     }),
                     text_button("Log In", |state: &mut MainState| {
                         *state = MainState::New(PlaceheroWithLogin::new());
@@ -122,7 +143,7 @@ fn select_app(state: &mut MainState) -> impl WidgetView<MainState> + use<> {
 struct Placehero {
     mastodon: Mastodon,
     instance: Option<Instance>,
-    timeline: Option<Timeline>,
+    timeline: Timeline,
     show_context: Option<Status>,
     context: Option<Context>,
     context_sender: Option<UnboundedSender<String>>,
@@ -130,27 +151,25 @@ struct Placehero {
     timeline_box_contents: String,
     loading_timeline: bool,
     not_found_acct: Option<String>,
+    account_error: Option<String>,
+    context_error: Option<String>,
+    instance_error: Option<String>,
 }
 
-impl Default for Placehero {
-    fn default() -> Self {
+impl Placehero {
+    fn new() -> anyhow::Result<Self> {
         // TODO: Configurable server?
         let base_url = "https://mastodon.online".to_string();
         // TODO: Determine what user agent we want to send.
         // Currently we send "megalodon", as that is the default in the library.
         let user_agent = None;
 
-        #[expect(
-            clippy::disallowed_types,
-            reason = "We are constructing a value of the type, which we will never directly use elsewhere"
-        )]
-        let mastodon = mastodon::Mastodon::new(base_url, None, user_agent)
-            .expect("Provided User Agent is valid");
+        let mastodon = mastodon::Mastodon::new(base_url, None, user_agent)?;
 
-        Self {
+        Ok(Self {
             mastodon: Arc::new(mastodon),
             instance: None,
-            timeline: None,
+            timeline: Timeline::default(),
             show_context: None,
             context: None,
             context_sender: None,
@@ -158,73 +177,78 @@ impl Default for Placehero {
             timeline_box_contents: "raph".to_string(),
             loading_timeline: false,
             not_found_acct: None,
-        }
+            account_error: None,
+            context_error: None,
+            instance_error: None,
+        })
     }
 }
 
 impl Placehero {
-    fn sidebar(&mut self) -> impl WidgetView<Self, Navigation> + use<> {
-        if let Some(instance) = &self.instance {
-            let back = if self.show_context.is_some() {
-                // TODO: Make the ⬅️ arrow not be available to screen readers.
-                Either::A(text_button("⬅️ Back to Timeline", |_: &mut Self| {
-                    Navigation::Home
-                }))
-            } else {
-                // Sized box of a flex because nested flexes aren't supported (? is this true)
-                // TODO: Ideally, we'd be able to use Either with fragments here
-                Either::B(sized_box(flex_col((
-                    text_input(
-                        self.timeline_box_contents.clone(),
-                        |state: &mut Self, string| {
-                            state.timeline_box_contents = string;
-                            Navigation::None
-                        },
-                    )
-                    .on_enter(|_, user| Navigation::LoadUser(user))
-                    .disabled(self.loading_timeline),
-                    self.loading_timeline.then(|| spinner().dims(50.px())),
-                    text_button("Go", |state: &mut Self| {
-                        Navigation::LoadUser(state.timeline_box_contents.clone())
-                    }),
-                ))))
-            };
-            Either::A(flex_col((
-                label("Connected to:"),
-                // TODO: We should probably use an ArcStr for this?
-                prose(instance.title.as_str()),
-                back,
-            )))
+    fn sidebar(&self) -> impl WidgetView<Self, Navigation> + use<> {
+        let Some(instance) = &self.instance else {
+            return Either::B(prose(
+                self.instance_error.as_deref().unwrap_or("Connecting…"),
+            ));
+        };
+        let back = if self.show_context.is_some() {
+            // TODO: Make the ⬅️ arrow not be available to screen readers.
+            Either::A(text_button("⬅️ Back to Timeline", |_: &mut Self| {
+                Navigation::Home
+            }))
         } else {
-            Either::B(prose("Not yet connected (or other unhandled error)"))
-        }
+            // Sized box of a flex because nested flexes aren't supported (? is this true)
+            // TODO: Ideally, we'd be able to use Either with fragments here
+            Either::B(sized_box(flex_col((
+                text_input(
+                    self.timeline_box_contents.clone(),
+                    |state: &mut Self, string| {
+                        state.timeline_box_contents = string;
+                        Navigation::None
+                    },
+                )
+                .on_enter(|_, user| Navigation::LoadUser(user))
+                .disabled(self.loading_timeline),
+                self.loading_timeline.then(|| spinner().dims(50.px())),
+                text_button("Go", |state: &mut Self| {
+                    Navigation::LoadUser(state.timeline_box_contents.clone())
+                }),
+            ))))
+        };
+        Either::A(flex_col((
+            label("Connected to:"),
+            // TODO: We should probably use an ArcStr for this?
+            prose(instance.title.as_str()),
+            back,
+        )))
     }
 
-    fn main_view(&mut self) -> impl WidgetView<Self, Navigation> + use<> {
+    fn main_view(&self) -> impl WidgetView<Self, Navigation> + use<> {
         if let Some(show_context) = self.show_context.as_ref() {
-            if let Some(context) = self.context.as_ref() {
-                // TODO: Display the status until the entire thread loads; this is hard because
-                // the thread's scroll position would jump.
-                OneOf6::A(thread(show_context, context))
-            } else {
-                OneOf::B(prose("Loading thread"))
-            }
-        } else if self.loading_timeline {
+            return self.context.as_ref().map_or_else(
+                || {
+                    OneOf::B(prose(
+                        self.context_error.as_deref().unwrap_or("Loading thread"),
+                    ))
+                },
+                |context| OneOf6::A(thread(show_context, context)),
+            );
+        }
+        if self.loading_timeline {
             OneOf::C(
                 flex_col(spinner().dims(50.px())).cross_axis_alignment(CrossAxisAlignment::Center),
             )
+        } else if let Some(error) = self.account_error.as_ref() {
+            OneOf::D(prose(error.clone()))
         } else if let Some(acct) = self.not_found_acct.as_ref() {
             OneOf::D(prose(format!(
                 "Could not find account @{acct} on this server. \
                  You might need to include the server name of the account, if it's on a different server."
             )))
-        } else if let Some(timeline) = self.timeline.as_mut() {
+        } else if self.timeline.has_account() {
             OneOf::E(map_state(
-                timeline.view(self.mastodon.clone()),
-                // In the current edition of the app, the timeline is never removed
-                // If it ever is, we'll need to be more careful here.
-                // The patterns are still in flux.
-                |this: &mut Self| this.timeline.as_mut().unwrap(),
+                self.timeline.view(self.mastodon.clone()),
+                |this: &mut Self| &mut this.timeline,
             ))
         } else {
             OneOf::F(prose("No statuses yet loaded"))
@@ -238,24 +262,27 @@ fn app_logic(app_state: &mut Placehero) -> impl WidgetView<Placehero> + use<> {
             split(app_state.sidebar(), app_state.main_view()).split_point(0.2),
             |state, action| match action {
                 Navigation::LoadContext(status) => {
-                    state
+                    let requested = state
                         .context_sender
                         .as_ref()
-                        .unwrap()
-                        .send(status.id.clone())
-                        .unwrap();
+                        .is_some_and(|sender| sender.send(status.id.clone()).is_ok());
                     state.show_context = Some(status);
+                    state.context_error =
+                        (!requested).then(|| "Thread worker is unavailable".to_owned());
                     state.context = None;
                 }
                 Navigation::LoadUser(user) => {
                     // It's fine to set `timeline_box_contents` manually here, because we
                     // set state.loading_timeline (i.e. the box will become disabled).
-                    state.timeline_box_contents = user.clone();
-                    state.account_sender.as_ref().unwrap().send(user).unwrap();
-                    // In theory, we should set the Timeline to None here. However,
-                    // it currently runs into `teardown` requiring the state to be available
-                    // state.timeline = None;
-                    state.loading_timeline = true;
+                    state.timeline_box_contents.clone_from(&user);
+                    let requested = state
+                        .account_sender
+                        .as_ref()
+                        .is_some_and(|sender| sender.send(user).is_ok());
+                    state.loading_timeline = requested;
+                    state.account_error =
+                        (!requested).then(|| "Account worker is unavailable".to_owned());
+                    state.not_found_acct = None;
                     state.context = None;
                     state.show_context = None;
                 }
@@ -304,15 +331,20 @@ fn load_contexts(
                     .is_some_and(|it| it.id == id) =>
             {
                 app_state.context = Some(context.json);
+                app_state.context_error = None;
             }
             Ok(_) => {
                 tracing::warn!("Dropping context whose request was superseded.");
             }
-            Err(megalodon::error::Error::RequestError(e)) if e.is_connect() => {
-                todo!()
-            }
-            Err(e) => {
-                todo!("handle {e}")
+            Err(error) => {
+                if app_state
+                    .show_context
+                    .as_ref()
+                    .is_some_and(|status| status.id == id)
+                {
+                    tracing::warn!(%error, "Could not load thread");
+                    app_state.context_error = Some(format!("Could not load thread: {error}"));
+                }
             }
         },
     )
@@ -333,11 +365,9 @@ fn load_instance(
         },
         |app_state: &mut Placehero, event| match event {
             Ok(instance) => app_state.instance = Some(instance.json),
-            Err(megalodon::error::Error::RequestError(e)) if e.is_connect() => {
-                todo!()
-            }
-            Err(e) => {
-                todo!("handle {e}")
+            Err(error) => {
+                tracing::warn!(%error, "Could not load instance");
+                app_state.instance_error = Some(format!("Could not connect: {error}"));
             }
         },
     )
@@ -361,12 +391,9 @@ fn load_account(
         |app_state: &mut Placehero, sender| app_state.account_sender = Some(sender),
         |app_state: &mut Placehero, (event, acct)| match event {
             Ok(instance) => {
-                app_state.timeline = Some(Timeline::new_for_account(instance.json));
+                app_state.timeline = Timeline::new_for_account(instance.json);
                 app_state.loading_timeline = false;
                 app_state.not_found_acct = None;
-            }
-            Err(megalodon::error::Error::RequestError(e)) if e.is_connect() => {
-                todo!()
             }
             Err(megalodon::error::Error::OwnError(
                 e @ OwnError {
@@ -383,7 +410,9 @@ fn load_account(
                 app_state.not_found_acct = Some(acct);
             }
             Err(e) => {
-                todo!("handle {e}")
+                tracing::warn!(error = %e, "Could not load account");
+                app_state.loading_timeline = false;
+                app_state.account_error = Some(format!("Could not load @{acct}: {e}"));
             }
         },
     )

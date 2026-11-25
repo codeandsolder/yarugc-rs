@@ -48,6 +48,7 @@ impl Gap {
     pub const ZERO: Self = Self { gap: Length::ZERO };
 
     /// Creates a new `Gap` with given value.
+    #[must_use = "Use the returned value."]
     pub const fn new(gap: Length) -> Self {
         Self { gap }
     }

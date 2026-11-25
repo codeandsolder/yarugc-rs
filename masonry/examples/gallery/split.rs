@@ -9,12 +9,12 @@ use masonry::widgets::{Label, SizedBox, Split};
 
 use crate::demo::{DemoPage, ShellTags, wrap_in_shell};
 
-pub(crate) struct SplitDemo {
+pub(super) struct SplitDemo {
     shell: ShellTags,
 }
 
 impl SplitDemo {
-    pub(crate) fn new(shell: ShellTags) -> Self {
+    pub(super) const fn new(shell: ShellTags) -> Self {
         Self { shell }
     }
 }

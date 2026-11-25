@@ -14,7 +14,7 @@ use masonry::peniko::Color;
 use masonry::properties::types::CrossAxisAlignment;
 use masonry::properties::{ThumbColor, ThumbRadius, TrackColor};
 use winit::dpi::LogicalSize;
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::style::Style;
 use xilem::view::{
     FlexExt, FlexSpacer, MainAxisAlignment, canvas, checkbox, flex, flex_col, flex_row, label,
@@ -71,7 +71,7 @@ where
     flex_row((
         label(label_text).width(40.px()),
         slider(0.0, 100.0, value, on_change).width(200.px()),
-        label(format!("{:.0}% [{}]", value, u_value)).width(60.px()),
+        label(format!("{value:.0}% [{u_value}]")).width(60.px()),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Center)
     .gap(10.px())
@@ -79,8 +79,15 @@ where
 
 /// Convert 0-100 to 0-255 u8 value.
 fn perc_to_u8(value: f64) -> u8 {
-    #![expect(clippy::cast_possible_truncation, reason = "This will never truncate")]
-    (value * 2.56).clamp(0.0, 255.0).round() as u8
+    #![expect(
+        clippy::cast_possible_truncation,
+        reason = "Rounded and clamped to the u8 range before conversion"
+    )]
+    #![expect(
+        clippy::cast_sign_loss,
+        reason = "Clamped to nonnegative values before conversion"
+    )]
+    (value * 2.55).clamp(0.0, 255.0).round() as u8
 }
 
 // --- Main UI Logic ---
@@ -122,7 +129,7 @@ fn app_logic(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
                 })
                 .prop(ThumbColor(Color::WHITE))
                 .prop(ThumbRadius(10.px())),
-                label(format!("{:.0}% [{}]", state.alpha, color_alpha)).width(60.px()),
+                label(format!("{:.0}% [{color_alpha}]", state.alpha)).width(60.px()),
             ))
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .gap(10.px()),
@@ -164,7 +171,7 @@ fn app_logic(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
 
 // --- Application Entry Point ---
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     let app_data = AppState::default();
     let min_window_size = LogicalSize::new(440., 300.);
     let window_options =

@@ -5,7 +5,7 @@
 
 use masonry::layout::AsUnit;
 use masonry::properties::types::{CrossAxisAlignment, MainAxisAlignment};
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::style::Style;
 use xilem::view::{FlexExt as _, FlexSpacer, Label, button, flex_row, label, sized_box};
 use xilem::{EventLoop, TextAlign, WidgetView, WindowOptions, Xilem};
@@ -40,7 +40,7 @@ fn app_logic(data: &mut i32) -> impl WidgetView<i32> + use<> {
     .main_axis_alignment(MainAxisAlignment::Center)
 }
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     let app = Xilem::new_simple(0, app_logic, WindowOptions::new("Centered Flex"));
     app.run_in(EventLoop::with_user_event())?;
     Ok(())

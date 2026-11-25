@@ -44,7 +44,7 @@ impl<V, State, Action> Portal<V, State, Action> {
     /// - When it is `true`, the [`Portal`]'s width will be passed down as an upper bound
     ///   on the width of the child. There will be no horizontal scrollbar and
     ///   the mouse wheel can't be used to horizontally scroll either.
-    pub fn constrain_horizontal(mut self, constrain_horizontal: bool) -> Self {
+    pub const fn constrain_horizontal(mut self, constrain_horizontal: bool) -> Self {
         self.constrain_horizontal = constrain_horizontal;
         self
     }
@@ -57,7 +57,7 @@ impl<V, State, Action> Portal<V, State, Action> {
     /// - When it is `true`, the [`Portal`]'s height will be passed down as an upper bound
     ///   on the height of the child. There will be no vertical scrollbar and
     ///   the mouse wheel can't be used to vertically scroll either.
-    pub fn constrain_vertical(mut self, constrain_vertical: bool) -> Self {
+    pub const fn constrain_vertical(mut self, constrain_vertical: bool) -> Self {
         self.constrain_vertical = constrain_vertical;
         self
     }
@@ -65,7 +65,7 @@ impl<V, State, Action> Portal<V, State, Action> {
     /// Sets whether the child must fill the view.
     ///
     /// If `true`, the child size is guaranteed to be at least the size of the portal.
-    pub fn must_fill(mut self, must_fill: bool) -> Self {
+    pub const fn must_fill(mut self, must_fill: bool) -> Self {
         self.must_fill = must_fill;
         self
     }
@@ -85,7 +85,7 @@ where
         // The Portal `View` doesn't get any messages directly (yet - scroll events?), so doesn't need to
         // use ctx.with_id.
         let (child, child_state) = self.child.build(ctx, app_state);
-        let widget_pod = ctx.create_pod(
+        let widget_pod = Pod::new(
             widgets::Portal::new(child.new_widget)
                 .constrain_horizontal(self.constrain_horizontal)
                 .constrain_vertical(self.constrain_vertical)
@@ -112,30 +112,12 @@ where
             widgets::Portal::set_content_must_fill(&mut element, self.must_fill);
         }
 
-        let child_element = widgets::Portal::child_mut(&mut element);
+        let Some(child_element) = widgets::Portal::child_mut(&mut element) else {
+            return;
+        };
         self.child
             .rebuild(&prev.child, view_state, ctx, child_element, app_state);
     }
 
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-    ) {
-        let child_element = widgets::Portal::child_mut(&mut element);
-        self.child.teardown(view_state, ctx, child_element);
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        mut element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        let child_element = widgets::Portal::child_mut(&mut element);
-        self.child
-            .message(view_state, message, child_element, app_state)
-    }
+    single_child_view_lifecycle!(Portal, child);
 }

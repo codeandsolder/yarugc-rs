@@ -50,8 +50,8 @@ where
     State: 'static,
 {
     Split {
-        split_axis: Axis::Horizontal,
-        split_point: widgets::SplitPoint::Fraction(0.5),
+        axis: Axis::Horizontal,
+        point: widgets::SplitPoint::Fraction(0.5),
         min_lengths: (Length::ZERO, Length::ZERO),
         bar_thickness: 6.px(),
         min_bar_area: 6.px(),
@@ -68,8 +68,8 @@ where
 /// See `split` documentation for more context.
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct Split<ChildA, ChildB, State, Action = ()> {
-    split_axis: Axis,
-    split_point: widgets::SplitPoint,
+    axis: Axis,
+    point: widgets::SplitPoint,
     min_lengths: (Length, Length),
     bar_thickness: Length,
     min_bar_area: Length,
@@ -87,8 +87,8 @@ impl<ChildA, ChildB, State, Action> Split<ChildA, ChildB, State, Action> {
     /// Vertical split axis means that the children are up and down.
     ///
     /// The default split point is horizontal.
-    pub fn split_axis(mut self, axis: Axis) -> Self {
-        self.split_axis = axis;
+    pub const fn split_axis(mut self, axis: Axis) -> Self {
+        self.axis = axis;
         self
     }
 
@@ -96,35 +96,35 @@ impl<ChildA, ChildB, State, Action> Split<ChildA, ChildB, State, Action> {
     ///
     /// The value is clamped to `0.0..=1.0`.
     /// The default split point is `0.5`.
-    pub fn split_point(mut self, split_point: f64) -> Self {
-        self.split_point = widgets::SplitPoint::Fraction(split_point.clamp(0.0, 1.0));
+    pub const fn split_point(mut self, split_point: f64) -> Self {
+        self.point = widgets::SplitPoint::Fraction(split_point.clamp(0.0, 1.0));
         self
     }
 
     /// Set the split point as an absolute distance from the start.
     ///
     /// This is the size of the first child along the split axis.
-    pub fn split_point_from_start(mut self, split_point: Length) -> Self {
-        self.split_point = widgets::SplitPoint::FromStart(split_point);
+    pub const fn split_point_from_start(mut self, split_point: Length) -> Self {
+        self.point = widgets::SplitPoint::FromStart(split_point);
         self
     }
 
     /// Set the split point as an absolute distance from the end.
     ///
     /// This is the size of the second child along the split axis.
-    pub fn split_point_from_end(mut self, split_point: Length) -> Self {
-        self.split_point = widgets::SplitPoint::FromEnd(split_point);
+    pub const fn split_point_from_end(mut self, split_point: Length) -> Self {
+        self.point = widgets::SplitPoint::FromEnd(split_point);
         self
     }
 
     /// Set the split point.
-    pub fn with_split_point(mut self, split_point: widgets::SplitPoint) -> Self {
-        self.split_point = split_point;
+    pub const fn with_split_point(mut self, split_point: widgets::SplitPoint) -> Self {
+        self.point = split_point;
         self
     }
 
     /// Set the minimum lengths for both sides of the split axis in logical pixels.
-    pub fn min_lengths(mut self, first: Length, second: Length) -> Self {
+    pub const fn min_lengths(mut self, first: Length, second: Length) -> Self {
         self.min_lengths = (first, second);
         self
     }
@@ -133,7 +133,7 @@ impl<ChildA, ChildB, State, Action> Split<ChildA, ChildB, State, Action> {
     ///
     /// The default splitter bar thickness is `6.0`.
     #[track_caller]
-    pub fn bar_thickness(mut self, bar_thickness: Length) -> Self {
+    pub const fn bar_thickness(mut self, bar_thickness: Length) -> Self {
         self.bar_thickness = bar_thickness;
         self
     }
@@ -150,7 +150,7 @@ impl<ChildA, ChildB, State, Action> Split<ChildA, ChildB, State, Action> {
     ///
     /// The default minimum splitter bar area thickness is `6.0`.
     #[track_caller]
-    pub fn min_bar_area(mut self, min_bar_area: Length) -> Self {
+    pub const fn min_bar_area(mut self, min_bar_area: Length) -> Self {
         self.min_bar_area = min_bar_area;
         self
     }
@@ -158,7 +158,7 @@ impl<ChildA, ChildB, State, Action> Split<ChildA, ChildB, State, Action> {
     /// Set whether the split point can be changed by dragging.
     ///
     /// The default is false.
-    pub fn draggable(mut self, draggable: bool) -> Self {
+    pub const fn draggable(mut self, draggable: bool) -> Self {
         self.draggable = draggable;
         self
     }
@@ -166,7 +166,7 @@ impl<ChildA, ChildB, State, Action> Split<ChildA, ChildB, State, Action> {
     /// Set whether the splitter bar is drawn as a solid rectangle.
     ///
     /// If this is `false` (the default), the bar will be drawn as two parallel lines.
-    pub fn solid_bar(mut self, solid: bool) -> Self {
+    pub const fn solid_bar(mut self, solid: bool) -> Self {
         self.solid_bar = solid;
         self
     }
@@ -178,9 +178,9 @@ impl<ChildA, ChildB, State, Action> Split<ChildA, ChildB, State, Action> {
 // and decimal forms, making the +1 obvious.
 
 /// This is a randomly generated ID - 27361280000 in decimal.
-const CHILD1_VIEW_ID: ViewId = ViewId::new(0x65edc0000);
+const CHILD1_VIEW_ID: ViewId = ViewId::new(0x0006_5edc_0000);
 /// This is a randomly generated ID - 27361280001 in decimal.
-const CHILD2_VIEW_ID: ViewId = ViewId::new(0x65edc0001);
+const CHILD2_VIEW_ID: ViewId = ViewId::new(0x0006_5edc_0001);
 
 impl<ChildA, ChildB, State, Action> ViewMarker for Split<ChildA, ChildB, State, Action> {}
 impl<ChildA, ChildB, State, Action> View<State, Action, ViewCtx>
@@ -201,10 +201,10 @@ where
         let (child2, child2_state) =
             ctx.with_id(CHILD2_VIEW_ID, |ctx| self.child2.build(ctx, app_state));
 
-        let widget_pod = ctx.create_pod(
+        let widget_pod = Pod::new(
             widgets::Split::new(child1.new_widget, child2.new_widget)
-                .split_axis(self.split_axis)
-                .split_point(self.split_point)
+                .split_axis(self.axis)
+                .split_point(self.point)
                 .min_lengths(self.min_lengths.0, self.min_lengths.1)
                 .bar_thickness(self.bar_thickness)
                 .min_bar_area(self.min_bar_area)
@@ -223,12 +223,12 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) {
-        if prev.split_axis != self.split_axis {
-            widgets::Split::set_split_axis(&mut element, self.split_axis);
+        if prev.axis != self.axis {
+            widgets::Split::set_split_axis(&mut element, self.axis);
         }
 
-        if prev.split_point != self.split_point {
-            widgets::Split::set_split_point(&mut element, self.split_point);
+        if prev.point != self.point {
+            widgets::Split::set_split_point(&mut element, self.point);
         }
 
         if prev.min_lengths != self.min_lengths {
@@ -252,7 +252,9 @@ where
         }
 
         ctx.with_id(CHILD1_VIEW_ID, |ctx| {
-            let child1_element = widgets::Split::child1_mut(&mut element);
+            let Some(child1_element) = widgets::Split::child1_mut(&mut element) else {
+                return;
+            };
             self.child1.rebuild(
                 &prev.child1,
                 &mut view_state.0,
@@ -263,7 +265,9 @@ where
         });
 
         ctx.with_id(CHILD2_VIEW_ID, |ctx| {
-            let child2_element = widgets::Split::child2_mut(&mut element);
+            let Some(child2_element) = widgets::Split::child2_mut(&mut element) else {
+                return;
+            };
             self.child2.rebuild(
                 &prev.child2,
                 &mut view_state.1,
@@ -280,11 +284,12 @@ where
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
-        let child1_element = widgets::Split::child1_mut(&mut element);
-        self.child1.teardown(&mut view_state.0, ctx, child1_element);
-
-        let child2_element = widgets::Split::child2_mut(&mut element);
-        self.child2.teardown(&mut view_state.1, ctx, child2_element);
+        if let Some(child) = widgets::Split::child1_mut(&mut element) {
+            self.child1.teardown(&mut view_state.0, ctx, child);
+        }
+        if let Some(child) = widgets::Split::child2_mut(&mut element) {
+            self.child2.teardown(&mut view_state.1, ctx, child);
+        }
     }
 
     fn message(
@@ -296,12 +301,16 @@ where
     ) -> MessageResult<Action> {
         match message.take_first() {
             Some(CHILD1_VIEW_ID) => {
-                let child1_element = widgets::Split::child1_mut(&mut element);
+                let Some(child1_element) = widgets::Split::child1_mut(&mut element) else {
+                    return MessageResult::Stale;
+                };
                 self.child1
                     .message(&mut view_state.0, message, child1_element, app_state)
             }
             Some(CHILD2_VIEW_ID) => {
-                let child2_element = widgets::Split::child2_mut(&mut element);
+                let Some(child2_element) = widgets::Split::child2_mut(&mut element) else {
+                    return MessageResult::Stale;
+                };
                 self.child2
                     .message(&mut view_state.1, message, child2_element, app_state)
             }

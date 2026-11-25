@@ -47,20 +47,23 @@ Note that this also disables `safe_tree`, so re-enable it explicitly if you want
 
 ## Architecture
 
+Reparenting validates the entire move before changing parent links and returns a typed error for missing nodes or cycles. Node handles retain the identity of their payload independently of their child-list handles.
+
 ### Safe Tree
 
-The safe tree contains a root `TreeArena` which owns the root nodes as `Vec<TreeNode<T>>`, and a `parents_map` tracking the parent of every node.
-Each `TreeNode` subsequently owns its own children as `Vec<TreeNode<T>>`. This model of ownership is thus checked by the rust compiler,
+The safe tree contains a root `TreeArena` which owns the root nodes as `HashMap<NodeId, TreeNode<T>>`, and a `parents_map` tracking the parent of every node.
+Each `TreeNode` subsequently owns its own children as `HashMap<NodeId, TreeNode<T>>`. This model of ownership is thus checked by the rust compiler,
 but has the downside of requiring passing through every ancestor node to access the descendant -
-this requires an O(depth) determination of whether the node is a descendant, followed by O(children) time at each level to traverse the path to the child.
+this requires an O(depth) determination of whether the node is a descendant, followed by expected O(1) lookup at each level to traverse the path to the child.
 
 ### Unsafe Tree
 
 The unsafe tree arena contains a `DataMap` which **owns** all nodes. The `DataMap` contains:
 
 * A `HashMap` associating `NodeId` with `Box<UnsafeCell<TreeNode<T>>>`, owning the node data (boxed to prevent movement of the node when the `HashMap` is resized and `UnsafeCell` to express the interior mutability);
-* A `HashMap` associating `NodeId` with `Option<NodeId>`, containing the parent information for the nodes;
-* `Box<UnsafeCell<Vec<NodeId>>>` containing the roots of the tree.
+* A `HashMap` associating `NodeId` with `Option<NodeId>`, containing the parent information for the nodes.
+
+The `TreeArena` also stores a `Vec<NodeId>` containing the roots of the tree.
 
 It is possible to get shared (immutable) access or exclusive (mutable) access to the tree. These return `ArenaRef<'arena, T>` or `ArenaMut<'arena, T>` respectively.
 We do this by leveraging a hash map to store the nodes: from this we can obtain either shared or exclusive access to nodes.
@@ -90,7 +93,7 @@ This invariant is not checked by the compiler and thus relies on the logic to de
 
 |Operation  | Safe         | Unsafe   |
 |   ---     |      ---     |   ---    |
-|Find child | O(Children)  | O(1)     |
+|Find child | O(1)         | O(1)     |
 |Descendant | O(Depth)     | O(Depth) |
 |From root  | O(Depth)     | O(1)     |
 

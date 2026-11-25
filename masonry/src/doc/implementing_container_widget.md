@@ -101,8 +101,8 @@ impl Widget for VerticalStack {
         cross_length: Option<Length>,
     ) -> Length {
         let (len_req, min_result) = match len_req {
-            LenReq::MinContent | LenReq::MaxContent => (len_req, Length::ZERO),
-            LenReq::FitContent(space) => (LenReq::MinContent, space),
+            LenReq::Min | LenReq::Max => (len_req, Length::ZERO),
+            LenReq::Fit(space) => (LenReq::Min, space),
         };
 
         let auto_length = len_req.into();
@@ -157,7 +157,7 @@ impl Widget for VerticalStack {
 
 There are a few things to note here:
 
-- We refer to `LenReq::FitContent` to get the total space available to the container.
+- We refer to `LenReq::Fit` to get the total space available to the container.
 - We compute the height of the container by summing the heights of all children and adding the gap between them.
   We compute the width of the container by taking the largest child width.
 
@@ -244,18 +244,21 @@ use masonry::core::{NewWidget, WidgetMut};
 
 impl VerticalStack {
     pub fn add_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<dyn Widget>) {
-        this.widget.children.push(child.to_pod());
+        this.widget.children.push(child.into_pod());
         this.ctx.children_changed();
     }
 
     pub fn remove_child(this: &mut WidgetMut<'_, Self>, n: usize) {
-        this.widget.children.remove(n);
-        this.ctx.children_changed();
+        if n < this.widget.children.len() {
+            let child = this.widget.children.remove(n);
+            this.ctx.remove_child(child);
+        }
     }
 
     pub fn clear_children(this: &mut WidgetMut<'_, Self>) {
-        this.widget.children.clear();
-        this.ctx.children_changed();
+        for child in this.widget.children.drain(..) {
+            this.ctx.remove_child(child);
+        }
     }
 }
 ```

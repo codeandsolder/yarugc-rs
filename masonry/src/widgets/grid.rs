@@ -3,15 +3,14 @@
 
 use std::{any::TypeId, collections::BTreeMap, mem};
 
-use accesskit::{Node, Role};
+use accesskit::Role;
 use include_doc_path::include_doc_path;
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, ChildrenIds, CollectionWidget, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
-    PropertiesRef, RegisterCtx, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut, WidgetPod,
+    ChildrenIds, CollectionWidget, LayoutCtx, MeasureCtx, NewWidget, NoAction, PropertiesRef,
+    RegisterCtx, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut, WidgetPod,
 };
-use crate::imaging::Painter;
 use crate::kurbo::{Axis, Point, Size};
 use crate::layout::{AsUnit, LayoutSize, LenDef, LenReq, Length};
 use crate::properties::Gap;
@@ -40,10 +39,8 @@ struct Child {
     widget: WidgetPod<dyn Widget>,
     params: GridParams,
 
-    // these are transient values
-    // these do not mean anything if not already initialized within the function
-    x: u16,
-    y: u16,
+    // Recomputed after track or child changes. Unplaced children are stashed.
+    cell: Option<(usize, usize)>,
 }
 
 /// Describes how a grid track (row/column) should be sized.
@@ -76,7 +73,7 @@ pub enum GridTrackSize {
 }
 
 /// Parameters required when adding an item to a [`Grid`] container.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct GridParams {
     /// Defines which column in the grid the item should start.
     pub col: Option<u16>,
@@ -91,15 +88,121 @@ pub struct GridParams {
     pub height: u16,
 }
 
+// A summed-area table allows a rectangular vacancy query in constant time.
+struct GridOccupancy {
+    columns: usize,
+    rows: usize,
+    cells: Vec<bool>,
+    prefix: Vec<usize>,
+}
+
+impl GridOccupancy {
+    fn new(columns: usize, rows: usize) -> Option<Self> {
+        let count = columns.checked_mul(rows)?;
+        let prefix_count = columns.checked_add(1)?.checked_mul(rows.checked_add(1)?)?;
+        let mut cells = Vec::new();
+        let mut prefix = Vec::new();
+        cells.try_reserve_exact(count).ok()?;
+        prefix.try_reserve_exact(prefix_count).ok()?;
+        cells.resize(count, false);
+        prefix.resize(prefix_count, 0);
+        Some(Self {
+            columns,
+            rows,
+            cells,
+            prefix,
+        })
+    }
+
+    fn place(&mut self, child: &mut Child, (col, row): (usize, usize)) {
+        let width = usize::from(child.params.width);
+        let height = usize::from(child.params.height);
+        if width == 0
+            || height == 0
+            || col.checked_add(width).is_none_or(|end| end > self.columns)
+            || row.checked_add(height).is_none_or(|end| end > self.rows)
+        {
+            debug_panic!("Child {child:?} with position ({col}, {row}) is out of grid bounds");
+            return;
+        }
+        child.cell = Some((col, row));
+        for row in row..row + height {
+            let start = row * self.columns + col;
+            self.cells[start..start + width].fill(true);
+        }
+    }
+
+    fn rebuild_prefix(&mut self) {
+        let stride = self.columns + 1;
+        for (row, cells) in self.cells.chunks_exact(self.columns).enumerate() {
+            let mut row_count = 0;
+            for (col, &occupied) in cells.iter().enumerate() {
+                row_count += usize::from(occupied);
+                let index = (row + 1) * stride + col + 1;
+                self.prefix[index] = self.prefix[index - stride] + row_count;
+            }
+        }
+    }
+
+    fn find_free(&mut self, params: GridParams, cursor: (usize, usize)) -> Option<(usize, usize)> {
+        let width = usize::from(params.width);
+        let height = usize::from(params.height);
+        if width == 0 || height == 0 {
+            return None;
+        }
+        let last_col = self.columns.checked_sub(width)?;
+        let last_row = self.rows.checked_sub(height)?;
+        let cols = params.col.map(usize::from);
+        let rows = params.row.map(usize::from);
+        if cols.is_some_and(|col| col > last_col) || rows.is_some_and(|row| row > last_row) {
+            return None;
+        }
+        self.rebuild_prefix();
+        let stride = self.columns + 1;
+        let prefix = |col, row| self.prefix[row * stride + col];
+        let automatic = cols.is_none() && rows.is_none();
+        let first_row = rows.unwrap_or(if automatic { cursor.1 } else { 0 });
+        for row in first_row..=rows.unwrap_or(last_row) {
+            let first_col = cols.unwrap_or(if automatic && row == cursor.1 {
+                cursor.0
+            } else {
+                0
+            });
+            for col in first_col..=cols.unwrap_or(last_col) {
+                let right = col + width;
+                let bottom = row + height;
+                let right_count = prefix(right, bottom) - prefix(right, row);
+                let left_count = prefix(col, bottom) - prefix(col, row);
+                if right_count == left_count {
+                    return Some((col, row));
+                }
+            }
+        }
+        None
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TrackSizing {
+    axis: Axis,
+    len_req: LenReq,
+    cross_length: Option<Length>,
+    gap: Length,
+    context_length: Option<Length>,
+    is_measuring_only: bool,
+}
+
 // --- MARK: BUILDERS
 impl Grid {
     /// Creates a new grid with no columns or rows.
+    #[must_use = "Use the returned value."]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Creates a new grid with the given number of columns and rows,
     /// with each row and column sized with [`GridTrackSize::FRACTION`].
+    #[must_use = "Use the returned value."]
     pub fn with_dimensions(columns: usize, rows: usize) -> Self {
         Self {
             columns: vec![GridTrackSize::FRACTION; columns],
@@ -109,24 +212,28 @@ impl Grid {
     }
 
     /// Builder-style method to add a row to the grid.
+    #[must_use = "Use the returned value."]
     pub fn with_row(mut self, row: GridTrackSize) -> Self {
         self.rows.push(row);
         self
     }
 
     /// Builder-style method to add a column to the grid.
+    #[must_use = "Use the returned value."]
     pub fn with_column(mut self, column: GridTrackSize) -> Self {
         self.columns.push(column);
         self
     }
 
     /// Builder-style method to add multiple rows to the grid.
+    #[must_use = "Use the configured value."]
     pub fn with_rows(mut self, rows: impl IntoIterator<Item = GridTrackSize>) -> Self {
         self.rows.extend(rows);
         self
     }
 
     /// Builder-style method to add multiple columns to the grid.
+    #[must_use = "Use the configured value."]
     pub fn with_columns(mut self, columns: impl IntoIterator<Item = GridTrackSize>) -> Self {
         self.columns.extend(columns);
         self
@@ -140,6 +247,7 @@ impl Grid {
     /// to CSS grid's would try to assign an appropriate position to it.
     /// If the algorithm fails, `measure`/`layout` pass would panic in debug mode
     /// and silently ignore this child in release mode.
+    #[must_use = "Use the returned value."]
     pub fn with(mut self, child: NewWidget<impl Widget + ?Sized>, params: GridParams) -> Self {
         let child = Child::new(child, params);
         self.children.push(child);
@@ -151,180 +259,44 @@ impl Grid {
 // --- MARK: METHODS
 impl Grid {
     fn assign_cell_to_auto_placed_children(&mut self) {
-        if !mem::take(&mut self.needs_placing) || self.columns.is_empty() || self.rows.is_empty() {
+        if !mem::take(&mut self.needs_placing) {
             return;
         }
-
-        let n_col = self.columns.len();
-        let n_row = self.rows.len();
-        let mut occupied = vec![false; n_col * n_row];
-        let idx = |col: usize, row: usize| row * n_col + col;
-
-        let place = |occupied: &mut [bool], child: &mut Child, col: u16, row: u16| {
-            if col + child.params.width > n_col as u16 || row + child.params.height > n_row as u16 {
-                debug_panic!("Child {child:?} with position ({col}, {row}) is out of grid bounds");
-                return;
-            }
-
-            child.x = col;
-            child.y = row;
-
-            for row in row..row + child.params.height {
-                let start = idx(col as _, row as _);
-                occupied[start..start + child.params.width as usize].fill(true);
-            }
+        for child in &mut self.children {
+            child.cell = None;
+        }
+        if self.columns.is_empty() || self.rows.is_empty() {
+            return;
+        }
+        let Some(mut occupancy) = GridOccupancy::new(self.columns.len(), self.rows.len()) else {
+            debug_panic!("Grid occupancy dimensions overflow or cannot be allocated");
+            return;
         };
 
-        // Pass 1: place children with fully explicit position
+        // Fully specified items reserve their cells before any automatic placement.
         for child in &mut self.children {
             if let (Some(col), Some(row)) = (child.params.col, child.params.row) {
-                place(&mut occupied, child, col, row);
+                occupancy.place(child, (usize::from(col), usize::from(row)));
             }
         }
-
-        // Pass 2: auto-placement
-        let mut cursor = (0_usize, 0_usize);
-
-        let place_and_advance =
-            |occupied: &mut [bool],
-             child: &mut Child,
-             col: u16,
-             row: u16,
-             (cursor_col, cursor_row): &mut (usize, usize)| {
-                place(occupied, child, col, row);
-
-                *cursor_col = (col + child.params.width) as usize % n_col;
-                *cursor_row = row as usize + (*cursor_col == 0) as usize;
-            };
-
-        let mut prefix = Vec::new();
-        'child: for child in &mut self.children {
-            let width = child.params.width as usize;
-            let height = child.params.height as usize;
-
-            match (child.params.col, child.params.row) {
-                (Some(_), Some(_)) => continue, // already placed in pass 1
-                (Some(col), None) => {
-                    let mut consecutive = 0;
-                    for row in 0..n_row {
-                        let blocked =
-                            (col..col + child.params.width).any(|c| occupied[idx(c as _, row)]);
-                        if blocked {
-                            consecutive = 0;
-                            continue;
-                        }
-                        consecutive += 1;
-                        if consecutive == child.params.height {
-                            let start_row = row as u16 + 1 - child.params.height;
-                            place_and_advance(&mut occupied, child, col, start_row, &mut cursor);
-                            continue 'child;
-                        }
-                    }
-                    debug_panic!(
-                        "Child {child:?} could not be placed in the grid, no row has enough space",
-                    );
-                }
-                (None, Some(row)) => {
-                    let mut consecutive = 0;
-                    for col in 0..n_col {
-                        let blocked =
-                            (row..row + child.params.height).any(|r| occupied[idx(col, r as _)]);
-                        if blocked {
-                            consecutive = 0;
-                            continue;
-                        }
-                        consecutive += 1;
-                        if consecutive == child.params.width {
-                            let start_col = col as u16 + 1 - child.params.width;
-                            place_and_advance(&mut occupied, child, start_col, row, &mut cursor);
-                            continue 'child;
-                        }
-                    }
-                    debug_panic!(
-                        "Child {child:?} could not be placed in the grid, no column has enough space",
-                    );
-                }
-                (None, None) => {
-                    // build a 2D prefix sum that encodes how many cells above and left of it
-                    // (including itself) are occupied
-                    //
-                    // For example, consider a 4x4 grid:
-                    // x | x | x | x
-                    // x | _ | _ | x
-                    // x | _ | _ | x
-                    // x | x | x | x
-                    //
-                    // It generates the following prefix:
-                    // 1 | 2 | 3 | 4
-                    // 2 | 3 | 4 | 6
-                    // 3 | 4 | 5 | 8
-                    // 4 | 6 | 8 | 12
-
-                    prefix.clear();
-                    prefix.resize(occupied.len(), 0);
-                    for col in 0..self.columns.len() {
-                        for row in 0..self.rows.len() {
-                            let cell = occupied[idx(col, row)] as u32;
-                            let top = (row.checked_sub(1)).map_or(0, |r| prefix[idx(col, r)]);
-                            let left = (col.checked_sub(1)).map_or(0, |c| prefix[idx(c, row)]);
-                            let diag = (col.checked_sub(1))
-                                .zip(row.checked_sub(1))
-                                .map_or(0, |(c, r)| prefix[idx(c, r)]);
-
-                            prefix[idx(col, row)] = cell + top + left - diag;
-                        }
-                    }
-
-                    // query for empty rect
-                    //
-                    // Now, if a 2x2 child is to be viable at (1, 1) location,
-                    // prefix[2, 2] + prefix[0, 0] - prefix[0, 2] - prefix[2, 0]
-                    // = 5 + 1 - 3 - 3, must be 0, which it is.
-                    //
-                    // prefix[2, 2] is the last cell for the child,
-                    // prefix[0, 0] is the cell just above and left to the child,
-                    // prefix[0, 2] is the cell just above to the child on its last column,
-                    // prefix[2, 0] is the cell just left to the child on its last row,
-                    for row0 in cursor.1..=(n_row - height) {
-                        let start_col = if row0 == cursor.1 { cursor.0 } else { 0 };
-                        for col0 in start_col..=(n_col - width) {
-                            let col1 = col0 + width - 1;
-                            let row1 = row0 + height - 1;
-
-                            let cell = prefix[idx(col1, row1)];
-                            let top = (row0.checked_sub(1)).map_or(0, |r| prefix[idx(col1, r)]);
-                            let left = (col0.checked_sub(1)).map_or(0, |c| prefix[idx(c, row1)]);
-                            let diag = (col0.checked_sub(1))
-                                .zip(row0.checked_sub(1))
-                                .map_or(0, |(c, r)| prefix[idx(c, r)]);
-
-                            if cell + diag - top - left == 0 {
-                                place_and_advance(
-                                    &mut occupied,
-                                    child,
-                                    col0 as _,
-                                    row0 as _,
-                                    &mut cursor,
-                                );
-                                continue 'child;
-                            }
-                        }
-                    }
-
-                    debug_panic!("Child {child:?} could not be placed in the grid");
-                }
+        let mut cursor = (0, 0);
+        for child in &mut self.children {
+            if child.params.col.is_some() && child.params.row.is_some() {
+                continue;
+            }
+            if let Some(cell) = occupancy.find_free(child.params, cursor) {
+                occupancy.place(child, cell);
+                let end = cell.0 + usize::from(child.params.width);
+                cursor = (end % occupancy.columns, cell.1 + end / occupancy.columns);
+            } else {
+                debug_panic!("Child {child:?} could not be placed in the grid");
             }
         }
     }
 
     fn resolve_track_lengths(
         &mut self,
-        axis: Axis,
-        len_req: LenReq,
-        cross_length: Option<Length>,
-        gap: Length,
-        context_length: Option<Length>,
-        is_measuring_only: bool,
+        sizing: TrackSizing,
         mut compute_length: impl FnMut(
             &mut WidgetPod<dyn Widget + 'static>,
             LenDef,
@@ -336,6 +308,14 @@ impl Grid {
         // This function is a somewhat simplified implementation of track sizing algorithm from
         // the CSS grid spec (https://drafts.csswg.org/css-grid-1/#algo-track-sizing).
 
+        let TrackSizing {
+            axis,
+            len_req,
+            cross_length,
+            gap,
+            context_length,
+            is_measuring_only,
+        } = sizing;
         let tracks = match axis {
             Axis::Horizontal => &self.columns,
             Axis::Vertical => &self.rows,
@@ -347,42 +327,27 @@ impl Grid {
 
         // available length for distribution
         // = total_length - gap * (#tracks - 1)
-        let context_length = context_length
-            .and_then(|l| Length::try_px(l.get() - gap.get() * (tracks.len() - 1) as f64));
+        let context_length = context_length.and_then(|l| {
+            Length::try_px(gap.get().mul_add(
+                -crate::layout_count(tracks.len().saturating_sub(1)),
+                l.get(),
+            ))
+        });
 
-        // step 1: auto lengths and initial lengths of tracks
-        let (track_auto_lengths, mut track_lengths): (Vec<_>, Vec<_>) = tracks
-            .iter()
-            .map(|t| match *t {
-                // conforms to min-content measure of self
-                GridTrackSize::Auto | GridTrackSize::MinContent => (LenDef::MinContent, 0.),
-                GridTrackSize::MaxContent | GridTrackSize::Fraction(_) => (LenDef::MaxContent, 0.),
-                GridTrackSize::FitContent(limit) => (LenDef::FitContent(limit), 0.),
-                GridTrackSize::Fixed(length) => (LenDef::Fixed(length), length.get()),
-                GridTrackSize::Percentage(percent) => match len_req {
-                    LenReq::FitContent(space) => {
-                        let fixed = space.get() * percent;
-                        (LenDef::FitContent(fixed.px()), fixed)
-                    }
-                    _ => match context_length {
-                        Some(length) => {
-                            let fixed = length.get() * percent;
-                            (LenDef::Fixed(fixed.px()), fixed)
-                        }
-                        _ => (LenDef::MinContent, 0.),
-                    },
-                },
-            })
-            .unzip();
+        let (track_auto_lengths, mut track_lengths) =
+            initial_track_lengths(tracks, len_req, context_length);
 
         let mut multitrack_lengths = BTreeMap::new();
 
         // step 2: initialize track lengths
         for child in &mut self.children {
+            let Some(pos) = child.pos(axis) else {
+                continue;
+            };
             if child.span(axis) == 1 {
                 // if a child spans only a single track, the tracks size accommodates
                 // the child if the track size s not fixed.
-                let track = child.pos(axis) as usize;
+                let track = pos;
                 let auto_length = track_auto_lengths[track];
                 if !matches!(auto_length, LenDef::Fixed(_)) {
                     let computed = compute_length(
@@ -393,12 +358,11 @@ impl Grid {
                         cross_length,
                     );
                     track_lengths[track] = computed.get().max(track_lengths[track]);
-                };
+                }
             } else {
-                let pos = child.pos(axis);
                 let span = child.span(axis);
 
-                let start_track = pos as usize;
+                let start_track = pos;
                 let end_track = start_track + span as usize;
 
                 // if a child spans multiple tracks and any of those is a fractional track, skip this step.
@@ -431,142 +395,202 @@ impl Grid {
             }
         }
 
-        // step 3: resolve all track lengths (except for fractional tracks)
+        // Resolve spanning children in span order, then distribute fractional tracks.
         for ((span, pos), (min_length, max_length)) in multitrack_lengths {
-            let start_track = pos as usize;
-            let end_track = start_track + span as usize;
+            let end = pos + usize::from(span);
+            let lengths = &mut track_lengths[pos..end];
+            let available = gap.get().mul_add(
+                f64::from(span.saturating_sub(1)),
+                lengths.iter().sum::<f64>(),
+            );
+            distribute_intrinsic(
+                &track_auto_lengths[pos..end],
+                lengths,
+                min_length - available,
+                max_length - available,
+            );
+        }
+        distribute_remaining(
+            tracks,
+            track_lengths,
+            len_req,
+            context_length,
+            is_measuring_only,
+        )
+    }
+}
 
-            // count the number of minimally (intrinsically) and maximally sized tracks.
-            let [mut n_intrinsic, n_max] = track_auto_lengths[start_track..end_track]
-                .iter()
-                .map(|auto_length| match auto_length {
-                    LenDef::MinContent | LenDef::FitContent(_) => [1_usize, 1],
-                    LenDef::MaxContent => [0, 1],
-                    LenDef::Fixed(_) => [0, 0],
-                })
-                .reduce(|[a, b], [c, d]| [a + c, b + d])
-                .unwrap_or([0, 0]);
-            let length_by_itself = track_lengths[start_track..end_track]
-                .iter()
-                .copied()
-                .sum::<f64>()
-                + gap.get() * (span - 1) as f64;
+fn initial_track_lengths(
+    tracks: &[GridTrackSize],
+    len_req: LenReq,
+    context_length: Option<Length>,
+) -> (Vec<LenDef>, Vec<f64>) {
+    // step 1: auto lengths and initial lengths of tracks
+    tracks
+        .iter()
+        .map(|t| match *t {
+            // conforms to min-content measure of self
+            GridTrackSize::Auto | GridTrackSize::MinContent => (LenDef::MinContent, 0.),
+            GridTrackSize::MaxContent | GridTrackSize::Fraction(_) => (LenDef::MaxContent, 0.),
+            GridTrackSize::FitContent(limit) => (LenDef::FitContent(limit), 0.),
+            GridTrackSize::Fixed(length) => (LenDef::Fixed(length), length.get()),
+            GridTrackSize::Percentage(percent) => match len_req {
+                LenReq::Fit(space) => {
+                    let fixed = space.get() * percent;
+                    (LenDef::FitContent(fixed.px()), fixed)
+                }
+                _ => context_length.map_or((LenDef::MinContent, 0.), |length| {
+                    let fixed = length.get() * percent;
+                    (LenDef::Fixed(fixed.px()), fixed)
+                }),
+            },
+        })
+        .unzip()
+}
 
-            // min_contrib is how much should be added to the already existing length to align it
-            // to the min length of the tracks computed in the previous step (2).
-            let mut min_contrib = min_length - length_by_itself;
+// Distribute the minimum contribution with capped water filling. Each iteration
+// either consumes the remaining contribution or permanently saturates a track.
+fn distribute_intrinsic(defs: &[LenDef], lengths: &mut [f64], minimum: f64, maximum: f64) {
+    let mut remaining = minimum.max(0.);
+    for _ in 0..defs.len() {
+        if remaining <= 0. {
+            break;
+        }
+        let eligible = |def: &LenDef, length: f64| match def {
+            LenDef::MinContent | LenDef::MaxContent => true,
+            LenDef::FitContent(limit) => length < limit.get(),
+            LenDef::Fixed(_) => false,
+        };
+        let count = defs
+            .iter()
+            .zip(lengths.iter())
+            .filter(|(def, length)| eligible(def, **length))
+            .count();
+        if count == 0 {
+            break;
+        }
+        let share = remaining / crate::layout_count(count);
+        let mut saturated = false;
+        for (def, length) in defs.iter().zip(lengths.iter_mut()) {
+            if !eligible(def, *length) {
+                continue;
+            }
+            let addition = match def {
+                LenDef::FitContent(limit) => share.min((limit.get() - *length).max(0.)),
+                _ => share,
+            };
+            saturated |= addition < share;
+            *length += addition;
+            remaining = (remaining - addition).max(0.);
+        }
+        if !saturated {
+            break;
+        }
+    }
+    // Only max-content tracks receive the additional preferred-size contribution.
+    let count = defs
+        .iter()
+        .filter(|def| matches!(def, LenDef::MaxContent))
+        .count();
+    if count != 0 {
+        let share = (maximum - minimum.max(0.) + remaining).max(0.) / crate::layout_count(count);
+        for (def, length) in defs.iter().zip(lengths.iter_mut()) {
+            if matches!(def, LenDef::MaxContent) {
+                *length += share;
+            }
+        }
+    }
+}
 
-            // if the tracks are already longer than the min length there is nothing to do.
-            while min_contrib > 0. {
-                let per_track_min_contrib = min_contrib / n_intrinsic as f64;
-                let per_track_max_contrib =
-                    per_track_min_contrib + (max_length - min_length) / n_max as f64;
-
-                for (auto_length, length) in track_auto_lengths[start_track..end_track]
-                    .iter()
-                    .zip(&mut track_lengths[start_track..])
-                {
-                    match auto_length {
-                        LenDef::FitContent(limit)
-                            if *length + per_track_min_contrib > limit.get() =>
-                        {
-                            // if the extended length exceeds limit, extend up to limit and
-                            // pull this track off the pool if extendable tracks.
-                            min_contrib -= limit.get() - mem::replace(length, limit.get());
-                            n_intrinsic -= 1;
-                        }
-                        LenDef::MinContent | LenDef::FitContent(_) => {
-                            *length += per_track_min_contrib;
-                            min_contrib -= per_track_min_contrib;
-                        }
-                        LenDef::MaxContent => {
-                            *length += per_track_max_contrib;
-                            min_contrib -= per_track_max_contrib;
-                        }
-                        LenDef::Fixed(_) => {}
+fn distribute_remaining(
+    tracks: &[GridTrackSize],
+    track_lengths: Vec<f64>,
+    len_req: LenReq,
+    context_length: Option<Length>,
+    is_measuring_only: bool,
+) -> Vec<f64> {
+    let extract_bases_with_fr = |track_lengths: Vec<f64>, fr_unit: f64| {
+        tracks
+            .iter()
+            .zip(track_lengths)
+            .map(|(track, length)| match track {
+                GridTrackSize::Fraction(fr) => {
+                    if fr.is_finite() && *fr > 0. {
+                        *fr * fr_unit
+                    } else {
+                        0.
                     }
                 }
-            }
-        }
+                _ => length,
+            })
+            .collect()
+    };
 
-        // step 4: resolve fractional and auto-sized tracks
+    if len_req == LenReq::Min {
+        // if the grid is required to be min-content, fractional tracks are sized zero.
+        return extract_bases_with_fr(track_lengths, 0.);
+    }
 
-        let extract_bases_with_fr = |track_lengths: Vec<f64>, fr_unit: f64| {
-            tracks
-                .iter()
-                .zip(track_lengths)
-                .map(|(track, length)| match track {
-                    GridTrackSize::Fraction(fr) => *fr * fr_unit,
-                    _ => length,
-                })
-                .collect()
-        };
-
-        if len_req == LenReq::MinContent {
-            // if the grid is required to be min-content, fractional tracks are sized zero.
-            return extract_bases_with_fr(track_lengths, 0.);
-        }
-
-        if let Some(context_length) = context_length
-            && (matches!(len_req, LenReq::FitContent(_)) || !is_measuring_only)
-        {
-            // if context length is provided and the grid is fit-content sized,
-            // distribute the remaining context length after sizing non-fractional tracks
-            // between the fractional tracks according to their fractions.
-            // if there is no fractional track but there are auto-sized tracks, distribute the space
-            // between the auto-sized tracks equally.
-            let (occupied_length, total_fr) = tracks
-                .iter()
-                .zip(&track_lengths)
-                .map(|(track, length)| match *track {
-                    GridTrackSize::Fraction(fr) => (0., fr),
-                    _ => (*length, 0.),
-                })
-                .reduce(|(a, b), (c, d)| (a + c, b + d))
-                .unwrap();
-
-            let leftover_length = context_length.get() - occupied_length;
-            if leftover_length <= 0. {
-                return track_lengths;
-            }
-
-            if total_fr == 0. {
-                let n_auto = tracks
-                    .iter()
-                    .filter(|t| matches!(t, GridTrackSize::Auto))
-                    .count();
-                if n_auto != 0 {
-                    let per_auto_track_ext = leftover_length / n_auto as f64;
-                    tracks
-                        .iter()
-                        .zip(track_lengths)
-                        .map(|(track, length)| match track {
-                            GridTrackSize::Auto => length + per_auto_track_ext,
-                            _ => length,
-                        })
-                        .collect()
-                } else {
-                    track_lengths
+    if let Some(context_length) = context_length
+        && (matches!(len_req, LenReq::Fit(_)) || !is_measuring_only)
+    {
+        // if context length is provided and the grid is fit-content sized,
+        // distribute the remaining context length after sizing non-fractional tracks
+        // between the fractional tracks according to their fractions.
+        // if there is no fractional track but there are auto-sized tracks, distribute the space
+        // between the auto-sized tracks equally.
+        let (occupied_length, total_fr) = tracks
+            .iter()
+            .zip(&track_lengths)
+            .map(|(track, length)| match *track {
+                GridTrackSize::Fraction(fr) => {
+                    (0., if fr.is_finite() && fr > 0. { fr } else { 0. })
                 }
-            } else {
-                extract_bases_with_fr(track_lengths, leftover_length / total_fr)
-            }
-        } else {
-            // if context length is not provided or the grid is min/max-content sized,
-            // take the maximum of fractional track length from single-track childrens and apply that.
-            if let Some(fr_unit) = tracks
+                _ => (*length, 0.),
+            })
+            .fold((0., 0.), |(a, b), (c, d)| (a + c, b + d));
+
+        let leftover_length = context_length.get() - occupied_length;
+        if leftover_length <= 0. {
+            return track_lengths;
+        }
+
+        if total_fr == 0. {
+            let n_auto = tracks
                 .iter()
-                .zip(&track_lengths)
-                .filter_map(|(track, length)| match track {
-                    GridTrackSize::Fraction(fr) => Some(length / *fr),
-                    _ => None,
-                })
-                .reduce(f64::max)
-            {
-                extract_bases_with_fr(track_lengths, fr_unit)
+                .filter(|t| matches!(t, GridTrackSize::Auto))
+                .count();
+            if n_auto != 0 {
+                let per_auto_track_ext = leftover_length / crate::layout_count(n_auto);
+                tracks
+                    .iter()
+                    .zip(track_lengths)
+                    .map(|(track, length)| match track {
+                        GridTrackSize::Auto => length + per_auto_track_ext,
+                        _ => length,
+                    })
+                    .collect()
             } else {
                 track_lengths
             }
+        } else {
+            extract_bases_with_fr(track_lengths, leftover_length / total_fr)
+        }
+    } else {
+        // if context length is not provided or the grid is min/max-content sized,
+        // take the maximum of fractional track length from single-track childrens and apply that.
+        if let Some(fr_unit) = tracks
+            .iter()
+            .zip(&track_lengths)
+            .filter_map(|(track, length)| match track {
+                GridTrackSize::Fraction(fr) if fr.is_finite() && *fr > 0. => Some(length / *fr),
+                _ => None,
+            })
+            .reduce(f64::max)
+        {
+            extract_bases_with_fr(track_lengths, fr_unit)
+        } else {
+            track_lengths
         }
     }
 }
@@ -575,27 +599,26 @@ impl Grid {
 impl Child {
     fn new(child: NewWidget<impl Widget + ?Sized>, params: GridParams) -> Self {
         Self {
-            widget: child.erased().to_pod(),
+            widget: child.erased().into_pod(),
             params,
 
-            x: 0,
-            y: 0,
+            cell: None,
         }
     }
 
     /// Returns the number of cells the child's area spans on the given `axis`.
-    fn span(&self, axis: Axis) -> u16 {
+    const fn span(&self, axis: Axis) -> u16 {
         match axis {
             Axis::Horizontal => self.params.width,
             Axis::Vertical => self.params.height,
         }
     }
 
-    fn pos(&self, axis: Axis) -> u16 {
-        match axis {
-            Axis::Horizontal => self.x,
-            Axis::Vertical => self.y,
-        }
+    fn pos(&self, axis: Axis) -> Option<usize> {
+        self.cell.map(|(col, row)| match axis {
+            Axis::Horizontal => col,
+            Axis::Vertical => row,
+        })
     }
 }
 
@@ -616,7 +639,8 @@ impl GridParams {
     /// Creates grid parameters with the defaulted values.
     ///
     /// It sets the cell span to 1×1.
-    pub fn new() -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn new() -> Self {
         Self {
             col: None,
             row: None,
@@ -628,24 +652,28 @@ impl GridParams {
     /// Creates grid parameters for the given position.
     ///
     /// It sets the cell span to 1×1.
-    pub fn pos(col: u16, row: u16) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn pos(col: u16, row: u16) -> Self {
         Self::new().with_col(col).with_row(row)
     }
 
     /// Builder-style method to define at which column in the grid the item should start.
-    pub fn with_col(mut self, col: u16) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_col(mut self, col: u16) -> Self {
         self.col = Some(col);
         self
     }
 
     /// Builder-style method to define at which row in the grid the item should start.
-    pub fn with_row(mut self, row: u16) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_row(mut self, row: u16) -> Self {
         self.row = Some(row);
         self
     }
 
     /// Builder-style method to define at which column and row in the grid the item should start.
-    pub fn with_pos(self, col: u16, row: u16) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_pos(self, col: u16, row: u16) -> Self {
         self.with_col(col).with_row(row)
     }
 
@@ -654,6 +682,7 @@ impl GridParams {
     /// # Panics
     ///
     /// When debug assertions are on, panics if the width is zero.
+    #[must_use = "Use the configured value."]
     pub fn with_width(mut self, mut width: u16) -> Self {
         if width == 0 {
             debug_panic!(
@@ -671,6 +700,7 @@ impl GridParams {
     /// # Panics
     ///
     /// When debug assertions are on, panics if the height is zero.
+    #[must_use = "Use the configured value."]
     pub fn with_height(mut self, mut height: u16) -> Self {
         if height == 0 {
             debug_panic!(
@@ -688,6 +718,7 @@ impl GridParams {
     /// # Panics
     ///
     /// When debug assertions are on, panics if either the width or the height is zero.
+    #[must_use = "Use the returned value."]
     pub fn with_span(self, width: u16, height: u16) -> Self {
         self.with_width(width).with_height(height)
     }
@@ -718,25 +749,7 @@ impl Grid {
 
 // --- MARK: COLLECTIONWIDGET
 impl CollectionWidget<GridParams> for Grid {
-    /// Returns the number of children.
-    fn len(&self) -> usize {
-        self.children.len()
-    }
-
-    /// Returns `true` if there are no children.
-    fn is_empty(&self) -> bool {
-        self.children.is_empty()
-    }
-
-    /// Returns a mutable reference to the child widget at the given index.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `idx` is out of bounds.
-    fn get_mut<'t>(this: &'t mut WidgetMut<'_, Self>, idx: usize) -> WidgetMut<'t, dyn Widget> {
-        let child = &mut this.widget.children[idx].widget;
-        this.ctx.get_mut(child)
-    }
+    collection_accessors!(child => child.widget.id());
 
     /// Appends a child widget to the collection.
     fn add(
@@ -752,79 +765,94 @@ impl CollectionWidget<GridParams> for Grid {
 
     /// Inserts a child widget at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is larger than the number of children.
+    /// Returns an error if `idx` is larger than the number of children.
     fn insert(
         this: &mut WidgetMut<'_, Self>,
         idx: usize,
         child: NewWidget<impl Widget + ?Sized>,
         params: impl Into<GridParams>,
-    ) {
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_insert_slot(idx, this.widget.children.len())?;
         let child = Child::new(child, params.into());
         this.widget.children.insert(idx, child);
         this.widget.needs_placing = true;
         this.ctx.children_changed();
+        Ok(())
     }
 
     /// Replaces the child widget at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
+    /// Returns an error if `idx` is out of bounds.
     fn set(
         this: &mut WidgetMut<'_, Self>,
         idx: usize,
         child: NewWidget<impl Widget + ?Sized>,
         params: impl Into<GridParams>,
-    ) {
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(idx, this.widget.children.len())?;
         let child = Child::new(child, params.into());
         let old_child = mem::replace(&mut this.widget.children[idx], child);
         this.widget.needs_placing = true;
         this.ctx.remove_child(old_child.widget);
+        Ok(())
     }
 
     /// Sets the child params at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
-    fn set_params(this: &mut WidgetMut<'_, Self>, idx: usize, params: impl Into<GridParams>) {
+    /// Returns an error if `idx` is out of bounds.
+    fn set_params(
+        this: &mut WidgetMut<'_, Self>,
+        idx: usize,
+        params: impl Into<GridParams>,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(idx, this.widget.children.len())?;
         let child = &mut this.widget.children[idx];
         child.params = params.into();
         this.widget.needs_placing = true;
         this.ctx.request_layout();
+        Ok(())
     }
 
     /// Swaps the index of two children.
     ///
-    /// This also swaps the [`GridParams`] `x` and `y` with the other child.
+    /// Explicit positions follow their children; automatic positions are recomputed.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `a` or `b` are out of bounds.
-    fn swap(this: &mut WidgetMut<'_, Self>, a: usize, b: usize) {
-        let (a_x, a_y) = (this.widget.children[a].x, this.widget.children[a].y);
-        let (b_x, b_y) = (this.widget.children[b].x, this.widget.children[b].y);
-
+    /// Returns an error if `a` or `b` are out of bounds.
+    fn swap(
+        this: &mut WidgetMut<'_, Self>,
+        a: usize,
+        b: usize,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(a, this.widget.children.len())?;
+        crate::check_slot(b, this.widget.children.len())?;
         this.widget.children.swap(a, b);
-
-        (this.widget.children[a].x, this.widget.children[a].y) = (a_x, a_y);
-        (this.widget.children[b].x, this.widget.children[b].y) = (b_x, b_y);
-
         this.widget.needs_placing = true;
         this.ctx.children_changed();
+        Ok(())
     }
 
     /// Removes the child at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
-    fn remove(this: &mut WidgetMut<'_, Self>, idx: usize) {
+    /// Returns an error if `idx` is out of bounds.
+    fn remove(
+        this: &mut WidgetMut<'_, Self>,
+        idx: usize,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(idx, this.widget.children.len())?;
         let child = this.widget.children.remove(idx);
         this.ctx.remove_child(child.widget);
         this.widget.needs_placing = true;
+        Ok(())
     }
 
     /// Removes all children.
@@ -843,7 +871,7 @@ impl Widget for Grid {
     type Action = NoAction;
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        for child in self.children.iter_mut() {
+        for child in &mut self.children {
             ctx.register_child(&mut child.widget);
         }
     }
@@ -868,12 +896,14 @@ impl Widget for Grid {
         self.assign_cell_to_auto_placed_children();
 
         let track_lengths = self.resolve_track_lengths(
-            axis,
-            len_req,
-            cross_length,
-            gap.gap,
-            ctx.context_size().length(axis),
-            true,
+            TrackSizing {
+                axis,
+                len_req,
+                cross_length,
+                gap: gap.gap,
+                context_length: ctx.context_size().length(axis),
+                is_measuring_only: true,
+            },
             |child, auto_length, context_size, axis, cross_length| {
                 ctx.compute_length(child, auto_length, context_size, axis, cross_length)
             },
@@ -883,12 +913,13 @@ impl Widget for Grid {
             return 0.px();
         }
 
-        let computed = Length::px(
-            gap_length * (track_lengths.len() - 1) as f64 + track_lengths.into_iter().sum::<f64>(),
-        );
+        let computed = Length::px(gap_length.mul_add(
+            crate::layout_count(track_lengths.len().saturating_sub(1)),
+            track_lengths.into_iter().sum::<f64>(),
+        ));
 
         match len_req {
-            LenReq::FitContent(space) => computed.min(space),
+            LenReq::Fit(space) => computed.min(space),
             _ => computed,
         }
     }
@@ -903,12 +934,14 @@ impl Widget for Grid {
 
         let mut resolve_track = |grid: &mut Self, axis: Axis| {
             grid.resolve_track_lengths(
-                axis,
-                LenReq::FitContent(size.get_coord(axis).px()),
-                Some(size.get_coord(axis.cross()).px()),
-                gap.gap,
-                Some(size.get_coord(axis).px()),
-                false,
+                TrackSizing {
+                    axis,
+                    len_req: LenReq::Fit(size.get_coord(axis).px()),
+                    cross_length: Some(size.get_coord(axis.cross()).px()),
+                    gap: gap.gap,
+                    context_length: Some(size.get_coord(axis).px()),
+                    is_measuring_only: false,
+                },
                 |child, auto_length, context_size, axis, cross_length| {
                     ctx.compute_length(child, auto_length, context_size, axis, cross_length)
                 },
@@ -923,11 +956,13 @@ impl Widget for Grid {
         let col_offsets = resolve_track(self, Axis::Horizontal);
         let row_offsets = resolve_track(self, Axis::Vertical);
 
-        let mut baselines = None::<(u16, u16, f64, u16, u16, f64)>;
+        let mut baselines = None::<(usize, usize, f64, usize, usize, f64)>;
 
         for child in &mut self.children {
-            let col = child.x as usize;
-            let row = child.y as usize;
+            ctx.set_stashed(&child.widget, child.cell.is_none());
+            let Some((col, row)) = child.cell else {
+                continue;
+            };
             let width = child.params.width as usize;
             let height = child.params.height as usize;
 
@@ -947,29 +982,25 @@ impl Widget for Grid {
             )
             .max(Size::ZERO);
 
-            ctx.run_layout(&mut child.widget, size);
+            ctx.run_layout(&child.widget, size);
 
             let origin = Point::new(col_offsets[col], row_offsets[row]);
-            ctx.place_child(&mut child.widget, origin);
+            ctx.place_child(&child.widget, origin);
 
-            let (first_baseline, last_baseline) = ctx.child_aligned_baselines(&child.widget);
-            let last_row = child.y + child.params.height;
+            let Some(placement) = ctx.child_placement(&child.widget) else {
+                continue;
+            };
+            let (first_baseline, last_baseline) = placement.parent_baselines();
+            let last_row = row + height;
 
             baselines = Some(match baselines {
-                None => (
-                    child.x,
-                    child.y,
-                    origin.y + first_baseline,
-                    child.x,
-                    last_row,
-                    origin.y + last_baseline,
-                ),
+                None => (col, row, first_baseline, col, last_row, last_baseline),
                 Some((mut col0, mut row0, mut base0, mut col1, mut row1, mut base1)) => {
-                    if (child.y, child.x) < (row0, col0) {
-                        (col0, row0, base0) = (child.x, child.y, origin.y + first_baseline);
+                    if (row, col) < (row0, col0) {
+                        (col0, row0, base0) = (col, row, first_baseline);
                     }
-                    if (last_row, child.x) > (row1, col1) {
-                        (col1, row1, base1) = (child.x, last_row, origin.y + last_baseline);
+                    if (last_row, col) > (row1, col1) {
+                        (col1, row1, base1) = (col, last_row, last_baseline);
                     }
                     (col0, row0, base0, col1, row1, base1)
                 }
@@ -983,24 +1014,8 @@ impl Widget for Grid {
         }
     }
 
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-    }
-
     fn accessibility_role(&self) -> Role {
         Role::GenericContainer
-    }
-
-    fn accessibility(
-        &mut self,
-        _ctx: &mut AccessCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _node: &mut Node,
-    ) {
     }
 
     fn children_ids(&self) -> ChildrenIds {
@@ -1028,6 +1043,56 @@ mod tests {
     use crate::widgets::{Button, Flex, Label};
 
     #[test]
+    fn intrinsic_growth_respects_fixed_tracks_and_caps() {
+        let defs = [LenDef::Fixed(10.px()), LenDef::FitContent(20.px())];
+        let mut lengths = [10., 5.];
+        distribute_intrinsic(&defs, &mut lengths, 100., 200.);
+        assert_eq!(lengths, [10., 20.]);
+        let mut fixed = [10.];
+        distribute_intrinsic(&[LenDef::Fixed(10.px())], &mut fixed, 100., 200.);
+        assert_eq!(fixed, [10.]);
+        let mut max = [10.];
+        distribute_intrinsic(&[LenDef::MaxContent], &mut max, 30., 80.);
+        assert_eq!(max, [90.]);
+    }
+
+    #[test]
+    fn placement_checks_bounds_and_explicit_reservations() {
+        let mut occupancy = GridOccupancy::new(4, 3).unwrap();
+        let mut child = Child::new(
+            Label::new("reserved").prepare(),
+            GridParams::pos(0, 0).with_span(2, 2),
+        );
+        occupancy.place(&mut child, (0, 0));
+        assert_eq!(
+            occupancy.find_free(GridParams::new().with_span(2, 2), (0, 0)),
+            Some((2, 0))
+        );
+        assert_eq!(
+            occupancy.find_free(GridParams::new().with_width(5), (0, 0)),
+            None
+        );
+        assert_eq!(
+            occupancy.find_free(GridParams::new().with_col(u16::MAX), (0, 0)),
+            None
+        );
+        assert_eq!(
+            occupancy.find_free(GridParams::new().with_row(2), (3, 2)),
+            Some((0, 2))
+        );
+        assert_eq!(
+            occupancy.find_free(
+                GridParams {
+                    height: 0,
+                    ..GridParams::new()
+                },
+                (0, 0)
+            ),
+            None
+        );
+    }
+
+    #[test]
     fn test_grid_basics() {
         // Start with a 1x1 grid
         let widget = Grid::with_dimensions(1, 1)
@@ -1039,50 +1104,62 @@ mod tests {
         assert_render_snapshot!(harness, "grid_initial_1x1");
 
         // Expand it to a 4x4 grid
-        harness.edit_root_widget(|mut grid| {
-            Grid::set_columns(&mut grid, vec![GridTrackSize::FRACTION; 4]);
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::set_columns(&mut grid, vec![GridTrackSize::FRACTION; 4]);
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_expanded_4x1");
 
-        harness.edit_root_widget(|mut grid| {
-            Grid::set_rows(&mut grid, vec![GridTrackSize::FRACTION; 4]);
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::set_rows(&mut grid, vec![GridTrackSize::FRACTION; 4]);
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_expanded_4x4");
 
         // Add a widget that takes up more than one horizontal cell
-        harness.edit_root_widget(|mut grid| {
-            Grid::add(
-                &mut grid,
-                Button::with_text("B").prepare(),
-                GridParams::pos(1, 0).with_span(3, 1),
-            );
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::add(
+                    &mut grid,
+                    Button::with_text("B").prepare(),
+                    GridParams::pos(1, 0).with_span(3, 1),
+                );
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_with_horizontal_widget");
 
         // Add a widget that takes up more than one vertical cell
-        harness.edit_root_widget(|mut grid| {
-            Grid::add(
-                &mut grid,
-                Button::with_text("C").prepare(),
-                GridParams::pos(0, 1).with_span(1, 3),
-            );
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::add(
+                    &mut grid,
+                    Button::with_text("C").prepare(),
+                    GridParams::pos(0, 1).with_span(1, 3),
+                );
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_with_vertical_widget");
 
         // Add a widget that takes up more than one horizontal and vertical cell
-        harness.edit_root_widget(|mut grid| {
-            Grid::add(
-                &mut grid,
-                Button::with_text("D").prepare(),
-                GridParams::pos(1, 1).with_span(2, 2),
-            );
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::add(
+                    &mut grid,
+                    Button::with_text("D").prepare(),
+                    GridParams::pos(1, 1).with_span(2, 2),
+                );
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_with_2x2_widget");
 
         // Change the gap
-        harness.edit_root_widget(|mut grid| {
-            grid.insert_prop(Gap::new(7.px()));
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                grid.insert_prop(Gap::new(7.px()));
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_with_changed_spacing");
     }
 
@@ -1096,50 +1173,63 @@ mod tests {
         assert_render_snapshot!(harness, "grid_initial_2x2");
 
         // Now remove the widget
-        harness.edit_root_widget(|mut grid| {
-            Grid::remove(&mut grid, 0);
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::remove(&mut grid, 0).unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_2x2_with_removed_widget");
 
         // Add it back
-        harness.edit_root_widget(|mut grid| {
-            Grid::add(
-                &mut grid,
-                Button::with_text("A").prepare(),
-                GridParams::pos(0, 0),
-            );
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::add(
+                    &mut grid,
+                    Button::with_text("A").prepare(),
+                    GridParams::pos(0, 0),
+                );
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_initial_2x2"); // Should be back to the original state
 
         // Test replacement
-        harness.edit_root_widget(|mut grid| {
-            Grid::remove(&mut grid, 0);
-            Grid::add(
-                &mut grid,
-                Button::with_text("X").prepare(),
-                GridParams::pos(0, 0),
-            );
-        });
-        harness.edit_root_widget(|mut grid| {
-            Grid::set(
-                &mut grid,
-                0,
-                Button::with_text("A").prepare(),
-                GridParams::pos(0, 0),
-            );
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::remove(&mut grid, 0).unwrap();
+                Grid::add(
+                    &mut grid,
+                    Button::with_text("X").prepare(),
+                    GridParams::pos(0, 0),
+                );
+            })
+            .unwrap();
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::set(
+                    &mut grid,
+                    0,
+                    Button::with_text("A").prepare(),
+                    GridParams::pos(0, 0),
+                )
+                .unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_initial_2x2"); // Should be back to the original state
 
         // Change the grid params to position it on the other corner
-        harness.edit_root_widget(|mut grid| {
-            Grid::set_params(&mut grid, 0, GridParams::pos(1, 1));
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::set_params(&mut grid, 0, GridParams::pos(1, 1)).unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_moved_2x2_1");
 
         // Now make it take up the entire grid
-        harness.edit_root_widget(|mut grid| {
-            Grid::set_params(&mut grid, 0, GridParams::pos(0, 0).with_span(2, 2));
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::set_params(&mut grid, 0, GridParams::pos(0, 0).with_span(2, 2)).unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_moved_2x2_2");
     }
 
@@ -1153,25 +1243,30 @@ mod tests {
         assert_render_snapshot!(harness, "grid_initial_2x2");
 
         // Order sets the draw order, so draw a widget over A by adding it after
-        harness.edit_root_widget(|mut grid| {
-            Grid::add(
-                &mut grid,
-                Button::with_text("B").prepare(),
-                GridParams::pos(0, 0),
-            );
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::add(
+                    &mut grid,
+                    Button::with_text("B").prepare(),
+                    GridParams::pos(0, 0),
+                );
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_2x2_with_overlapping_b");
 
         // Draw a widget under the others by putting it at index 0
         // Make it wide enough to see it stick out, with half of it under A and B.
-        harness.edit_root_widget(|mut grid| {
-            Grid::insert(
-                &mut grid,
-                0,
-                Button::with_text("C").prepare(),
-                GridParams::pos(0, 0).with_span(2, 1),
-            );
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                Grid::insert(
+                    &mut grid,
+                    0,
+                    Button::with_text("C").prepare(),
+                    GridParams::pos(0, 0).with_span(2, 1),
+                )
+                .unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "grid_2x2_with_overlapping_c");
     }
 
@@ -1220,9 +1315,11 @@ mod tests {
 
         assert_render_snapshot!(harness, "grid_baselines_first");
 
-        harness.edit_root_widget(|mut root| {
-            Flex::set_cross_axis_alignment(&mut root, CrossAxisAlignment::LastBaseline);
-        });
+        harness
+            .edit_root_widget(|mut root| {
+                Flex::set_cross_axis_alignment(&mut root, CrossAxisAlignment::LastBaseline);
+            })
+            .unwrap();
 
         assert_render_snapshot!(harness, "grid_baselines_last");
     }

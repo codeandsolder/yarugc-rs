@@ -1,211 +1,144 @@
 // Copyright 2025 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-#[derive(Debug)]
-enum TagCloseBehaviour {
-    /// Nothing needs to happen when the span is closed (i.e. we didn't do anything for it?)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CloseBehavior {
     None,
-    /// A `span.invisible` is ending (and so `emit` should be toggled back on)
     Hidden,
-    /// An ellipsis should be output at the end of this item.
     Ellipsis,
-    /// A paragraph.
     Paragraph,
 }
 
-/// Convert sanitised HTML into a displayable string.
-///
-/// See <https://docs.joinmastodon.org/spec/activitypub/#sanitization> for the tags we have to support.
-///
-/// Note:
-/// 1) We convert HTML entities to their regular value (hopefully?)
-/// 2) We only handle the `p`, `br`, `span.invisible`, `span.ellipsis` cases
-/// 3) We don't handle `microformat` at all.
-///
-/// For certain error cases, this [`warn`](tracing::warn)s (or `error`s).
-/// For additional context, the app can be run with the environment variable
-/// `RUST_LOG` set to `"info,placehero::html_content=trace"`.
-// TODO: We know this code is not great (and probably way too imperative!)
-// We're deferring refactoring this until we want to handle more attributes.
-pub(crate) fn status_html_to_plaintext(content: &str) -> String {
-    let _span = tracing::info_span!("handle_content_html").entered();
-    let tokeniser = html5gum::Tokenizer::new(content);
-    // The resulting string will *always*(?) be shorter than the initial string
-    let mut result = String::with_capacity(content.len());
+#[derive(Debug)]
+struct Tag {
+    name: Vec<u8>,
+    close: CloseBehavior,
+}
 
-    let mut stack = Vec::<TagCloseBehaviour>::new();
-    let mut emit = true;
-    // Tokeniser here returns Result<Token, !>, so this is an infallible pattern.
-    for Ok(token) in tokeniser {
-        match token {
-            html5gum::Token::StartTag(mut start_tag) => match start_tag.name.as_slice() {
-                b"p" => {
-                    if !start_tag.attributes.is_empty() {
-                        tracing::warn!(
-                            "Got unexpected attributes for <p>: {:?}.",
-                            start_tag.attributes
-                        );
-                    }
-                    if start_tag.self_closing {
-                        tracing::warn!("Got unexpected self-closing paragraph.");
-                        result.push_str("\n\n");
-                    } else {
-                        stack.push(TagCloseBehaviour::Paragraph);
-                    }
-                }
-                b"br" => {
-                    result.push('\n');
-                    if !start_tag.attributes.is_empty() {
-                        tracing::warn!(
-                            "Got unexpected attributes for <br>: {:?}.",
-                            start_tag.attributes
-                        );
-                    }
-                    // `br` is empty, so doesn't need handling of it closing.
-                }
-                b"span" => {
-                    if let Some(class) = start_tag.attributes.remove(b"class".as_slice()) {
-                        let class_string = String::from_utf8(class.value.0).unwrap();
-                        let mut has_ellipsis = false;
-                        let mut has_invisible = false;
-                        for class in class_string.split_whitespace() {
-                            if class == "ellipsis" {
-                                has_ellipsis = true;
-                            } else if class == "invisible" {
-                                has_invisible = true;
-                            } else {
-                                tracing::warn!(?class, "Unhandled span class.");
-                                tracing::trace!(
-                                    ?class,
-                                    status = content,
-                                    "Context for unhandled span class."
-                                );
-                            }
+#[derive(Default)]
+struct Plaintext {
+    result: String,
+    stack: Vec<Tag>,
+    hidden: usize,
+}
+
+impl Plaintext {
+    fn emit(&mut self, text: &str) {
+        if self.hidden == 0 {
+            self.result.push_str(text);
+        }
+    }
+
+    fn start(&mut self, tag: html5gum::StartTag<()>) {
+        let name = tag.name.0;
+        let close = match name.as_slice() {
+            b"p" => CloseBehavior::Paragraph,
+            b"br" => {
+                self.emit("\n");
+                return;
+            }
+            b"span" => {
+                let classes = tag.attributes.get(b"class".as_slice());
+                let mut hidden = false;
+                let mut ellipsis = false;
+                if let Some(classes) = classes {
+                    for class in String::from_utf8_lossy(&classes.value.0).split_ascii_whitespace()
+                    {
+                        match class {
+                            "invisible" => hidden = true,
+                            "ellipsis" => ellipsis = true,
+                            _ => tracing::trace!(class, "Ignoring span class"),
                         }
-                        if start_tag.self_closing {
-                            if has_ellipsis {
-                                tracing::warn!("Got unexpectedly empty ellipsis span.");
-                                result.push_str("...");
-                            } else {
-                                tracing::warn!("Got unexpectedly empty span.");
-                            }
-                        } else {
-                            match (has_ellipsis, has_invisible) {
-                                (true, true) => {
-                                    tracing::error!(
-                                        "Unexpected mixing of invisible and ellipsis classes."
-                                    );
-                                    tracing::trace!(
-                                        status = content,
-                                        "Context for invisible ellipsis."
-                                    );
-                                    stack.push(TagCloseBehaviour::None);
-                                }
-                                (true, false) => {
-                                    stack.push(TagCloseBehaviour::Ellipsis);
-                                }
-                                (false, true) => {
-                                    emit = false;
-                                    stack.push(TagCloseBehaviour::Hidden);
-                                }
-                                (false, false) => {
-                                    stack.push(TagCloseBehaviour::None);
-                                }
-                            }
-                        }
-                    } else if !start_tag.self_closing {
-                        stack.push(TagCloseBehaviour::None);
                     }
                 }
-                b"a" => {
-                    tracing::trace!("Encountered intentionally unhandled <a> tag.");
-                    if !start_tag.self_closing {
-                        stack.push(TagCloseBehaviour::None);
-                    }
-                }
-                _ => {
-                    let tag_value = String::from_utf8_lossy(&start_tag.name);
-                    tracing::error!(tag = format_args!("<{:?}>", tag_value), "Unhandled tag.");
-                    tracing::trace!(
-                        tag = format_args!("<{:?}>", tag_value),
-                        status = content,
-                        "Context for unhandled tag."
-                    );
-                    if !start_tag.self_closing {
-                        stack.push(TagCloseBehaviour::None);
-                    }
-                }
-            },
-            html5gum::Token::EndTag(end_tag) => match stack.pop() {
-                Some(action) => match action {
-                    TagCloseBehaviour::None => {}
-                    TagCloseBehaviour::Hidden => {
-                        if emit {
-                            tracing::error!(
-                                end_tag = format_args!("</{:?}>", end_tag.name),
-                                "Nested `invisible` spans."
-                            );
-                            tracing::trace!(
-                                end_tag = format_args!("</{:?}>", end_tag.name),
-                                status = content,
-                                "Context for nested `invisible` spans."
-                            );
-                        }
-                        emit = true;
-                    }
-                    TagCloseBehaviour::Ellipsis => {
-                        result.push_str("...");
-                    }
-                    TagCloseBehaviour::Paragraph => result.push_str("\n\n"),
-                },
-                None => {
-                    tracing::error!(
-                        end_tag = format_args!("</{:?}>", end_tag.name),
-                        "Got unexpected extra closing tag."
-                    );
-                    tracing::trace!(
-                        end_tag = format_args!("</{:?}>", end_tag.name),
-                        status = content,
-                        "Context for unexpected extra closing tag."
-                    );
-                }
-            },
-            html5gum::Token::String(html_string) => {
-                if emit {
-                    result.push_str(
-                        String::from_utf8(html_string.value.0)
-                            .expect("utf-8 input implies utf-8 output.")
-                            .as_str(),
-                    );
+                match (hidden, ellipsis) {
+                    (true, _) => CloseBehavior::Hidden,
+                    (false, true) => CloseBehavior::Ellipsis,
+                    _ => CloseBehavior::None,
                 }
             }
-            html5gum::Token::Comment(html_string) => {
-                tracing::warn!("Got HTML comment in post {html_string:?}; this is unexpected.");
+            // HTML void tags never have corresponding closing tags.
+            b"area" | b"base" | b"col" | b"embed" | b"hr" | b"img" | b"input" | b"link"
+            | b"meta" | b"param" | b"source" | b"track" | b"wbr" => return,
+            _ => CloseBehavior::None,
+        };
+        if tag.self_closing {
+            match close {
+                CloseBehavior::Paragraph => self.emit("\n\n"),
+                CloseBehavior::Ellipsis => self.emit("..."),
+                _ => {}
             }
-            html5gum::Token::Doctype(doctype) => {
-                tracing::error!(?doctype, "Unexpected doctype in post.");
-                tracing::trace!(
-                    ?doctype,
-                    status = content,
-                    "Context for unexpected doctype."
-                );
-            }
-            html5gum::Token::Error(error) => {
-                tracing::error!(?error, "Got error parsing html token.");
-                tracing::trace!(?error, status = content, "Context for html parsing error.");
+            return;
+        }
+        if close == CloseBehavior::Hidden {
+            self.hidden += 1;
+        }
+        self.stack.push(Tag { name, close });
+    }
+
+    fn end(&mut self, name: &[u8]) {
+        let Some(index) = self.stack.iter().rposition(|tag| tag.name == name) else {
+            tracing::debug!(tag = ?String::from_utf8_lossy(name), "Ignoring unmatched closing tag");
+            return;
+        };
+        while self.stack.len() > index {
+            let Some(tag) = self.stack.pop() else {
+                break;
+            };
+            match tag.close {
+                CloseBehavior::Hidden => self.hidden -= 1,
+                CloseBehavior::Ellipsis => self.emit("..."),
+                CloseBehavior::Paragraph => self.emit("\n\n"),
+                CloseBehavior::None => {}
             }
         }
     }
-    if !stack.is_empty() {
-        tracing::error!("Non-empty stack after handling html content of status.");
-        tracing::trace!(
-            status = content,
-            ?stack,
-            "Context for non-empty stack error."
+}
+
+/// Convert Mastodon status HTML into displayable plain text.
+///
+/// Handles paragraphs, line breaks, link ellipses, invisible spans and entities.
+/// Malformed or unsupported markup never causes a panic.
+pub(crate) fn status_html_to_plaintext(content: &str) -> String {
+    let _span = tracing::info_span!("handle_content_html").entered();
+    let mut text = Plaintext {
+        result: String::with_capacity(content.len()),
+        ..Default::default()
+    };
+    for Ok(token) in html5gum::Tokenizer::new(content) {
+        match token {
+            html5gum::Token::StartTag(tag) => text.start(tag),
+            html5gum::Token::EndTag(tag) => text.end(&tag.name.0),
+            html5gum::Token::String(value) => text.emit(&String::from_utf8_lossy(&value.value.0)),
+            html5gum::Token::Error(error) => tracing::debug!(?error, "Malformed HTML token"),
+            html5gum::Token::Comment(_) | html5gum::Token::Doctype(_) => {}
+        }
+    }
+    text.result.truncate(text.result.trim_end().len());
+    text.result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mastodon_links_and_paragraphs() {
+        assert_eq!(
+            status_html_to_plaintext(
+                "<p>A &amp; B<br>hello</p><p><a><span class='invisible'>https://</span><span class='ellipsis'>example</span><span class='invisible'>.com</span></a></p>"
+            ),
+            "A & B\nhello\n\nexample..."
         );
     }
-    // Clear trailing whitespace.
-    let trimmed_len = result.trim_end().len();
-    result.truncate(trimmed_len);
-    result
+
+    #[test]
+    fn nested_hidden_spans_and_unmatched_tags() {
+        assert_eq!(
+            status_html_to_plaintext(
+                "a<span class='invisible'>x<br><span class='invisible'>y</span>z</span></bad>b<img>c"
+            ),
+            "abc"
+        );
+    }
 }

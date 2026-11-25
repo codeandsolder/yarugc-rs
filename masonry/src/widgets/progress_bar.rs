@@ -46,12 +46,13 @@ impl ProgressBar {
     /// The progress value will be clamped to [0, 1].
     ///
     /// A `None` value (or NaN) will show an indeterminate progress bar.
+    #[must_use = "Use the returned value."]
     pub fn new(progress: Option<f64>) -> Self {
         let progress = clamp_progress(progress);
         let label_props = PropertySet::one(LineBreaking::Overflow);
         let label = NewWidget::new(Label::new(Self::value(progress)))
             .with_props(label_props)
-            .to_pod();
+            .into_pod();
         Self { progress, label }
     }
 }
@@ -59,19 +60,14 @@ impl ProgressBar {
 // --- MARK: METHODS
 impl ProgressBar {
     fn value_accessibility(&self) -> Box<str> {
-        if let Some(value) = self.progress {
-            format!("{:.0}%", value * 100.).into()
-        } else {
-            "progress unspecified".into()
-        }
+        self.progress.map_or_else(
+            || "progress unspecified".into(),
+            |value| format!("{:.0}%", value * 100.).into(),
+        )
     }
 
     fn value(progress: Option<f64>) -> ArcStr {
-        if let Some(value) = progress {
-            format!("{:.0}%", value * 100.).into()
-        } else {
-            "".into()
-        }
+        progress.map_or_else(|| "".into(), |value| format!("{:.0}%", value * 100.).into())
     }
 }
 
@@ -87,8 +83,9 @@ impl ProgressBar {
         let progress_changed = this.widget.progress != progress;
         if progress_changed {
             this.widget.progress = progress;
-            let mut label = this.ctx.get_mut(&mut this.widget.label);
-            Label::set_text(&mut label, Self::value(progress));
+            if let Some(mut label) = this.ctx.get_mut(this.widget.label.id()) {
+                Label::set_text(&mut label, Self::value(progress));
+            }
         }
         this.ctx.request_layout();
         this.ctx.request_render();
@@ -142,23 +139,18 @@ impl Widget for ProgressBar {
         cross_length: Option<Length>,
     ) -> Length {
         // TODO: Move this to theme?
-        const DEFAULT_WIDTH: Length = Length::const_px(400.);
+        const DEFAULT_WIDTH: Length = crate::layout::length!(400.);
 
         let auto_length = len_req.into();
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);
 
-        let label_length = ctx.compute_length(
-            &mut self.label,
-            auto_length,
-            context_size,
-            axis,
-            cross_length,
-        );
+        let label_length =
+            ctx.compute_length(&self.label, auto_length, context_size, axis, cross_length);
 
         let potential_length = match axis {
             Axis::Horizontal => match len_req {
-                LenReq::MinContent | LenReq::MaxContent => DEFAULT_WIDTH,
-                LenReq::FitContent(space) => space,
+                LenReq::Min | LenReq::Max => DEFAULT_WIDTH,
+                LenReq::Fit(space) => space,
             },
             Axis::Vertical => theme::BASIC_WIDGET_HEIGHT,
         };
@@ -168,11 +160,11 @@ impl Widget for ProgressBar {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let label_size = ctx.compute_size(&mut self.label, SizeDef::fit(size), size.into());
-        ctx.run_layout(&mut self.label, label_size);
+        let label_size = ctx.compute_size(&self.label, SizeDef::fit(size), size.into());
+        ctx.run_layout(&self.label, label_size);
 
         let child_origin = ((size - label_size).to_vec2() * 0.5).to_point();
-        ctx.place_child(&mut self.label, child_origin);
+        ctx.place_child(&self.label, child_origin);
 
         ctx.derive_baselines(&self.label);
     }
@@ -207,7 +199,7 @@ impl Widget for ProgressBar {
         let progress = self.progress.unwrap_or(1.);
         if progress > 0. {
             // The bar width is without the borders.
-            let bar_width = border_box.width() - 2. * border_width.width.get();
+            let bar_width = 2.0_f64.mul_add(-border_width.width.get(), border_box.width());
             if bar_width > 0. {
                 let bar_color = props.get::<BarColor>(cache).0;
                 // Paint with a gradient so we get a straight line slice of the rounded rect.
@@ -221,7 +213,7 @@ impl Widget for ProgressBar {
                 // Currently bg_rect() gives a rect without borders, so we can use it.
                 // However in the future when bg_rect() gets expanded to include borders,
                 // we'll need to create a special sans-border rect for this fill.
-                let bg_rect = border_width.bg_rect(border_box, &corner_radius);
+                let bg_rect = border_width.bg_rect(border_box, corner_radius);
 
                 painter.fill(bg_rect, &gradient).draw();
             }
@@ -231,8 +223,8 @@ impl Widget for ProgressBar {
             painter,
             border_box,
             &border_color,
-            &border_width,
-            &corner_radius,
+            border_width,
+            corner_radius,
         );
     }
 
@@ -359,7 +351,7 @@ mod tests {
 
             let mut harness = TestHarness::create_with_size(test_property_set(), bar, (60, 20));
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         let image_2 = {
@@ -367,12 +359,14 @@ mod tests {
 
             let mut harness = TestHarness::create_with_size(test_property_set(), bar, (60, 20));
 
-            harness.edit_root_widget(|mut bar| {
-                ProgressBar::set_progress(&mut bar, Some(0.5));
-                bar.insert_prop(BarColor(palette::css::PURPLE));
-            });
+            harness
+                .edit_root_widget(|mut bar| {
+                    ProgressBar::set_progress(&mut bar, Some(0.5));
+                    bar.insert_prop(BarColor(palette::css::PURPLE));
+                })
+                .unwrap();
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         // We don't use assert_eq because we don't want rich assert

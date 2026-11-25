@@ -24,7 +24,7 @@ pub use masonry::widgets::{GridParams, GridTrackSize};
 /// use xilem::style::Style;
 /// use xilem::view::{GridExt, GridParams, GridTrackSize, text_button, grid, label, repeat_tracks};
 ///
-/// const GRID_GAP: Length = Length::const_px(2.);
+/// const GRID_GAP: Length = masonry::layout::length!(2.);
 ///
 /// #[derive(Default)]
 /// struct State {
@@ -59,6 +59,7 @@ pub fn grid<State: 'static, Action, Seq: GridSequence<State, Action>>(
 /// Helper function for quickly creating `n` tracks with the given `size`.
 ///
 /// Analogous to CSS `repeat(n, size)`.
+#[must_use = "Use the returned value."]
 pub fn repeat_tracks(n: usize, size: GridTrackSize) -> impl GridTracks {
     hidden::CloneTracks(std::iter::repeat_n(size, n))
 }
@@ -220,7 +221,7 @@ where
         for element in elements.drain() {
             widget = widget.with(element.child.new_widget, element.params);
         }
-        let pod = ctx.create_pod(widget);
+        let pod = Pod::new(widget);
         (
             pod,
             GridState {
@@ -279,31 +280,7 @@ where
 }
 
 // Used to become a reference form for editing. It's provided to rebuild and teardown.
-impl ViewElement for GridElement {
-    type Mut<'w> = GridElementMut<'w>;
-}
-
-// Used to allow the item to be used as a generic item in ViewSequence.
-impl SuperElement<Self, ViewCtx> for GridElement {
-    fn upcast(_ctx: &mut ViewCtx, child: Self) -> Self {
-        child
-    }
-
-    fn with_downcast_val<R>(
-        mut this: Mut<'_, Self>,
-        f: impl FnOnce(Mut<'_, Self>) -> R,
-    ) -> (Self::Mut<'_>, R) {
-        let r = {
-            let parent = this.parent.reborrow_mut();
-            let reborrow = GridElementMut {
-                idx: this.idx,
-                parent,
-            };
-            f(reborrow)
-        };
-        (this, r)
-    }
-}
+impl_indexed_element!(GridElement, GridElementMut);
 
 impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for GridElement {
     fn upcast(_: &mut ViewCtx, child: Pod<W>) -> Self {
@@ -318,12 +295,8 @@ impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for GridE
     fn with_downcast_val<R>(
         mut this: Mut<'_, Self>,
         f: impl FnOnce(Mut<'_, Pod<W>>) -> R,
-    ) -> (Mut<'_, Self>, R) {
-        let ret = {
-            let mut child = widgets::Grid::get_mut(&mut this.parent, this.idx);
-            let downcast = child.downcast();
-            f(downcast)
-        };
+    ) -> (Mut<'_, Self>, Option<R>) {
+        let ret = { widgets::Grid::get_mut(&mut this.parent, this.idx).map(f) };
 
         (this, ret)
     }
@@ -331,59 +304,9 @@ impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for GridE
 
 // Used for building and rebuilding the ViewSequence
 impl ElementSplice<GridElement> for GridSplice<'_, '_> {
-    fn with_scratch<R>(&mut self, f: impl FnOnce(&mut AppendVec<GridElement>) -> R) -> R {
-        let ret = f(self.scratch);
-        for element in self.scratch.drain() {
-            widgets::Grid::insert(
-                &mut self.element,
-                self.idx,
-                element.child.new_widget,
-                element.params,
-            );
-            self.idx += 1;
-        }
-        ret
-    }
+    collection_splice_insert!(Grid, GridElement, child, element => element.params);
 
-    fn insert(&mut self, element: GridElement) {
-        widgets::Grid::insert(
-            &mut self.element,
-            self.idx,
-            element.child.new_widget,
-            element.params,
-        );
-        self.idx += 1;
-    }
-
-    fn mutate<R>(&mut self, f: impl FnOnce(Mut<'_, GridElement>) -> R) -> R {
-        let child = GridElementMut {
-            parent: self.element.reborrow_mut(),
-            idx: self.idx,
-        };
-        let ret = f(child);
-        self.idx += 1;
-        ret
-    }
-
-    fn skip(&mut self, n: usize) {
-        self.idx += n;
-    }
-
-    fn index(&self) -> usize {
-        self.idx
-    }
-
-    fn delete<R>(&mut self, f: impl FnOnce(Mut<'_, GridElement>) -> R) -> R {
-        let ret = {
-            let child = GridElementMut {
-                parent: self.element.reborrow_mut(),
-                idx: self.idx,
-            };
-            f(child)
-        };
-        widgets::Grid::remove(&mut self.element, self.idx);
-        ret
-    }
+    collection_splice_cursor!(Grid, GridElement, GridElementMut);
 }
 
 /// `GridSequence` is what allows an input to the grid that contains all the grid elements.
@@ -483,22 +406,7 @@ pub struct GridElementMut<'w> {
 }
 
 // Used for manipulating the ViewSequence.
-struct GridSplice<'w, 's> {
-    idx: usize,
-    element: WidgetMut<'w, widgets::Grid>,
-    scratch: &'s mut AppendVec<GridElement>,
-}
-
-impl<'w, 's> GridSplice<'w, 's> {
-    fn new(element: WidgetMut<'w, widgets::Grid>, scratch: &'s mut AppendVec<GridElement>) -> Self {
-        Self {
-            idx: 0,
-            element,
-            scratch,
-        }
-    }
-}
-
+type GridSplice<'w, 's> = super::CollectionSplice<'w, 's, widgets::Grid, GridElement>;
 /// A `WidgetView` that can be used within a [`Grid`] [`View`]
 pub struct GridItem<V, State, Action> {
     view: V,
@@ -543,43 +451,5 @@ where
         )
     }
 
-    fn rebuild(
-        &self,
-        prev: &Self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) {
-        {
-            if self.params != prev.params {
-                widgets::Grid::set_params(&mut element.parent, element.idx, self.params);
-            }
-            let mut child = widgets::Grid::get_mut(&mut element.parent, element.idx);
-            self.view
-                .rebuild(&prev.view, view_state, ctx, child.downcast(), app_state);
-        }
-    }
-
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-    ) {
-        let mut child = widgets::Grid::get_mut(&mut element.parent, element.idx);
-        self.view.teardown(view_state, ctx, child.downcast());
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        mut element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        let mut child = widgets::Grid::get_mut(&mut element.parent, element.idx);
-        self.view
-            .message(view_state, message, child.downcast(), app_state)
-    }
+    indexed_item_lifecycle!(Grid, params);
 }

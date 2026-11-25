@@ -7,6 +7,7 @@ use crate::kurbo::{Point, Rect};
 /// A point with coordinates in the range [0.0, 1.0].
 ///
 /// This is useful for specifying points in a normalized space, such as a gradient.
+#[must_use = "Use the normalized point."]
 pub struct UnitPoint {
     u: f64,
     v: f64,
@@ -46,10 +47,11 @@ impl UnitPoint {
     /// That is, if you're resolving the origin of a 15x15 child inside a 10x10 container,
     /// the rect should be `(0, 0, -5, -5)`. Then `TOP_LEFT` will resolve to `(0, 0)`
     /// while `BOTTOM_RIGHT` will resolve to `(-5, -5)`.
-    pub const fn resolve(self, rect: Rect) -> Point {
+    #[must_use = "Use the resolved point within the rectangle."]
+    pub fn resolve(self, rect: Rect) -> Point {
         Point::new(
-            rect.x0 + self.u * (rect.x1 - rect.x0),
-            rect.y0 + self.v * (rect.y1 - rect.y0),
+            self.u.mul_add(rect.x1 - rect.x0, rect.x0),
+            self.v.mul_add(rect.y1 - rect.y0, rect.y0),
         )
     }
 }

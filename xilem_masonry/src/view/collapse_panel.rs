@@ -35,7 +35,8 @@ pub struct CollapsePanel<State, Action, V> {
 
 impl<State, Action, V> CollapsePanel<State, Action, V> {
     /// Set the collapsed state of the widget.
-    pub fn collapsed(mut self, collapsed: bool) -> Self {
+    #[must_use = "Use the configured view."]
+    pub const fn collapsed(mut self, collapsed: bool) -> Self {
         self.collapsed = collapsed;
         self
     }
@@ -44,12 +45,12 @@ impl<State, Action, V> CollapsePanel<State, Action, V> {
 /// Use a distinctive number here, to be able to catch bugs.
 /// In case the generational-id view path in `View::Message` leads to the wrong view.
 /// This is a randomly generated 32 bit number - 3776130728 in decimal.
-const COLLAPSE_PANEL_HEADER_VIEW_ID: ViewId = ViewId::new(0xE1132EA8);
+const COLLAPSE_PANEL_HEADER_VIEW_ID: ViewId = ViewId::new(0xE113_2EA8);
 
 /// Use a distinctive number here, to be able to catch bugs.
 /// In case the generational-id view path in `View::Message` leads to the wrong view.
 /// This is a randomly generated 32 bit number - 922419961 in decimal.
-const COLLAPSE_PANEL_CONTENT_VIEW_ID: ViewId = ViewId::new(0x36FB02F9);
+const COLLAPSE_PANEL_CONTENT_VIEW_ID: ViewId = ViewId::new(0x36FB_02F9);
 
 impl<State, Action, V> ViewMarker for CollapsePanel<State, Action, V> {}
 impl<State, Action, V> View<State, Action, ViewCtx> for CollapsePanel<State, Action, V>
@@ -62,13 +63,13 @@ where
     type ViewState = V::ViewState;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        let (header, _) = ctx.with_id(COLLAPSE_PANEL_HEADER_VIEW_ID, |ctx| {
+        let (header, ()) = ctx.with_id(COLLAPSE_PANEL_HEADER_VIEW_ID, |ctx| {
             View::<State, (), _>::build(&self.header, ctx, app_state)
         });
         let (child, child_state) = ctx.with_id(COLLAPSE_PANEL_CONTENT_VIEW_ID, |ctx| {
             View::<State, Action, _>::build(&self.child, ctx, app_state)
         });
-        let pod = ctx.create_pod(widgets::CollapsePanel::from_label(
+        let pod = Pod::new(widgets::CollapsePanel::from_label(
             self.collapsed,
             header.new_widget,
             child.new_widget,
@@ -88,22 +89,28 @@ where
             widgets::CollapsePanel::set_collapsed(&mut element, self.collapsed);
         }
         ctx.with_id(COLLAPSE_PANEL_HEADER_VIEW_ID, |ctx| {
+            let Some(child_element) = widgets::CollapsePanel::header_label_mut(&mut element) else {
+                return;
+            };
             View::<State, (), _>::rebuild(
                 &self.header,
                 &prev.header,
                 &mut (),
                 ctx,
-                widgets::CollapsePanel::header_label_mut(&mut element).downcast(),
+                child_element,
                 app_state,
             );
         });
         ctx.with_id(COLLAPSE_PANEL_CONTENT_VIEW_ID, |ctx| {
+            let Some(child_element) = widgets::CollapsePanel::child_mut(&mut element) else {
+                return;
+            };
             View::<State, Action, _>::rebuild(
                 &self.child,
                 &prev.child,
                 state,
                 ctx,
-                widgets::CollapsePanel::child_mut(&mut element).downcast(),
+                child_element,
                 app_state,
             );
         });
@@ -116,20 +123,16 @@ where
         mut element: Mut<'_, Self::Element>,
     ) {
         ctx.with_id(COLLAPSE_PANEL_HEADER_VIEW_ID, |ctx| {
-            View::<State, (), _>::teardown(
-                &self.header,
-                &mut (),
-                ctx,
-                widgets::CollapsePanel::header_label_mut(&mut element).downcast(),
-            );
+            let Some(child_element) = widgets::CollapsePanel::header_label_mut(&mut element) else {
+                return;
+            };
+            View::<State, (), _>::teardown(&self.header, &mut (), ctx, child_element);
         });
         ctx.with_id(COLLAPSE_PANEL_CONTENT_VIEW_ID, |ctx| {
-            View::<State, Action, _>::teardown(
-                &self.child,
-                view_state,
-                ctx,
-                widgets::CollapsePanel::child_mut(&mut element).downcast(),
-            );
+            let Some(child_element) = widgets::CollapsePanel::child_mut(&mut element) else {
+                return;
+            };
+            View::<State, Action, _>::teardown(&self.child, view_state, ctx, child_element);
         });
     }
 
@@ -141,18 +144,21 @@ where
         app_state: &mut State,
     ) -> MessageResult<Action> {
         match message.take_first() {
-            Some(COLLAPSE_PANEL_HEADER_VIEW_ID) => self.header.message(
-                &mut (),
-                message,
-                widgets::CollapsePanel::header_label_mut(&mut element).downcast(),
-                app_state,
-            ),
-            Some(COLLAPSE_PANEL_CONTENT_VIEW_ID) => self.child.message(
-                view_state,
-                message,
-                widgets::CollapsePanel::child_mut(&mut element).downcast(),
-                app_state,
-            ),
+            Some(COLLAPSE_PANEL_HEADER_VIEW_ID) => {
+                let Some(child_element) = widgets::CollapsePanel::header_label_mut(&mut element)
+                else {
+                    return MessageResult::Stale;
+                };
+                self.header
+                    .message(&mut (), message, child_element, app_state)
+            }
+            Some(COLLAPSE_PANEL_CONTENT_VIEW_ID) => {
+                let Some(child_element) = widgets::CollapsePanel::child_mut(&mut element) else {
+                    return MessageResult::Stale;
+                };
+                self.child
+                    .message(view_state, message, child_element, app_state)
+            }
             None => {
                 tracing::error!(
                     ?message,

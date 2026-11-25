@@ -82,6 +82,7 @@ impl DynMessage {
     }
 
     /// Returns `true` if the inner type is the same as `T`.
+    #[must_use = "The result indicates whether the message has the requested type."]
     pub fn is<T: AnyDebug>(&self) -> bool {
         self.0.is::<T>()
     }
@@ -138,6 +139,7 @@ impl SendMessage {
     }
 
     /// Returns `true` if the inner type is the same as `T`.
+    #[must_use = "The result indicates whether the message has the requested type."]
     pub fn is<T: AnyDebug + Send>(&self) -> bool {
         self.0.is::<T>()
     }

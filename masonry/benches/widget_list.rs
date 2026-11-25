@@ -23,15 +23,17 @@ fn widget_list_create(bencher: Bencher<'_, '_>, children: u64) {
     });
 
     bencher.bench_refs(|harness| {
-        harness.edit_root_widget(|mut root| {
-            for _ in 0..children {
-                Flex::add(
-                    &mut root,
-                    NewWidget::new(Label::new("Hello")),
-                    FlexParams::default(),
-                );
-            }
-        });
+        harness
+            .edit_root_widget(|mut root| {
+                for _ in 0..children {
+                    Flex::add(
+                        &mut root,
+                        NewWidget::new(Label::new("Hello")),
+                        FlexParams::default(),
+                    );
+                }
+            })
+            .unwrap();
     });
 }
 
@@ -46,25 +48,27 @@ fn widget_list_paint(bencher: Bencher<'_, '_>, children: u64) {
             TestHarnessParams::default(),
         );
 
-        harness.edit_root_widget(|mut root| {
-            for _ in 0..children {
-                Flex::add(
-                    &mut root,
-                    NewWidget::new(Label::new("Hello")),
-                    FlexParams::default(),
-                );
-            }
-        });
+        harness
+            .edit_root_widget(|mut root| {
+                for _ in 0..children {
+                    Flex::add(
+                        &mut root,
+                        NewWidget::new(Label::new("Hello")),
+                        FlexParams::default(),
+                    );
+                }
+            })
+            .unwrap();
 
         // Set up a wgpu context before benching
         // Fill the paint cache.
-        let _ = harness.render();
+        let _ = harness.render().unwrap();
 
         harness
     });
 
     bencher.bench_refs(|harness| {
-        let _ = harness.render();
+        let _ = harness.render().unwrap();
     });
 }
 
@@ -78,25 +82,27 @@ fn widget_list_paint_clipped(bencher: Bencher<'_, '_>, children: u64) {
             TestHarnessParams::default(),
         );
 
-        harness.edit_root_widget(|mut root| {
-            for _ in 0..children {
-                Flex::add(
-                    &mut root,
-                    NewWidget::new(Prose::new("Hello").with_clip(true)),
-                    FlexParams::default(),
-                );
-            }
-        });
+        harness
+            .edit_root_widget(|mut root| {
+                for _ in 0..children {
+                    Flex::add(
+                        &mut root,
+                        NewWidget::new(Prose::new("Hello").with_clip(true)),
+                        FlexParams::default(),
+                    );
+                }
+            })
+            .unwrap();
 
         // Set up a wgpu context before benching
         // Fill the paint cache.
-        let _ = harness.render();
+        let _ = harness.render().unwrap();
 
         harness
     });
 
     bencher.bench_refs(|harness| {
-        let _ = harness.render();
+        let _ = harness.render().unwrap();
     });
 }
 

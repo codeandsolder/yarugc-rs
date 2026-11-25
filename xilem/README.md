@@ -54,7 +54,7 @@ Like all of these, it uses lightweight view objects, diffing them to provide
 minimal updates to a retained UI. Like `SwiftUI`, it is strongly typed.
 
 The talk *[Xilem: Let's Build High Performance Rust UI](https://www.youtube.com/watch?v=OvfNipIcRiQ)* by Raph Levien
-was presented at the RustNL conference in 2024, and gives a video introduction to these ideas.
+was presented at the `RustNL` conference in 2024, and gives a video introduction to these ideas.
 Xilem is implemented as a reactive layer on top of [Masonry][masonry], a widget toolkit which is developed alongside Xilem.
 Masonry itself is built on top of a wide array of foundational Rust UI projects:
 
@@ -73,7 +73,7 @@ There is also a [blog post][xilem_blog] from when Xilem was first introduced.
 A simple incrementing counter application looks like:
 
 ```rust
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::view::{text_button, flex_col, label};
 use xilem::{EventLoop, WindowOptions, WidgetView, Xilem};
 
@@ -86,7 +86,7 @@ fn app_logic(data: &mut Counter) -> impl WidgetView<Counter> + use<> {
     ))
 }
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     let app = Xilem::new_simple(Counter(0), app_logic, WindowOptions::new("Counter app"));
     app.run_in(EventLoop::with_user_event())?;
     Ok(())

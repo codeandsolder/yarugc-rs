@@ -5,7 +5,7 @@
 ///
 /// If there is surplus space on the main axis after laying out children, this
 /// enum represents how those children are positioned in this space.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MainAxisAlignment {
     /// Widgets are packed flush to each other at the start edge of the container's main axis.
     Start,
@@ -34,7 +34,7 @@ pub enum MainAxisAlignment {
 }
 
 /// Alignment of widgets on a container's cross axis.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CrossAxisAlignment {
     /// Widgets are placed at the start edge of the container's cross axis.
     Start,
@@ -82,12 +82,12 @@ impl CrossAxisAlignment {
     ///
     /// `FirstBaseline` and `LastBaseline` are fallback implementations,
     /// equivalent to `Start` and `End` respectively.
+    #[must_use = "Use the returned value."]
     pub fn offset(self, space: f64) -> f64 {
         match self {
-            Self::Start | Self::FirstBaseline => 0.0,
+            Self::Start | Self::FirstBaseline | Self::Stretch => 0.0,
             Self::Center => space / 2.0,
             Self::End | Self::LastBaseline => space,
-            Self::Stretch => 0.0,
         }
     }
 }

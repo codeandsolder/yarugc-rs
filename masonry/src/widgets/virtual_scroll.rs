@@ -8,8 +8,8 @@ use understory_virtual_list::{ScrollAlign, SparsePrefixSumExtentModel, VirtualLi
 
 use crate::core::keyboard::{Key, KeyState, NamedKey};
 use crate::core::{
-    AccessCtx, AccessEvent, ChildrenIds, ComposeCtx, EventCtx, KeyboardEvent, LayoutCtx,
-    MeasureCtx, NewWidget, PaintCtx, PointerEvent, PointerScrollEvent, PropertiesMut,
+    AccessCtx, AccessEvent, ChildrenIds, ComposeCtx, EventCtx, FromDynWidget, KeyboardEvent,
+    LayoutCtx, MeasureCtx, NewWidget, PaintCtx, PointerEvent, PointerScrollEvent, PropertiesMut,
     PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use crate::dpi::PhysicalPosition;
@@ -248,6 +248,7 @@ impl VirtualScroll {
     /// Note that it is not possible to add children before the widget is "live".
     /// This is for simplicity, as the set of the children which should be loaded has
     /// not yet been determined.
+    #[must_use = "Use the returned value."]
     pub fn new(initial_anchor: usize, len: usize) -> Self {
         let mut virtual_list = VirtualList::new(
             SparsePrefixSumExtentModel::new(DEFAULT_MEAN_ITEM_LENGTH, len),
@@ -274,6 +275,7 @@ impl VirtualScroll {
 
     /// Sets the number of child ids which are valid.
     #[track_caller]
+    #[must_use = "Use the returned value."]
     pub fn with_len(mut self, len: usize) -> Self {
         self.virtual_list.set_len(len);
         self
@@ -281,14 +283,16 @@ impl VirtualScroll {
 
     /// Sets the points (as ratios of the main-axis length) where the first item starts and
     /// the last item ends in the viewport.
-    pub fn with_start_end(mut self, start_at: f64, end_at: f64) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_start_end(mut self, start_at: f64, end_at: f64) -> Self {
         self.start_at = start_at;
         self.end_at = end_at;
         self
     }
 
     /// Sets the direction in which children are laid out.
-    pub fn with_direction(mut self, direction: ScrollDirection) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_direction(mut self, direction: ScrollDirection) -> Self {
         self.direction = direction;
         self
     }
@@ -296,7 +300,8 @@ impl VirtualScroll {
     /// Sets scrolling state.
     ///
     /// Adjusts pixel snapping for animations.
-    pub fn with_scrolling(mut self, scrolling: bool) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_scrolling(mut self, scrolling: bool) -> Self {
         self.scrolling = scrolling;
         self
     }
@@ -311,6 +316,7 @@ impl VirtualScroll {
         clippy::len_without_is_empty,
         reason = "The only time the VirtualScroll unloads all children is when given an empty valid range."
     )]
+    #[must_use = "Use the returned value."]
     pub fn len(&self) -> usize {
         self.items.len()
     }
@@ -347,7 +353,8 @@ impl VirtualScrollFetchAction {
     /// That is, the items which the driver wanted to have available, to properly load what it needs.
     /// Note that many of these items will likely still be active even after this event;
     /// only those which aren't also in `target` must be removed.
-    pub fn old_active(&self) -> &Range<usize> {
+    #[must_use = "Use the returned value."]
+    pub const fn old_active(&self) -> &Range<usize> {
         &self.old_active
     }
 
@@ -355,27 +362,29 @@ impl VirtualScrollFetchAction {
     ///
     /// Note that many of these items will have previously been active before this event (and so require no action);
     /// only those which aren't also in `target` must be removed.
-    pub fn target(&self) -> &Range<usize> {
+    #[must_use = "Use the returned value."]
+    pub const fn target(&self) -> &Range<usize> {
         &self.target
     }
 }
 
 impl VirtualScrollScrollAction {
     /// Provides the IDs of the range of children in viewport.
-    pub fn range_in_viewport(&self) -> &Range<usize> {
+    #[must_use = "Use the returned value."]
+    pub const fn range_in_viewport(&self) -> &Range<usize> {
         &self.range_in_viewport
     }
 }
 
 impl ScrollDirection {
-    fn axis(self) -> Axis {
+    const fn axis(self) -> Axis {
         match self {
             Self::TopToBottom | Self::BottomToTop => Axis::Vertical,
             Self::LeftToRight | Self::RightToLeft => Axis::Horizontal,
         }
     }
 
-    fn is_reverse(self) -> bool {
+    const fn is_reverse(self) -> bool {
         matches!(self, Self::BottomToTop | Self::RightToLeft)
     }
 
@@ -430,9 +439,9 @@ impl VirtualScroll {
             "`add_child` should only be called with an index requested by the controller."
         );
         this.ctx.children_changed();
-        if this.widget.items.insert(idx, child.to_pod()).is_some() {
+        if this.widget.items.insert(idx, child.into_pod()).is_some() {
             tracing::warn!("Tried to add child {idx} twice to VirtualScroll");
-        };
+        }
     }
 
     /// Removes the child widget with id `idx`.
@@ -467,24 +476,13 @@ impl VirtualScroll {
         }
     }
 
-    /// Returns mutable reference to the child widget at `idx`.
-    ///
-    /// # Panics
-    ///
-    /// If the widget at `idx` is not in the scroll area.
+    /// Returns a mutable handle if the index contains a registered child widget.
     #[track_caller]
-    pub fn child_mut<'t>(
+    pub fn child_mut<'t, W: Widget + FromDynWidget + ?Sized>(
         this: &'t mut WidgetMut<'_, Self>,
         idx: usize,
-    ) -> WidgetMut<'t, dyn Widget> {
-        let Some(child) = this.widget.items.get_mut(&idx) else {
-            panic!(
-                "`VirtualScroll::child_mut` called with non-present index {idx}.\nActive range is {:?}.",
-                this.widget.active_range
-            )
-        };
-
-        this.ctx.get_mut(child)
+    ) -> Option<WidgetMut<'t, W>> {
+        this.ctx.get_mut(this.widget.items.get(&idx)?.id())
     }
 
     /// Sets the valid number of items.
@@ -606,10 +604,12 @@ impl Widget for VirtualScroll {
         let delta = match (key, self.direction.axis()) {
             (NamedKey::PageDown, _) => Some((DELTA_PAGE, true)),
             (NamedKey::PageUp, _) => Some((-DELTA_PAGE, true)),
-            (NamedKey::ArrowDown, Axis::Vertical) => Some((DELTA_LINE, false)),
-            (NamedKey::ArrowUp, Axis::Vertical) => Some((-DELTA_LINE, false)),
-            (NamedKey::ArrowLeft, Axis::Horizontal) => Some((DELTA_LINE, false)),
-            (NamedKey::ArrowRight, Axis::Horizontal) => Some((-DELTA_LINE, false)),
+            (NamedKey::ArrowDown, Axis::Vertical) | (NamedKey::ArrowLeft, Axis::Horizontal) => {
+                Some((DELTA_LINE, false))
+            }
+            (NamedKey::ArrowUp, Axis::Vertical) | (NamedKey::ArrowRight, Axis::Horizontal) => {
+                Some((-DELTA_LINE, false))
+            }
             _ => None,
         };
         if let Some((delta, direct)) = delta {
@@ -698,11 +698,11 @@ impl Widget for VirtualScroll {
         // Still, we would run into complexities with ensuring they are loaded in time for measure.
         //
         // So, for now, we just use a simple O(1) default.
-        const DEFAULT_LENGTH: Length = Length::const_px(100.);
+        const DEFAULT_LENGTH: Length = crate::layout::length!(100.);
 
         match len_req {
-            LenReq::MinContent | LenReq::MaxContent => DEFAULT_LENGTH,
-            LenReq::FitContent(space) => space,
+            LenReq::Min | LenReq::Max => DEFAULT_LENGTH,
+            LenReq::Fit(space) => space,
         }
     }
 
@@ -727,17 +727,19 @@ impl Widget for VirtualScroll {
         }
 
         if total_children_length != 0. && total_children_count != 0 {
-            self.virtual_list
-                .model_mut()
-                .set_default_extent(total_children_length / total_children_count as f64);
+            self.virtual_list.model_mut().set_default_extent(
+                total_children_length / crate::layout_count(total_children_count),
+            );
         }
 
         let main_axis_length = size.get_coord(self.direction.axis());
         let start_at = self.start_at * main_axis_length;
         let end_at = self.end_at * main_axis_length;
         self.virtual_list.set_viewport_extent(end_at - start_at);
-        self.virtual_list
-            .set_overscan(main_axis_length + start_at, main_axis_length * 3. - end_at);
+        self.virtual_list.set_overscan(
+            main_axis_length + start_at,
+            main_axis_length.mul_add(3., -end_at),
+        );
 
         let offset_of_anchor = self.virtual_list.offset_of(self.anchor_index);
         self.virtual_list
@@ -776,7 +778,9 @@ impl Widget for VirtualScroll {
 
     fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {
         let content_length = ctx.content_box().size().get_coord(self.direction.axis());
-        let offset = self.scroll_offset_from_anchor() - self.start_at * content_length;
+        let offset = self
+            .start_at
+            .mul_add(-content_length, self.scroll_offset_from_anchor());
         let offset = if self.direction.is_reverse() {
             content_length - self.direction.appropriate(offset)
         } else {
@@ -852,8 +856,10 @@ impl Widget for VirtualScroll {
         // in practice, the anchor index is in range for an f64.
         // TBD: Is there a better way to do this?
         if self.anchor_index != 0 && self.anchor_index != usize::MAX {
-            let pos = (self.anchor_index as f64) * self.virtual_list.model().default_extent()
-                + self.scroll_offset_from_anchor();
+            let pos = crate::layout_count(self.anchor_index).mul_add(
+                self.virtual_list.model().default_extent(),
+                self.scroll_offset_from_anchor(),
+            );
             match self.direction.axis() {
                 Axis::Horizontal => node.set_scroll_x(pos),
                 Axis::Vertical => node.set_scroll_y(pos),
@@ -887,7 +893,7 @@ impl Widget for VirtualScroll {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        self.items.values().map(|pod| pod.id()).collect()
+        self.items.values().map(WidgetPod::id).collect()
     }
 
     fn accepts_text_input(&self) -> bool {
@@ -953,26 +959,27 @@ mod tests {
 
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
         assert_render_snapshot!(harness, "virtual_scroll_basic");
-        harness.edit_root_widget(|mut scroll| {
-            VirtualScroll::scroll_to(&mut scroll, 100);
-        });
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::scroll_to(&mut scroll, 100);
+            })
+            .unwrap();
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
         assert_render_snapshot!(harness, "virtual_scroll_moved");
-        harness.mouse_move_to(virtual_scroll_id);
+        harness.mouse_move_to(virtual_scroll_id).unwrap();
         harness.mouse_wheel(Vec2 { x: 0., y: 25. });
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
         assert_render_snapshot!(harness, "virtual_scroll_scrolled");
     }
 
-    #[test]
-    /// We shouldn't panic or loop if there are small gaps in the items provided by the driver.
-    /// Again, this isn't valid code for a user to write, but we should just warn and deal with it
-    fn small_gaps() {
+    // The driver intentionally violates the contract; verify that sparse items
+    // do not prevent the scroll implementation from converging.
+    fn sparse_driver_gaps(step: usize, remainder: usize, target: usize) {
         let widget = VirtualScroll::new(0, usize::MAX).prepare();
-
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (100, 200));
         let virtual_scroll_id = harness.root_id();
-        fn driver(action: VirtualScrollFetchAction, mut scroll: WidgetMut<'_, VirtualScroll>) {
+        let driver = |action: VirtualScrollFetchAction,
+                      mut scroll: WidgetMut<'_, VirtualScroll>| {
             VirtualScroll::will_handle_action(&mut scroll, &action);
             for idx in action.old_active.clone() {
                 if !action.target.contains(&idx) {
@@ -980,7 +987,7 @@ mod tests {
                 }
             }
             for idx in action.target {
-                if !action.old_active.contains(&idx) && idx % 2 == 0 {
+                if !action.old_active.contains(&idx) && idx % step == remainder {
                     VirtualScroll::add_child(
                         &mut scroll,
                         idx,
@@ -991,55 +998,25 @@ mod tests {
                     );
                 }
             }
-        }
-
+        };
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
-        harness.edit_root_widget(|mut scroll| {
-            VirtualScroll::scroll_to(&mut scroll, 100);
-        });
+        harness
+            .edit_root_widget(|mut scroll| VirtualScroll::scroll_to(&mut scroll, target))
+            .unwrap();
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
-        harness.mouse_move_to(virtual_scroll_id);
+        harness.mouse_move_to(virtual_scroll_id).unwrap();
         harness.mouse_wheel(Vec2 { x: 0., y: 200. });
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
     }
 
     #[test]
-    /// We shouldn't panic or loop if there are big gaps in the items provided by the driver.
-    /// Note that we don't test rendering in this case, because this is a driver which breaks our contract.
+    fn small_gaps() {
+        sparse_driver_gaps(2, 0, 100);
+    }
+
+    #[test]
     fn big_gaps() {
-        let widget = VirtualScroll::new(0, usize::MAX).prepare();
-
-        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (100, 200));
-        let virtual_scroll_id = harness.root_id();
-        fn driver(action: VirtualScrollFetchAction, mut scroll: WidgetMut<'_, VirtualScroll>) {
-            VirtualScroll::will_handle_action(&mut scroll, &action);
-            for idx in action.old_active.clone() {
-                if !action.target.contains(&idx) {
-                    VirtualScroll::remove_child(&mut scroll, idx);
-                }
-            }
-            for idx in action.target {
-                if !action.old_active.contains(&idx) && idx % 100 == 1 {
-                    VirtualScroll::add_child(
-                        &mut scroll,
-                        idx,
-                        NewWidget::new(
-                            Label::new(format!("{idx}")).with_style(StyleProperty::FontSize(30.)),
-                        )
-                        .erased(),
-                    );
-                }
-            }
-        }
-
-        drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
-        harness.edit_root_widget(|mut scroll| {
-            VirtualScroll::scroll_to(&mut scroll, 200);
-        });
-        drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
-        harness.mouse_move_to(virtual_scroll_id);
-        harness.mouse_wheel(Vec2 { x: 0., y: 200. });
-        drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
+        sparse_driver_gaps(100, 1, 200);
     }
 
     #[test]
@@ -1072,11 +1049,13 @@ mod tests {
         }
 
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
-        harness.edit_root_widget(|mut scroll| {
-            VirtualScroll::scroll_to(&mut scroll, 200);
-        });
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::scroll_to(&mut scroll, 200);
+            })
+            .unwrap();
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
-        harness.mouse_move_to(virtual_scroll_id);
+        harness.mouse_move_to(virtual_scroll_id).unwrap();
         harness.mouse_wheel(Vec2 { x: 0., y: 200. });
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
     }
@@ -1119,7 +1098,7 @@ mod tests {
         // so validate it with code.
         assert_render_snapshot!(harness, "virtual_scroll_limited_up_bottom");
         let (original_range, original_scroll) = {
-            let widget = harness.root_widget();
+            let widget = harness.root_widget().unwrap();
             tracing::debug!(widget = ?(&*widget));
             assert_eq!(
                 widget.range_in_viewport.end, MAX,
@@ -1131,11 +1110,11 @@ mod tests {
             )
         };
 
-        harness.mouse_move_to(virtual_scroll_id);
+        harness.mouse_move_to(virtual_scroll_id).unwrap();
         harness.mouse_wheel(Vec2 { x: 0., y: 40. });
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
         {
-            let widget = harness.root_widget();
+            let widget = harness.root_widget().unwrap();
             tracing::debug!(widget = ?(&*widget));
             assert_ne!(widget.range_in_viewport.end, MAX);
             assert_eq!(widget.active_range, original_range);
@@ -1145,7 +1124,7 @@ mod tests {
 
         assert_render_snapshot!(harness, "virtual_scroll_limited_up_bottom");
         {
-            let widget = harness.root_widget();
+            let widget = harness.root_widget().unwrap();
             assert_eq!(widget.range_in_viewport.end, MAX);
             assert_eq!(
                 widget.virtual_list.scroll_offset(),
@@ -1167,7 +1146,7 @@ mod tests {
             if iteration > 1000 {
                 panic!("Took too long to reach fixpoint");
             }
-            let Some((action, id)) = harness.pop_action::<VirtualScrollAction>() else {
+            let Some((action, id)) = harness.pop_action::<VirtualScrollAction>().unwrap() else {
                 break;
             };
             let VirtualScrollAction::Fetch(action) = action else {
@@ -1186,9 +1165,11 @@ mod tests {
                 "Shouldn't have sent an update if the target hasn't changed"
             );
 
-            harness.edit_root_widget(|scroll| {
-                f(action, scroll);
-            });
+            harness
+                .edit_root_widget(|scroll| {
+                    f(action, scroll);
+                })
+                .unwrap();
         }
     }
 }

@@ -31,6 +31,7 @@ mod radio_button;
 mod radio_group;
 mod resize_observer;
 mod scroll_bar;
+mod selection_control;
 mod selector;
 mod selector_item;
 mod sized_box;

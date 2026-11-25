@@ -19,12 +19,7 @@ pub struct MessageThunk {
 
 impl MessageThunk {
     /// Sends a message to the [`View`](`crate::core::View`) this thunk was being created in.
-    /// One needs to be cautious with this being called synchronously, as this can produce a panic ("already mutably borrowed")
-    ///
-    /// # Panics
-    ///
-    /// When this is called synchronously (i.e. not via an event callback or by enqueuing it in the event loop with e.g. [`spawn_local`](`wasm_bindgen_futures::spawn_local`).
-    /// Use [`MessageThunk::enqueue_message`] instead in this case.
+    /// Reentrant messages are deferred by the app runtime.
     pub fn push_message(&self, message_body: impl AnyDebug) {
         let message = AppMessage {
             id_path: Rc::clone(&self.id_path),
@@ -47,7 +42,8 @@ impl MessageThunk {
 /// The [`View`](`crate::core::View`) `Context` which is used for all [`DomView`](`crate::DomView`)s
 pub struct ViewCtx {
     id_path: Vec<ViewId>,
-    app_ref: Option<Box<dyn AppRunner>>,
+    app_ref: Box<dyn AppRunner>,
+    document: web_sys::Document,
     pub(crate) fragment: Rc<web_sys::DocumentFragment>,
     hydration_node_stack: Vec<web_sys::Node>,
     is_hydrating: bool,
@@ -58,12 +54,13 @@ pub struct ViewCtx {
     pub(crate) environment: Environment,
 }
 
-impl Default for ViewCtx {
-    fn default() -> Self {
+impl ViewCtx {
+    pub(crate) fn new(document: web_sys::Document, app_ref: Box<dyn AppRunner>) -> Self {
         Self {
             id_path: Vec::default(),
-            app_ref: None,
-            fragment: Rc::new(crate::document().create_document_fragment()),
+            app_ref,
+            fragment: Rc::new(document.create_document_fragment()),
+            document,
             templates: VecMap::default(),
             hydration_node_stack: Vec::default(),
             is_hydrating: false,
@@ -77,14 +74,18 @@ impl Default for ViewCtx {
 
 impl ViewCtx {
     /// Create a thunk to delay a message to the [`View`](`crate::core::View`) this was called in.
+    #[must_use = "Retain the thunk to send messages back to this view."]
     pub fn message_thunk(&self) -> MessageThunk {
         MessageThunk {
             id_path: self.id_path.iter().copied().collect(),
-            app_ref: self.app_ref.as_ref().unwrap().clone_box(),
+            app_ref: self.app_ref.clone_box(),
         }
     }
-    pub(crate) fn set_runner(&mut self, runner: impl AppRunner + 'static) {
-        self.app_ref = Some(Box::new(runner));
+
+    /// The document containing the application root.
+    #[must_use = "Use this document to create nodes in the application document."]
+    pub const fn document(&self) -> &web_sys::Document {
+        &self.document
     }
 
     /// Provides a way to access this context without having to deal with lifetime issues.
@@ -103,7 +104,8 @@ impl ViewCtx {
     pub fn as_owned<R>(&mut self, f: impl FnOnce(Self) -> (Self, R)) -> R {
         let temporary_owned_ctx = Self {
             id_path: std::mem::take(&mut self.id_path),
-            app_ref: self.app_ref.as_ref().map(|app| app.clone_box()),
+            app_ref: self.app_ref.clone_box(),
+            document: self.document.clone(),
             fragment: self.fragment.clone(),
             hydration_node_stack: std::mem::take(&mut self.hydration_node_stack),
             is_hydrating: self.is_hydrating,
@@ -145,7 +147,7 @@ impl ViewCtx {
         r
     }
 
-    pub(crate) fn is_hydrating(&self) -> bool {
+    pub(crate) const fn is_hydrating(&self) -> bool {
         self.is_hydrating
     }
 
@@ -187,8 +189,7 @@ impl ViewCtx {
     pub fn take_modifier_size_hint<T: 'static>(&mut self) -> usize {
         self.current_size_hints_mut()
             .get_mut(&TypeId::of::<T>())
-            .map(std::mem::take)
-            .unwrap_or(0)
+            .map_or(0, std::mem::take)
     }
 
     fn push_size_hints(&mut self) {
@@ -199,12 +200,13 @@ impl ViewCtx {
     }
 
     fn pop_size_hints(&mut self) {
-        debug_assert!(
+        debug_assert_eq!(
             self.modifier_size_hints[self.modifier_size_hint_stack_idx]
                 .iter()
                 .map(|(_, size_hint)| *size_hint)
-                .sum::<usize>()
-                == 0
+                .sum::<usize>(),
+            0,
+            "Unconsumed modifier size hints"
         );
         self.modifier_size_hint_stack_idx -= 1;
     }

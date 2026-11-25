@@ -31,26 +31,19 @@ fn app_logic(state: &mut State) -> impl FileView<State> + use<> {
             name: "file1.txt".into(),
             contents: "Test file contents".into(),
         }),
-        State::Empty =>
-        /* Box::new(Folder {
-            name: "nothing".into(),
-            seq: (),
-        }) */
-        {
-            unimplemented!()
-        }
+        State::Empty => Box::new(EmptyDirectory),
         State::Complex(value) => Box::new(complex_state(value.as_str())),
     };
     res
 }
 
-fn main() {
+fn main() -> std::io::Result<()> {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("examples/filesystem");
     if path.exists() {
-        std::fs::remove_dir_all(&path).expect("Could create directory");
+        std::fs::remove_dir_all(&path)?;
     }
-    std::fs::create_dir(&path).expect("Could tidy up directory");
+    std::fs::create_dir(&path)?;
     let mut state = State::Setup;
 
     let mut previous = app_logic(&mut state);
@@ -63,9 +56,7 @@ fn main() {
     let (mut element, mut initial_state) = previous.build(&mut root_ctx, &mut state);
     loop {
         input_buf.clear();
-        let read_count = stdin()
-            .read_line(&mut input_buf)
-            .expect("Could read from stdin");
+        let read_count = stdin().read_line(&mut input_buf)?;
         if read_count == 0 {
             // Reached EOF, i.e. user has finished
             break;
@@ -79,14 +70,15 @@ fn main() {
             "clear" => {
                 state = State::Empty;
             }
-            complex if complex.starts_with("complex ") => {
-                state = State::Complex(complex.strip_prefix("complex ").unwrap().into());
-            }
             other => {
-                eprint!("Unknown command {other:?}. Please try again:");
-                continue;
+                if let Some(value) = other.strip_prefix("complex ") {
+                    state = State::Complex(value.into());
+                } else {
+                    eprint!("Unknown command {other:?}. Please try again:");
+                    continue;
+                }
             }
-        };
+        }
         let new_view = app_logic(&mut state);
         root_ctx.current_folder_path.clone_from(&path);
         new_view.rebuild(
@@ -98,6 +90,7 @@ fn main() {
         );
         previous = new_view;
     }
+    Ok(())
 }
 
 trait FileView<State: 'static, Action = ()>: View<State, Action, ViewCtx, Element = FsPath> {}
@@ -117,9 +110,9 @@ impl SuperElement<Self, ViewCtx> for FsPath {
     fn with_downcast_val<R>(
         this: Self::Mut<'_>,
         f: impl FnOnce(Mut<'_, Self>) -> R,
-    ) -> (Self::Mut<'_>, R) {
+    ) -> (Self::Mut<'_>, Option<R>) {
         let ret = f(this);
-        (this, ret)
+        (this, Some(ret))
     }
 }
 
@@ -136,6 +129,52 @@ impl AnyElement<Self, ViewCtx> for FsPath {
 //     seq: Seq,
 //     phantom: PhantomData<fn() -> Marker>,
 // }
+
+struct EmptyDirectory;
+
+impl ViewMarker for EmptyDirectory {}
+impl<State: 'static, Action> View<State, Action, ViewCtx> for EmptyDirectory {
+    type Element = FsPath;
+    type ViewState = bool;
+
+    fn build(&self, ctx: &mut ViewCtx, _app_state: &mut State) -> (Self::Element, Self::ViewState) {
+        let path = ctx.current_folder_path.join("nothing");
+        let created = match std::fs::create_dir(&path) {
+            Ok(()) => true,
+            Err(error) => {
+                eprintln!("Could not create {}: {error}", path.display());
+                false
+            }
+        };
+        (path.into(), created)
+    }
+
+    fn rebuild(
+        &self,
+        _prev: &Self,
+        _state: &mut bool,
+        _ctx: &mut ViewCtx,
+        _element: Mut<'_, Self::Element>,
+        _app_state: &mut State,
+    ) {
+    }
+
+    fn teardown(&self, created: &mut bool, _ctx: &mut ViewCtx, element: Mut<'_, Self::Element>) {
+        if *created && let Err(error) = std::fs::remove_dir(&*element) {
+            eprintln!("Could not remove {}: {error}", element.display());
+        }
+    }
+
+    fn message(
+        &self,
+        _state: &mut bool,
+        _message: &mut MessageCtx,
+        _element: Mut<'_, Self::Element>,
+        _app_state: &mut State,
+    ) -> xilem_core::MessageResult<Action> {
+        xilem_core::MessageResult::Stale
+    }
+}
 
 #[derive(Clone)]
 struct File {
@@ -203,7 +242,7 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for File {
         _element: Mut<'_, Self::Element>,
         _app_state: &mut State,
     ) -> xilem_core::MessageResult<Action> {
-        unreachable!()
+        xilem_core::MessageResult::Stale
     }
 }
 

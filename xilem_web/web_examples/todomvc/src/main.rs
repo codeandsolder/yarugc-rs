@@ -4,13 +4,17 @@
 //! A recreation of todomvc in Xilem Web
 // TODO: Link
 
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "State is internal to the example under unreachable_pub."
+)]
 mod state;
 
 use state::{AppState, Filter, Todo};
 use wasm_bindgen::JsCast;
 use xilem_web::core::{MessageResult, map_message_result, map_state};
 use xilem_web::elements::html as el;
-use xilem_web::interfaces::*;
+use xilem_web::interfaces::{Element, HtmlInputElement};
 use xilem_web::modifiers::style as s;
 use xilem_web::{Action, App, DomView, get_element_by_id};
 
@@ -25,7 +29,7 @@ enum TodoAction {
 
 impl Action for TodoAction {}
 
-fn todo_item(todo: &mut Todo, editing: bool) -> impl Element<Todo, TodoAction> + use<> {
+fn todo_item(todo: &Todo, editing: bool) -> impl Element<Todo, TodoAction> + use<> {
     let checkbox = el::input(())
         .class("toggle")
         .type_("checkbox")
@@ -73,7 +77,7 @@ fn todo_item(todo: &mut Todo, editing: bool) -> impl Element<Todo, TodoAction> +
     .class(editing.then_some("editing"))
 }
 
-fn footer_view(state: &mut AppState, should_display: bool) -> impl Element<AppState> + use<> {
+fn footer_view(state: &AppState, should_display: bool) -> impl Element<AppState> + use<> {
     let clear_button = (state.todos.iter().filter(|todo| todo.completed).count() > 0).then(|| {
         el::button("Clear completed")
             .class("clear-completed")
@@ -203,8 +207,9 @@ fn app_logic(state: &mut AppState) -> impl DomView<AppState> + use<> {
     ))
 }
 
-fn main() {
+fn main() -> Result<(), xilem_web::DomError> {
     console_error_panic_hook::set_once();
     tracing_wasm::set_as_global_default();
-    App::new(get_element_by_id("todoapp"), AppState::load(), app_logic).run();
+    App::new(get_element_by_id("todoapp")?, AppState::load(), app_logic)?.run();
+    Ok(())
 }

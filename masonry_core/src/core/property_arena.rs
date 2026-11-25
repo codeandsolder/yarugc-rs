@@ -7,6 +7,7 @@ use crate::core::{DefaultProperties, PropertyStack, PropertyStackId};
 
 /// An arena for storing [`PropertyStack`]s, which represent cascading sets of properties that can be applied to widgets.
 #[derive(Default, Debug)]
+#[must_use = "Use the constructed property arena."]
 pub struct PropertyArena {
     pub(crate) arena: HashMap<PropertyStackId, PropertyStack>,
 
@@ -35,6 +36,7 @@ impl PropertyArena {
     /// If the `id` is `None` or not found in the arena, returns the default property stack for the given `widget_type` defined in [`DefaultProperties`].
     ///
     /// If no default property stack is defined for the `widget_type`, returns an empty `PropertyStack`.
+    #[must_use = "Use the resolved property stack."]
     pub fn get(&self, id: Option<PropertyStackId>, widget_type: TypeId) -> &PropertyStack {
         if let Some(id) = id
             && let Some(stack) = self.arena.get(&id)

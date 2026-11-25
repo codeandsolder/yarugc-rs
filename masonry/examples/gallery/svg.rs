@@ -10,18 +10,18 @@ use resvg::usvg::{self, Tree};
 
 use crate::demo::{CONTENT_GAP, DemoPage, ShellTags, wrap_in_shell};
 
-fn tiger() -> Arc<Tree> {
+fn tiger() -> Result<Arc<Tree>, usvg::Error> {
     let svg_bytes = include_bytes!("../assets/tiger.svg");
     let opts = usvg::Options::default();
-    Arc::new(Tree::from_data(svg_bytes, &opts).unwrap())
+    Tree::from_data(svg_bytes, &opts).map(Arc::new)
 }
 
-pub(crate) struct SvgDemo {
+pub(super) struct SvgDemo {
     shell: ShellTags,
 }
 
 impl SvgDemo {
-    pub(crate) fn new(shell: ShellTags) -> Self {
+    pub(super) const fn new(shell: ShellTags) -> Self {
         Self { shell }
     }
 }
@@ -36,7 +36,15 @@ impl DemoPage for SvgDemo {
     }
 
     fn build(&self) -> NewWidget<dyn Widget> {
-        let svg = Svg::new(tiger()).prepare();
+        let Ok(tree) = tiger() else {
+            return wrap_in_shell(
+                self.shell,
+                Label::new("Failed to decode embedded SVG")
+                    .prepare()
+                    .erased(),
+            );
+        };
+        let svg = Svg::new(tree).prepare();
 
         let body = Flex::column()
             .cross_axis_alignment(CrossAxisAlignment::Stretch)

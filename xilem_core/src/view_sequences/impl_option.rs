@@ -46,8 +46,7 @@ where
         match Seq::ELEMENTS_COUNT {
             // This sequence has zero or one children,
             // which is best explained as "Many".
-            Count::One => Count::Many,
-            Count::Many => Count::Many,
+            Count::One | Count::Many => Count::Many,
             Count::Unknown => Count::Unknown,
             Count::Zero => Count::Zero,
         }
@@ -61,21 +60,12 @@ where
         app_state: &mut State,
     ) -> Self::SeqState {
         let generation = 0;
-        match self {
-            Some(seq) => {
-                let inner = ctx.with_id(ViewId::new(generation), |ctx| {
-                    seq.seq_build(ctx, elements, app_state)
-                });
-                OptionSeqState {
-                    inner: Some(inner),
-                    generation,
-                }
-            }
-            None => OptionSeqState {
-                inner: None,
-                generation,
-            },
-        }
+        let inner = self.as_ref().map(|seq| {
+            ctx.with_id(ViewId::new(generation), |ctx| {
+                seq.seq_build(ctx, elements, app_state)
+            })
+        });
+        OptionSeqState { inner, generation }
     }
 
     #[doc(hidden)]
@@ -159,9 +149,9 @@ where
         elements: &mut impl ElementSplice<Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let start = message
-            .take_first()
-            .expect("Id path has elements for Option<ViewSequence>");
+        let Some(start) = message.take_first() else {
+            return MessageResult::Stale;
+        };
 
         if start.routing_id() != seq_state.generation {
             // The message was sent to a previous edition of the inner value

@@ -1,85 +1,68 @@
 // Copyright 2025 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use std::fmt::{Debug, Write};
+use std::fmt::Debug;
 
-/// Assert that `pred` returns true for at least one item in `iter`.
+/// Assert that the predicate returns true for at least one item.
 ///
-/// This provides a panic message showing the values, to aid debugging.
+/// # Panics
+///
+/// Panics if no item matches, showing the examined values.
 #[track_caller]
 pub fn assert_any<I: IntoIterator>(iter: I, mut pred: impl FnMut(I::Item) -> bool)
 where
     I::Item: Debug,
 {
-    let mut list_contents = String::new();
-
-    for item in iter.into_iter() {
-        writeln!(&mut list_contents, "  {item:?},").unwrap();
-
-        if pred(item) {
-            return;
-        }
-    }
-
-    panic!("assertion failed: no item matched predicate in [\n{list_contents}]");
+    let mut examined = Vec::new();
+    let matched = iter.into_iter().any(|item| {
+        examined.push(format!("{item:?}"));
+        pred(item)
+    });
+    assert!(matched, "no item matched predicate in {examined:#?}");
 }
 
-/// Assert that `pred` returns true for every item in `iter`.
+/// Assert that the predicate returns true for every item.
 ///
-/// This provides an error message showing which values failed the condition, to aid debugging.
+/// # Panics
+///
+/// Panics if any item fails the predicate, showing up to six failures.
 #[track_caller]
-pub fn assert_all<I: IntoIterator>(iter: I, mut pred: impl FnMut(I::Item) -> bool)
+pub fn assert_all<I: IntoIterator>(iter: I, pred: impl FnMut(I::Item) -> bool)
 where
     I::Item: Debug,
 {
-    let mut list_contents = String::new();
-    let mut error_count = 0;
-
-    for (i, item) in iter.into_iter().enumerate() {
-        let item_dbg = format!("{item:?}");
-
-        if !pred(item) {
-            writeln!(&mut list_contents, "  ({i}) {item_dbg:?},").unwrap();
-            error_count += 1;
-        }
-        if error_count > 5 {
-            writeln!(&mut list_contents, "  ...").unwrap();
-            break;
-        }
-    }
-
-    if error_count != 0 {
-        panic!("assertion failed: items failed to match predicate: [\n{list_contents}]");
-    }
+    assert_matches(iter, pred, true);
 }
 
-/// Assert that `pred` returns false for every item in `iter`.
+/// Assert that the predicate returns false for every item.
 ///
-/// This provides an error message showing which values succeeded the condition, to aid debugging.
+/// # Panics
+///
+/// Panics if any item matches the predicate, showing up to six failures.
 #[track_caller]
-pub fn assert_none<I: IntoIterator>(iter: I, mut pred: impl FnMut(I::Item) -> bool)
+pub fn assert_none<I: IntoIterator>(iter: I, pred: impl FnMut(I::Item) -> bool)
 where
     I::Item: Debug,
 {
-    let mut list_contents = String::new();
-    let mut error_count = 0;
+    assert_matches(iter, pred, false);
+}
 
-    for (i, item) in iter.into_iter().enumerate() {
-        let item_dbg = format!("{item:?}");
-
-        if pred(item) {
-            writeln!(&mut list_contents, "  ({i}) {item_dbg:?},").unwrap();
-            error_count += 1;
-        }
-        if error_count > 5 {
-            writeln!(&mut list_contents, "  ...").unwrap();
-            break;
-        }
-    }
-
-    if error_count != 0 {
-        panic!(
-            "assertion failed: items matched predicate against expectations: [\n{list_contents}]"
-        );
-    }
+#[track_caller]
+fn assert_matches<I: IntoIterator>(iter: I, mut pred: impl FnMut(I::Item) -> bool, expected: bool)
+where
+    I::Item: Debug,
+{
+    let failures: Vec<_> = iter
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            let value = format!("{item:?}");
+            (pred(item) != expected).then_some((index, value))
+        })
+        .take(6)
+        .collect();
+    assert!(
+        failures.is_empty(),
+        "predicate should return {expected}; mismatches (up to six): {failures:#?}"
+    );
 }

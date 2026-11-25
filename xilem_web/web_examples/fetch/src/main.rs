@@ -9,7 +9,9 @@ use wasm_bindgen::{JsCast, UnwrapThrowExt};
 use xilem_web::concurrent::memoized_await;
 use xilem_web::core::fork;
 use xilem_web::core::one_of::Either;
-use xilem_web::elements::html::*;
+use xilem_web::elements::html::{
+    div, fieldset, h1, h2, img, input, label, legend, p, table, td, tr,
+};
 use xilem_web::interfaces::{
     Element, HtmlDivElement, HtmlImageElement, HtmlInputElement, HtmlLabelElement,
 };
@@ -47,7 +49,7 @@ impl Default for AppState {
 }
 
 impl AppState {
-    fn fetch_state(&self) -> FetchState {
+    const fn fetch_state(&self) -> FetchState {
         if self.cats_to_fetch != 0 && self.cats_to_fetch == self.cats.len() {
             FetchState::Finished
         } else if self.cats_to_fetch >= TOO_MANY_CATS {
@@ -74,6 +76,10 @@ enum FetchState {
     Finished,
 }
 
+#[expect(
+    clippy::future_not_send,
+    reason = "Fetch uses local JavaScript promises and runs on the browser event loop."
+)]
 async fn fetch_cats(count: usize) -> Result<Vec<Cat>, gloo_net::Error> {
     log::debug!("Fetch {count} cats");
     if count == 0 {
@@ -151,7 +157,7 @@ fn cat_images_and_fetching_indicator(state: &AppState) -> impl HtmlDivElement<Ap
     let error_message = state
         .error
         .as_ref()
-        .map(|err| div((h2("Error"), p(err.to_string()))).class("error"));
+        .map(|err| div((h2("Error"), p(err.clone()))).class("error"));
     let fetch_state = match state.fetch_state() {
         FetchState::Initial => Either::B(p("You need to fetch cats")),
         FetchState::Fetching => Either::B(p("Fetching cats...")),
@@ -211,11 +217,12 @@ fn cat_fetch_controls(state: &AppState) -> impl Element<AppState> + use<> {
     .class("cat-fetch-controls")
 }
 
-fn main() {
+fn main() -> Result<(), xilem_web::DomError> {
     _ = console_log::init_with_level(log::Level::Debug);
     console_error_panic_hook::set_once();
 
     log::info!("Start application");
 
-    App::new(document_body(), AppState::default(), app_logic).run();
+    App::new(document_body()?, AppState::default(), app_logic)?.run();
+    Ok(())
 }

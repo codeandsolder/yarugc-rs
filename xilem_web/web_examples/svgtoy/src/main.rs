@@ -4,7 +4,7 @@
 //! A simple example showing the interaction between SVG and event handling
 
 use xilem_web::elements::svg::{g, svg, text};
-use xilem_web::interfaces::*;
+use xilem_web::interfaces::{Element, SvgElement};
 use xilem_web::modifiers::style as s;
 use xilem_web::svg::kurbo::{Circle, Line, Rect, Stroke, Vec2};
 use xilem_web::svg::peniko::Color;
@@ -54,8 +54,8 @@ impl GrabState {
 fn app_logic(state: &mut AppState) -> impl DomView<AppState> + use<> {
     let v = (0..10)
         .map(|i| {
-            Rect::from_origin_size((10.0 * i as f64, 150.0), (8.0, 8.0))
-                .rotate(0.003 * (i as f64) * state.x)
+            Rect::from_origin_size((10.0 * f64::from(i), 150.0), (8.0, 8.0))
+                .rotate(0.003 * (f64::from(i)) * state.x)
         })
         .collect::<Vec<_>>();
     svg(g((
@@ -93,7 +93,8 @@ fn app_logic(state: &mut AppState) -> impl DomView<AppState> + use<> {
     .attr("height", 600)
 }
 
-fn main() {
+fn main() -> Result<(), xilem_web::DomError> {
     console_error_panic_hook::set_once();
-    App::new(document_body(), AppState::default(), app_logic).run();
+    App::new(document_body()?, AppState::default(), app_logic)?.run();
+    Ok(())
 }

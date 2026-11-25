@@ -29,8 +29,7 @@ fn get_pointer_target(
     if let Some(pointer_pos) = pointer_pos {
         let pointer_pos = (pointer_pos.x, pointer_pos.y).into();
         return root
-            .get_widget(root.root_id())
-            .expect("root widget not in widget tree")
+            .get_widget(root.root_id())?
             .find_widget_under_pointer(pointer_pos)
             .map(|widget| widget.id());
     }
@@ -39,12 +38,12 @@ fn get_pointer_target(
 }
 
 /// `true` if this [`PointerEvent`] type is likely to occur every frame.
-fn is_very_frequent(e: &PointerEvent) -> bool {
+const fn is_very_frequent(e: &PointerEvent) -> bool {
     matches!(e, PointerEvent::Move(..) | PointerEvent::Scroll { .. })
 }
 
 /// Short name for a [`PointerEvent`].
-fn pointer_event_short_name(e: &PointerEvent) -> &'static str {
+const fn pointer_event_short_name(e: &PointerEvent) -> &'static str {
     match e {
         PointerEvent::Down(..) => "Down",
         PointerEvent::Up(..) => "Up",
@@ -58,7 +57,7 @@ fn pointer_event_short_name(e: &PointerEvent) -> &'static str {
 }
 
 /// A position if the event has one.
-fn try_event_position(event: &PointerEvent) -> Option<PhysicalPosition<f64>> {
+const fn try_event_position(event: &PointerEvent) -> Option<PhysicalPosition<f64>> {
     match event {
         PointerEvent::Down(PointerButtonEvent { state, .. })
         | PointerEvent::Up(PointerButtonEvent { state, .. })
@@ -80,21 +79,18 @@ fn run_event_pass<E>(
 ) -> Handled {
     let mut pass_fn = pass_fn;
 
-    if let Some(id) = target
-        && !root.has_widget(id)
-    {
-        debug_panic!("Cannot send event to non-existent widget {id}.");
+    let Some(original_target) = target else {
         return Handled::No;
-    }
-
-    let original_target = target;
-    let mut target_widget_id = target;
+    };
+    let mut target_widget_id = Some(original_target);
     let mut is_handled = false;
     while let Some(widget_id) = target_widget_id {
         let parent_id = root.widget_arena.parent_of(widget_id);
-        let mut node = root.widget_arena.get_node_mut(widget_id);
+        let Some(mut node) = root.widget_arena.nodes.find_mut(widget_id) else {
+            break;
+        };
 
-        if skip_if_disabled && node.item.state.is_disabled {
+        if skip_if_disabled && node.item.state.is_disabled() {
             // If the widget is disabled, we skip it and bubble to its parent.
             target_widget_id = parent_id;
             continue;
@@ -102,7 +98,7 @@ fn run_event_pass<E>(
 
         if !is_handled {
             let _span = enter_span(&node.item.state);
-            let widget_type_id = node.item.widget.type_id();
+            let widget_type_id = node.item.widget.as_ref().type_id();
             let stack = root
                 .property_arena
                 .get(node.item.state.property_stack_id, widget_type_id);
@@ -111,7 +107,7 @@ fn run_event_pass<E>(
                 widget_state: &mut node.item.state,
                 children: node.children.reborrow_mut(),
                 property_arena: &root.property_arena,
-                target: original_target.unwrap(),
+                target: original_target,
                 allow_pointer_capture,
                 is_handled: false,
             };
@@ -145,51 +141,13 @@ fn run_event_pass<E>(
 }
 
 // --- MARK: POINTER_EVENT
-/// See the [passes documentation](crate::doc::pass_system#event-passes).
-pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEvent) -> Handled {
-    let _span = info_span!("dispatch_pointer_event").entered();
-
-    trace!(
-        "Running ON_POINTER_EVENT pass with {}",
-        pointer_event_short_name(event)
-    );
-
-    let event_pos = try_event_position(event).map(|p| p.to_logical(root.global_state.scale_factor));
-
-    if event_pos != root.global_state.last_mouse_pos {
-        root.global_state.last_mouse_pos = event_pos;
-    }
-    root.global_state.needs_pointer_pass = true;
-
-    if root.global_state.inspector_state.is_picking_widget
-        && matches!(event, PointerEvent::Move(..))
-    {
-        return Handled::Yes;
-    }
-
-    // If the widget picker is active and this is a click event,
-    // we select the widget under the mouse and short-circuit the event pass.
-    if root.global_state.inspector_state.is_picking_widget
-        && matches!(event, PointerEvent::Down { .. })
-    {
-        let target_widget_id = get_pointer_target(root, event_pos);
-        if let Some(target_widget_id) = target_widget_id {
-            root.global_state
-                .emit_signal(RenderRootSignal::WidgetSelectedInInspector(
-                    target_widget_id,
-                ));
-        }
-        root.global_state.inspector_state.is_picking_widget = false;
-        root.global_state.inspector_state.hovered_widget = None;
-        root.root_state_mut().needs_paint = true;
-        return Handled::Yes;
-    }
-
-    let root_node = root.widget_arena.get_node_mut(root.root_id());
-    let layer_ids = root_node.item.widget.children_ids();
+fn capture_layer_pointer_events(root: &mut RenderRoot, event: &PointerEvent) {
+    let layer_ids = root.layer_root_ids();
     for layer_id in layer_ids {
-        let mut layer_root = root.widget_arena.get_node_mut(layer_id);
-        let layer_type_id = layer_root.item.widget.type_id();
+        let Some(mut layer_root) = root.widget_arena.nodes.find_mut(layer_id) else {
+            continue;
+        };
+        let layer_type_id = layer_root.item.widget.as_ref().type_id();
         if let Some(layer) = layer_root.item.widget.as_layer() {
             let stack = root
                 .property_arena
@@ -216,6 +174,51 @@ pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEv
             layer.capture_pointer_event(&mut ctx, &mut props, event);
         }
     }
+}
+
+/// See the [passes documentation](crate::doc::pass_system#event-passes).
+pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEvent) -> Handled {
+    let _span = info_span!("dispatch_pointer_event").entered();
+
+    trace!(
+        "Running ON_POINTER_EVENT pass with {}",
+        pointer_event_short_name(event)
+    );
+
+    let event_pos = try_event_position(event).map(|p| p.to_logical(root.global_state.scale_factor));
+
+    if event_pos != root.global_state.last_mouse_pos {
+        root.global_state.last_mouse_pos = event_pos;
+    }
+    root.global_state.set_needs_pointer_pass(true);
+
+    if root.global_state.inspector_state.is_picking_widget
+        && matches!(event, PointerEvent::Move(..))
+    {
+        return Handled::Yes;
+    }
+
+    // If the widget picker is active and this is a click event,
+    // we select the widget under the mouse and short-circuit the event pass.
+    if root.global_state.inspector_state.is_picking_widget
+        && matches!(event, PointerEvent::Down { .. })
+    {
+        let target_widget_id = get_pointer_target(root, event_pos);
+        if let Some(target_widget_id) = target_widget_id {
+            root.global_state
+                .emit_signal(RenderRootSignal::WidgetSelectedInInspector(
+                    target_widget_id,
+                ));
+        }
+        root.global_state.inspector_state.is_picking_widget = false;
+        root.global_state.inspector_state.hovered_widget = None;
+        if let Some(state) = root.root_state_mut() {
+            state.set_needs_paint(true);
+        }
+        return Handled::Yes;
+    }
+
+    capture_layer_pointer_events(root, event);
 
     let target_widget_id = get_pointer_target(root, event_pos);
 
@@ -289,7 +292,7 @@ pub(crate) fn run_on_text_event_pass(root: &mut RenderRoot, event: &TextEvent) -
     trace!("Running ON_TEXT_EVENT pass with {}", event.short_name());
 
     if let TextEvent::WindowFocusChange(focused) = event {
-        root.global_state.window_focused = *focused;
+        root.global_state.set_window_focused(*focused);
     }
 
     let target = root.global_state.focused_widget.or_else(|| {
@@ -334,7 +337,9 @@ pub(crate) fn run_on_text_event_pass(root: &mut RenderRoot, event: &TextEvent) -
             root.global_state.inspector_state.is_picking_widget =
                 !root.global_state.inspector_state.is_picking_widget;
             root.global_state.inspector_state.hovered_widget = None;
-            root.root_state_mut().needs_paint = true;
+            if let Some(state) = root.root_state_mut() {
+                state.set_needs_paint(true);
+            }
             handled = Handled::Yes;
         }
 
@@ -342,8 +347,11 @@ pub(crate) fn run_on_text_event_pass(root: &mut RenderRoot, event: &TextEvent) -
             && key.state == KeyState::Down
             && handled == Handled::No
         {
-            root.global_state.debug_paint = !root.global_state.debug_paint;
-            root.root_state_mut().needs_paint = true;
+            root.global_state
+                .set_debug_paint(!root.global_state.debug_paint());
+            if let Some(state) = root.root_state_mut() {
+                state.set_needs_paint(true);
+            }
             handled = Handled::Yes;
         }
     }
@@ -393,12 +401,13 @@ pub(crate) fn run_on_access_event_pass(
             handled = Handled::Yes;
         }
         accesskit::Action::ScrollIntoView if !handled.is_handled() => {
-            let widget_state = root.widget_arena.get_state(target);
-            let rect = widget_state.border_box();
-            root.global_state
-                .scroll_request_targets
-                .push((target, rect));
-            handled = Handled::Yes;
+            if let Some(widget_state) = root.widget_arena.get_state(target) {
+                let rect = widget_state.border_box();
+                root.global_state
+                    .scroll_request_targets
+                    .push((target, rect));
+                handled = Handled::Yes;
+            }
         }
         _ => {}
     }

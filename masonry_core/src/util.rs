@@ -48,6 +48,7 @@ pub trait Sanitize {
     ///
     /// See the specific implementation docs for more details.
     #[track_caller]
+    #[must_use = "Use the sanitized value."]
     fn sanitize(self, name: &str) -> Self;
 }
 
@@ -87,20 +88,17 @@ impl Sanitize for Option<f64> {
     /// Panics if the value is non-finite or negative and debug assertions are enabled.
     #[track_caller]
     fn sanitize(self, name: &str) -> Self {
-        match self {
-            Some(val) => {
-                if !val.is_finite() {
-                    debug_panic!("{name} must be finite. Received: {val}");
-                    None
-                } else if val < 0. {
-                    debug_panic!("{name} must be non-negative. Received: {val}");
-                    None
-                } else {
-                    Some(val)
-                }
+        self.filter(|val| {
+            if !val.is_finite() {
+                debug_panic!("{name} must be finite. Received: {val}");
+                false
+            } else if *val < 0.0 {
+                debug_panic!("{name} must be non-negative. Received: {val}");
+                false
+            } else {
+                true
             }
-            None => None,
-        }
+        })
     }
 }
 
@@ -109,7 +107,8 @@ impl Sanitize for Option<f64> {
 pub(crate) type AnyMap = anymap3::Map<dyn anymap3::CloneAny + Send + Sync>;
 
 /// Convert a 2d rectangle from Parley to one used for drawing in Vello and other maths.
-pub fn bounding_box_to_rect(bb: parley::BoundingBox) -> kurbo::Rect {
+#[must_use = "Use the converted rectangle."]
+pub const fn bounding_box_to_rect(bb: parley::BoundingBox) -> kurbo::Rect {
     kurbo::Rect {
         x0: bb.x0,
         y0: bb.y0,
@@ -153,6 +152,7 @@ static DEBUG_COLOR: &[Color] = &[
 ///
 /// The same color is always returned given the same id, usually the id of a widget.
 /// When painting a widget, [`PaintCtx::debug_color`][crate::core::PaintCtx::debug_color] is typically used instead.
+#[must_use = "Use the debug color."]
 pub fn get_debug_color(id: u64) -> Color {
     let color_num = id as usize % DEBUG_COLOR.len();
     DEBUG_COLOR[color_num]
@@ -164,4 +164,74 @@ pub(crate) struct ParentLinkedList<'a> {
     pub(crate) widget: &'a dyn Widget,
     pub(crate) id: WidgetId,
     pub(crate) parent: Option<&'a Self>,
+}
+
+/// Allocates nonzero identifiers unique within one allocator, without wrapping.
+///
+/// Use one static allocator per identifier namespace. Exhausting the counter is
+/// unrecoverable because reissuing an identifier could route an operation to an
+/// unrelated object.
+#[derive(Debug)]
+pub struct IdAllocator(std::sync::atomic::AtomicU64);
+
+impl Default for IdAllocator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl IdAllocator {
+    /// Creates an allocator starting at identifier one.
+    #[must_use = "Retain the allocator to allocate unique identifiers."]
+    pub const fn new() -> Self {
+        Self(std::sync::atomic::AtomicU64::new(1))
+    }
+
+    /// Allocates the next unique identifier.
+    #[must_use = "Use the allocated identifier."]
+    pub fn allocate(&self) -> std::num::NonZeroU64 {
+        use std::sync::atomic::Ordering;
+        let counter = &self.0;
+        let mut current = counter.load(Ordering::Relaxed);
+        while let Some(id) = std::num::NonZeroU64::new(current) {
+            let Some(next) = current.checked_add(1) else {
+                break;
+            };
+            match counter.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed)
+            {
+                Ok(_) => return id,
+                Err(actual) => current = actual,
+            }
+        }
+        tracing::error!("Unique identifier space exhausted");
+        std::process::abort();
+    }
+}
+
+#[cfg(test)]
+mod id_allocator_tests {
+    use super::IdAllocator;
+
+    #[test]
+    fn concurrent_allocations_are_unique_and_nonzero() {
+        let allocator = IdAllocator::new();
+        let mut ids = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        (0..1000)
+                            .map(|_| allocator.allocate().get())
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|worker| worker.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        ids.sort_unstable();
+        assert_eq!(ids, (1..=8000).collect::<Vec<_>>());
+        assert_eq!(allocator.allocate().get(), 8001);
+    }
 }

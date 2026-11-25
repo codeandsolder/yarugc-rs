@@ -22,7 +22,7 @@ pub type AnyPod = Pod<Box<dyn AnyNode>>;
 
 impl<N: DomNode> Pod<N> {
     pub const fn new(node: N, props: N::Props, flags: PodFlags) -> Self {
-        Self { node, props, flags }
+        Self { node, flags, props }
     }
 
     /// Erases the type of this [`Pod`] and applies props if necessary.
@@ -72,9 +72,8 @@ impl<N: DomNode> SuperElement<Pod<N>, ViewCtx> for AnyPod {
     fn with_downcast_val<R>(
         mut this: Self::Mut<'_>,
         f: impl FnOnce(PodMut<'_, N>) -> R,
-    ) -> (Self::Mut<'_>, R) {
-        let downcast = this.downcast();
-        let ret = f(downcast);
+    ) -> (Self::Mut<'_>, Option<R>) {
+        let ret = this.try_downcast().map(f);
         (this, ret)
     }
 }
@@ -108,7 +107,7 @@ pub struct PodMut<'a, N: DomNode> {
 }
 
 impl<'a, N: DomNode> PodMut<'a, N> {
-    pub fn new(
+    pub const fn new(
         node: &'a mut N,
         props: &'a mut N::Props,
         flags: &'a mut PodFlags,
@@ -125,7 +124,7 @@ impl<'a, N: DomNode> PodMut<'a, N> {
         }
     }
 
-    pub fn reborrow_mut(&mut self) -> PodMut<'_, N> {
+    pub const fn reborrow_mut(&mut self) -> PodMut<'_, N> {
         PodMut {
             node: self.node,
             props: self.props,
@@ -145,14 +144,14 @@ impl<'a, N: DomNode> PodMut<'a, N> {
 }
 
 impl PodMut<'_, Box<dyn AnyNode>> {
-    fn downcast<N: DomNode>(&mut self) -> PodMut<'_, N> {
-        PodMut::new(
-            self.node.deref_mut().as_any_mut().downcast_mut().unwrap(),
-            self.props.downcast_mut().unwrap(),
+    fn try_downcast<N: DomNode>(&mut self) -> Option<PodMut<'_, N>> {
+        Some(PodMut::new(
+            self.node.deref_mut().as_any_mut().downcast_mut()?,
+            self.props.downcast_mut()?,
             self.flags,
             self.parent,
-            false,
-        )
+            self.was_removed,
+        ))
     }
 }
 
@@ -186,7 +185,7 @@ impl PodFlags {
     const WAS_CREATED: u8 = 1 << 1;
     const NEEDS_UPDATE: u8 = 1 << 2;
 
-    pub(crate) fn new(in_hydration: bool) -> Self {
+    pub(crate) const fn new(in_hydration: bool) -> Self {
         if in_hydration {
             Self(Self::WAS_CREATED | Self::IN_HYDRATION)
         } else {
@@ -195,27 +194,30 @@ impl PodFlags {
     }
 
     /// This should only be used in tests, other than within the element props
-    pub(crate) fn clear(&mut self) {
+    pub(crate) const fn clear(&mut self) {
         self.0 = 0;
     }
 
     /// Whether the current element was just created, this is usually `true` within `View::build`, but can also happen, e.g. within a `OneOf` variant change.
-    pub fn was_created(&self) -> bool {
+    #[must_use = "Use the flag to determine which updates are necessary."]
+    pub const fn was_created(&self) -> bool {
         self.0 & Self::WAS_CREATED != 0
     }
 
     /// Whether the current element is within a hydration context, that could e.g. happen when inside a [`Templated`](crate::Templated) view.
-    pub fn in_hydration(&self) -> bool {
+    #[must_use = "Use the flag to determine which updates are necessary."]
+    pub const fn in_hydration(&self) -> bool {
         self.0 & Self::IN_HYDRATION != 0
     }
 
     /// Whether the current element generally needs to be updated, this serves as cheap preliminary check whether anything changed at all.
-    pub fn needs_update(&self) -> bool {
+    #[must_use = "Use the flag to determine which updates are necessary."]
+    pub const fn needs_update(&self) -> bool {
         self.0 & Self::NEEDS_UPDATE != 0
     }
 
     /// This should be called as soon as anything has changed for the current element (except children, as they're handled within the element views).
-    pub fn set_needs_update(&mut self) {
+    pub const fn set_needs_update(&mut self) {
         self.0 |= Self::NEEDS_UPDATE;
     }
 }

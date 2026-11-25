@@ -11,6 +11,7 @@ impl<W: Widget> UsesProperty<BorderColor> for W {}
 /// The color of a widget's border.
 #[expect(missing_docs, reason = "field names are self-descriptive")]
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[must_use = "Use the configured border color."]
 pub struct BorderColor {
     pub color: AlphaColor<Srgb>,
 }
@@ -51,6 +52,7 @@ impl BorderColor {
     /// Returns `false` if the color can be safely treated as non-existent.
     ///
     /// May have false positives.
+    #[must_use = "Check whether border painting can be skipped."]
     pub const fn is_visible(&self) -> bool {
         let alpha = self.color.components[3];
         alpha != 0.0

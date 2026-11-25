@@ -1,16 +1,10 @@
 // Copyright 2025 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use accesskit::{Node, Role};
+use accesskit::Role;
 use tracing::{Span, trace_span};
 
-use crate::core::{
-    AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesRef,
-    RegisterCtx, Widget, WidgetId, WidgetMut, WidgetPod,
-};
-use crate::imaging::Painter;
-use crate::kurbo::{Axis, Point, Size};
-use crate::layout::{LenReq, Length};
+use crate::core::{NewWidget, NoAction, Widget, WidgetId, WidgetPod};
 
 /// A pass-through container that hosts exactly one child, which may be replaced dynamically.
 ///
@@ -50,9 +44,10 @@ pub struct Passthrough {
 // --- MARK: BUILDERS
 impl Passthrough {
     /// Creates a new `Passthrough` with the given initial child.
+    #[must_use = "Use the returned value."]
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
-            inner: child.erased().to_pod(),
+            inner: child.erased().into_pod(),
         }
     }
 }
@@ -60,6 +55,7 @@ impl Passthrough {
 // --- MARK: METHODS
 impl Passthrough {
     /// Returns the [`WidgetId`] of the hosted child.
+    #[must_use = "Use the returned value."]
     pub fn inner_id(&self) -> WidgetId {
         self.inner.id()
     }
@@ -67,65 +63,17 @@ impl Passthrough {
 
 // --- MARK: WIDGETMUT
 impl Passthrough {
-    /// Replaces the child widget with a new one.
-    pub fn set_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<impl Widget + ?Sized>) {
-        let old = std::mem::replace(&mut this.widget.inner, child.erased().to_pod());
-        this.ctx.remove_child(old);
-    }
-
-    /// Returns a mutable reference to the hosted child.
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
-        this.ctx.get_mut(&mut this.widget.inner)
-    }
+    child_accessors!(inner, set_child, child_mut, erased);
 }
 
 // --- MARK: IMPL WIDGET
 impl Widget for Passthrough {
     type Action = NoAction;
 
-    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.inner);
-    }
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        axis: Axis,
-        _len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        ctx.redirect_measurement(&mut self.inner, axis, cross_length)
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        ctx.run_layout(&mut self.inner, size);
-        ctx.place_child(&mut self.inner, Point::ORIGIN);
-        ctx.derive_baselines(&self.inner);
-    }
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-    }
+    masonry_core::single_child_container!(inner, fill);
 
     fn accessibility_role(&self) -> Role {
         Role::GenericContainer
-    }
-
-    fn accessibility(
-        &mut self,
-        _ctx: &mut AccessCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _node: &mut Node,
-    ) {
-    }
-
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.inner.id()])
     }
 
     fn make_trace_span(&self, id: WidgetId) -> Span {
@@ -152,17 +100,21 @@ mod tests {
 
         assert_render_snapshot!(harness, "passthrough_initial_label_A");
 
-        harness.edit_root_widget(|mut host| {
-            let mut child = Passthrough::child_mut(&mut host);
+        harness
+            .edit_root_widget(|mut host| {
+                let mut child = Passthrough::child_mut::<dyn Widget>(&mut host).unwrap();
 
-            // Test that child_mut returns a pointer to the child label
-            let _ = child.downcast::<Label>();
-        });
+                // Test that child_mut returns a pointer to the child label
+                assert!(child.try_downcast::<Label>().is_some());
+            })
+            .unwrap();
 
         // Replace with a label with different text
-        harness.edit_root_widget(|mut host| {
-            Passthrough::set_child(&mut host, Label::new("B").prepare());
-        });
+        harness
+            .edit_root_widget(|mut host| {
+                Passthrough::set_child(&mut host, Label::new("B").prepare());
+            })
+            .unwrap();
 
         assert_render_snapshot!(harness, "passthrough_replaced_label_B");
     }

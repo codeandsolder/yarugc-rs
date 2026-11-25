@@ -53,9 +53,10 @@ fn app_logic(clicks: &mut u32) -> impl HtmlDivElement<u32> + use<> {
     ))
 }
 
-pub fn main() {
+pub fn main() -> Result<(), xilem_web::DomError> {
     let clicks = 0;
-    App::new(document_body(), clicks, app_logic).run();
+    App::new(document_body()?, clicks, app_logic)?.run();
+    Ok(())
 }
 ```
 

@@ -95,7 +95,7 @@ fn transforms_handle_content_box_space_translation() {
         .with_props(Dimensions::fixed(40.px(), 40.px()));
 
     let harness = TestHarness::create(test_property_set(), root);
-    let child = harness.get_widget(tag);
+    let child = harness.get_widget(tag).unwrap();
     let ctx = child.ctx();
 
     // Border 0.5 + padding (1.0,2.0) gives top-left content inset (1.5,2.5).
@@ -106,26 +106,26 @@ fn transforms_handle_content_box_space_translation() {
     );
     // (0,0) + content inset (1.5,2.5), then scale (2,3) and add layout origin (5,7).
     assert_point_approx_eq(
-        "to_window content origin",
-        ctx.to_window(Point::ORIGIN),
+        "local_to_window content origin",
+        ctx.local_to_window(Point::ORIGIN),
         Point::new(8., 14.5),
     );
     // (2,1) + content inset (1.5,2.5) = (3.5,3.5), then scale (2,3) and add (5,7).
     assert_point_approx_eq(
-        "to_window local point",
-        ctx.to_window(Point::new(2., 1.)),
+        "local_to_window local point",
+        ctx.local_to_window(Point::new(2., 1.)),
         Point::new(12., 17.5),
     );
     // Border box origin (-1.5,-2.5) cancels content inset, leaving the layout origin (5,7).
     assert_point_approx_eq(
-        "to_window border origin",
-        ctx.to_window(ctx.border_box().origin()),
+        "local_to_window border origin",
+        ctx.local_to_window(ctx.border_box().origin()),
         Point::new(5., 7.),
     );
     // Inverse: ((12,17.5) - (5,7)) / (2,3) = (3.5,3.5), then subtract inset (1.5,2.5).
     assert_point_approx_eq(
-        "to_local",
-        ctx.to_local(Point::new(12., 17.5)),
+        "window_to_local",
+        ctx.window_to_local(Point::new(12., 17.5)),
         Point::new(2., 1.),
     );
     // window_transform bakes in the required calculations and achieves the same result.

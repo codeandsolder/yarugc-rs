@@ -46,6 +46,7 @@ pub struct VerticalStack {
 }
 
 impl VerticalStack {
+    #[must_use = "Use the returned value."]
     pub fn new(gap: f64) -> Self {
         Self {
             children: Vec::new(),
@@ -58,18 +59,21 @@ impl VerticalStack {
 
 impl VerticalStack {
     pub fn add_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<dyn Widget>) {
-        this.widget.children.push(child.to_pod());
+        this.widget.children.push(child.into_pod());
         this.ctx.children_changed();
     }
 
     pub fn remove_child(this: &mut WidgetMut<'_, Self>, n: usize) {
-        this.widget.children.remove(n);
-        this.ctx.children_changed();
+        if n < this.widget.children.len() {
+            let child = this.widget.children.remove(n);
+            this.ctx.remove_child(child);
+        }
     }
 
     pub fn clear_children(this: &mut WidgetMut<'_, Self>) {
-        this.widget.children.clear();
-        this.ctx.children_changed();
+        for child in this.widget.children.drain(..) {
+            this.ctx.remove_child(child);
+        }
     }
 }
 
@@ -97,8 +101,8 @@ impl Widget for VerticalStack {
         cross_length: Option<Length>,
     ) -> Length {
         let (len_req, min_result) = match len_req {
-            LenReq::MinContent | LenReq::MaxContent => (len_req, Length::ZERO),
-            LenReq::FitContent(space) => (LenReq::MinContent, space),
+            LenReq::Min | LenReq::Max => (len_req, Length::ZERO),
+            LenReq::Fit(space) => (LenReq::Min, space),
         };
 
         let auto_length = len_req.into();
@@ -114,7 +118,7 @@ impl Widget for VerticalStack {
         }
 
         if axis == Axis::Vertical {
-            let gap_count = (self.children.len() - 1) as f64;
+            let gap_count = crate::layout_count(self.children.len().saturating_sub(1));
             let gaps_length = gap_count * self.gap;
             length = length.saturating_add(gaps_length.px());
         }
@@ -128,9 +132,13 @@ impl Widget for VerticalStack {
         _props: &PropertiesRef<'_>,
         size: Size,
     ) {
-        let gap_count = (self.children.len() - 1) as f64;
-        let total_child_vertical_space = size.height - self.gap * gap_count;
-        let child_vertical_space = total_child_vertical_space / self.children.len() as f64;
+        if self.children.is_empty() {
+            ctx.clear_baselines();
+            return;
+        }
+        let gap_count = crate::layout_count(self.children.len().saturating_sub(1));
+        let total_child_vertical_space = self.gap.mul_add(-gap_count, size.height);
+        let child_vertical_space = total_child_vertical_space / crate::layout_count(self.children.len());
 
         let width_def = LenDef::FitContent(size.width.px());
         let height_def = LenDef::FitContent(child_vertical_space.max(0.).px());
@@ -178,6 +186,6 @@ impl Widget for VerticalStack {
     // ---
 
     fn children_ids(&self) -> ChildrenIds {
-        self.children.iter().map(|child| child.id()).collect()
+        self.children.iter().map(WidgetPod::id).collect()
     }
 }

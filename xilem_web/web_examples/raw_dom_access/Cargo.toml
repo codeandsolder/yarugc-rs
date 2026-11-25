@@ -17,3 +17,6 @@ console_log = "1.0.0"
 log = "0.4.29"
 web-sys = "0.3.91"
 xilem_web = { path = "../.." }
+
+[lints]
+workspace = true

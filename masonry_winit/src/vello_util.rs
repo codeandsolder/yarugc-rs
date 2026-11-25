@@ -16,10 +16,21 @@ use winit::event_loop::OwnedDisplayHandle;
 
 use crate::app_driver::WgpuLimits;
 
+const PREMUL_BLEND_STATE: BlendState = BlendState {
+    alpha: BlendComponent::REPLACE,
+    color: BlendComponent {
+        src_factor: BlendFactor::SrcAlpha,
+        dst_factor: BlendFactor::Zero,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
+
 #[derive(Debug)]
 pub(crate) enum RenderSurfaceError {
     CreateSurface(wgpu::CreateSurfaceError),
-    NoCompatibleDevice,
+    RequestAdapter(wgpu::RequestAdapterError),
+    RequestDevice(wgpu::RequestDeviceError),
+    UnsupportedPresentMode(PresentMode),
     UnsupportedSurfaceFormat,
 }
 
@@ -27,13 +38,26 @@ impl core::fmt::Display for RenderSurfaceError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::CreateSurface(err) => write!(f, "creating surface failed: {err}"),
-            Self::NoCompatibleDevice => write!(f, "no compatible WGPU device found"),
+            Self::RequestAdapter(err) => write!(f, "requesting WGPU adapter failed: {err}"),
+            Self::RequestDevice(err) => write!(f, "requesting WGPU device failed: {err}"),
+            Self::UnsupportedPresentMode(mode) => {
+                write!(f, "unsupported presentation mode: {mode:?}")
+            }
             Self::UnsupportedSurfaceFormat => write!(f, "unsupported surface format"),
         }
     }
 }
 
-impl std::error::Error for RenderSurfaceError {}
+impl std::error::Error for RenderSurfaceError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::CreateSurface(err) => Some(err),
+            Self::RequestAdapter(err) => Some(err),
+            Self::RequestDevice(err) => Some(err),
+            Self::UnsupportedPresentMode(_) | Self::UnsupportedSurfaceFormat => None,
+        }
+    }
+}
 
 /// Simple render context that maintains wgpu state for rendering the pipeline.
 pub(crate) struct RenderContext {
@@ -109,7 +133,7 @@ impl RenderContext {
     }
 
     /// Creates a new surface for the specified window and dimensions.
-    pub(crate) async fn create_surface<'w>(
+    pub(crate) fn create_surface<'w>(
         &mut self,
         window: impl Into<wgpu::SurfaceTarget<'w>>,
         width: u32,
@@ -124,38 +148,29 @@ impl RenderContext {
             height,
             present_mode,
         )
-        .await
     }
 
     /// Creates a new render surface for the specified window and dimensions.
-    pub(crate) async fn create_render_surface<'w>(
+    pub(crate) fn create_render_surface<'w>(
         &mut self,
         surface: Surface<'w>,
         width: u32,
         height: u32,
         present_mode: PresentMode,
     ) -> Result<RenderSurface<'w>, RenderSurfaceError> {
-        let dev_id = self
-            .device(Some(&surface))
-            .await
-            .ok_or(RenderSurfaceError::NoCompatibleDevice)?;
+        let dev_id = self.device(&surface)?;
 
         let device_handle = &self.devices[dev_id];
         let capabilities = surface.get_capabilities(&device_handle.adapter);
+        if !supports_present_mode(&capabilities.present_modes, present_mode) {
+            return Err(RenderSurfaceError::UnsupportedPresentMode(present_mode));
+        }
         let format = capabilities
             .formats
             .into_iter()
             .find(|it| matches!(it, TextureFormat::Rgba8Unorm | TextureFormat::Bgra8Unorm))
             .ok_or(RenderSurfaceError::UnsupportedSurfaceFormat)?;
 
-        const PREMUL_BLEND_STATE: BlendState = BlendState {
-            alpha: BlendComponent::REPLACE,
-            color: BlendComponent {
-                src_factor: BlendFactor::SrcAlpha,
-                dst_factor: BlendFactor::Zero,
-                operation: wgpu::BlendOperation::Add,
-            },
-        };
         // TODO: check if the window is transparent then set alpha_mode accordingly
         // also, Opaque mode may help in saving power.
         // blocked on winit not exposing a way to check for transparency
@@ -247,10 +262,11 @@ impl RenderContext {
             return;
         }
 
-        #[allow(
+        #[expect(
             unsafe_code,
             reason = "We only mutate a backend-specific flag on the Metal HAL surface when the runtime backend matches Metal"
         )]
+        // SAFETY: The HAL surface is borrowed from its owning wgpu surface and the Metal layer is locked before modification.
         unsafe {
             if let Some(hal_surface) = surface.surface.as_hal::<::wgpu::hal::api::Metal>() {
                 let guard = hal_surface.render_layer().lock();
@@ -268,9 +284,16 @@ impl RenderContext {
         &self,
         surface: &mut RenderSurface<'_>,
         present_mode: PresentMode,
-    ) {
+    ) -> bool {
+        let capabilities = surface
+            .surface
+            .get_capabilities(&self.devices[surface.dev_id].adapter);
+        if !supports_present_mode(&capabilities.present_modes, present_mode) {
+            return false;
+        }
         surface.config.present_mode = present_mode;
         self.configure_surface(surface);
+        true
     }
 
     fn configure_surface(&self, surface: &RenderSurface<'_>) {
@@ -279,31 +302,27 @@ impl RenderContext {
     }
 
     /// Finds or creates a compatible device handle id.
-    pub(crate) async fn device(
-        &mut self,
-        compatible_surface: Option<&Surface<'_>>,
-    ) -> Option<usize> {
-        let compatible = match compatible_surface {
-            Some(s) => self
-                .devices
-                .iter()
-                .enumerate()
-                .find(|(_, d)| d.adapter.is_surface_supported(s))
-                .map(|(i, _)| i),
-            None => (!self.devices.is_empty()).then_some(0),
-        };
-        if compatible.is_none() {
-            return self.new_device(compatible_surface).await;
+    fn device(&mut self, surface: &Surface<'_>) -> Result<usize, RenderSurfaceError> {
+        if let Some(id) = self
+            .devices
+            .iter()
+            .position(|device| device.adapter.is_surface_supported(surface))
+        {
+            return Ok(id);
         }
-        compatible
+        self.new_device(surface)
     }
 
     /// Creates a compatible device handle id.
-    async fn new_device(&mut self, compatible_surface: Option<&Surface<'_>>) -> Option<usize> {
-        let adapter =
-            wgpu::util::initialize_adapter_from_env_or_default(&self.instance, compatible_surface)
-                .await
-                .ok()?;
+    fn new_device(
+        &mut self,
+        compatible_surface: &Surface<'_>,
+    ) -> Result<usize, RenderSurfaceError> {
+        let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(
+            &self.instance,
+            Some(compatible_surface),
+        ))
+        .map_err(RenderSurfaceError::RequestAdapter)?;
         let supported_features = adapter.features();
         let required_limits = match &self.requested_limits {
             WgpuLimits::Default => wgpu::Limits::default(),
@@ -314,25 +333,27 @@ impl RenderContext {
         let requested_features = wgpu::Features::CLEAR_TEXTURE | self.requested_features;
         let required_features = supported_features & requested_features;
 
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: None,
-                required_features,
-                required_limits,
-                memory_hints: MemoryHints::default(),
-                trace: wgpu::Trace::Off,
-                experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            })
-            .await
-            .ok()?;
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: None,
+            required_features,
+            required_limits,
+            memory_hints: MemoryHints::default(),
+            trace: wgpu::Trace::Off,
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
+        }))
+        .map_err(RenderSurfaceError::RequestDevice)?;
         let device_handle = DeviceHandle {
             adapter,
             device,
             queue,
         };
         self.devices.push(device_handle);
-        Some(self.devices.len() - 1)
+        Ok(self.devices.len() - 1)
     }
+}
+
+fn supports_present_mode(supported: &[PresentMode], mode: PresentMode) -> bool {
+    matches!(mode, PresentMode::AutoVsync | PresentMode::AutoNoVsync) || supported.contains(&mode)
 }
 
 /// Masonry renders into an intermediate texture because surface textures are not suitable for all
@@ -393,6 +414,16 @@ impl std::fmt::Debug for RenderSurface<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_modes_fall_back_and_explicit_modes_require_support() {
+        let supported = [PresentMode::Fifo];
+        assert!(supports_present_mode(&supported, PresentMode::AutoVsync));
+        assert!(supports_present_mode(&supported, PresentMode::AutoNoVsync));
+        assert!(supports_present_mode(&supported, PresentMode::Fifo));
+        assert!(!supports_present_mode(&supported, PresentMode::Immediate));
+        assert!(!supports_present_mode(&supported, PresentMode::Mailbox));
+    }
 
     #[test]
     fn requested_features_are_intersected_with_adapter_features() {

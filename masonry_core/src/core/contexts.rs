@@ -8,7 +8,7 @@
     reason = "Not sure if it's worth the effort"
 )]
 
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 use std::collections::hash_map::Entry;
 
 use accesskit::{NodeId, TreeUpdate};
@@ -16,17 +16,16 @@ use anymore::AnyDebug;
 use dpi::{LogicalPosition, PhysicalPosition};
 use parley::{FontContext, LayoutContext};
 use tracing::{trace, warn};
-use tree_arena::{ArenaMut, ArenaMutList, ArenaRefList};
+use tree_arena::{ArenaMutList, ArenaRef, ArenaRefList};
 
 use crate::app::{MutateCallback, RenderRootSignal, RenderRootState};
 use crate::core::{
     AllowRawMut, BrushIndex, ClassSet, ErasedAction, FromDynWidget, LayerType, NewWidget,
-    PaintLayerMode, PropertiesMut, PropertiesRef, PropertyArena, PropertyCache, PropertyStackId,
-    ResizeDirection, Widget, WidgetArenaNode, WidgetId, WidgetMut, WidgetPod, WidgetRef,
-    WidgetState,
+    PaintLayerMode, PropertiesMut, PropertiesRef, PropertyArena, PropertyCache, ResizeDirection,
+    Widget, WidgetArenaNode, WidgetId, WidgetMut, WidgetPod, WidgetRef, WidgetState,
 };
 use crate::kurbo::{Affine, Axis, Insets, Point, Rect, Size, Vec2};
-use crate::layout::{LayoutSize, LenDef, Length, SizeDef};
+use crate::layout::{LayoutSize, LenDef, LenReq, Length, SizeDef, UnitPoint};
 use crate::passes::layout::{place_widget, resolve_length, resolve_size, run_layout_on};
 use crate::peniko::Color;
 use crate::util::{ParentLinkedList, get_debug_color};
@@ -151,6 +150,7 @@ pub struct ComposeCtx<'a> {
 
 /// A context passed to [`Widget::paint`] method.
 pub struct PaintCtx<'a> {
+    pub(crate) layer_mode: Option<PaintLayerMode>,
     pub(crate) global_state: &'a mut RenderRootState,
     pub(crate) widget_state: &'a mut WidgetState,
     pub(crate) children: ArenaMutList<'a, WidgetArenaNode>,
@@ -180,53 +180,48 @@ impl_context_method!(
     RawCtx<'_>,
     {
         /// The `WidgetId` of the current widget.
-        pub fn widget_id(&self) -> WidgetId {
+        #[must_use = "Use the widget identifier."]
+        pub const fn widget_id(&self) -> WidgetId {
             self.widget_state.id
         }
 
-        #[allow(dead_code, reason = "Copy-pasted for some types that don't need it")]
-        /// Helper method to get a direct reference to a child widget from its `WidgetPod`.
-        fn get_child<Child: Widget>(&self, child: &'_ WidgetPod<Child>) -> &'_ Child {
-            let child_ref = &*self
-                .children
-                .item(child.id())
-                .expect("get_child: child not found")
-                .item
-                .widget;
-            (child_ref as &dyn Any).downcast_ref::<Child>().unwrap()
-        }
-
-        #[allow(dead_code, reason = "Copy-pasted for some types that don't need it")]
-        /// Helper method to get a direct reference to a child widget from its `WidgetPod`.
-        fn get_child_dyn(&self, child: &'_ WidgetPod<impl Widget + ?Sized>) -> &'_ dyn Widget {
-            &*self
-                .children
-                .item(child.id())
-                .expect("get_child: child not found")
-                .item
-                .widget
-        }
-
-        #[allow(dead_code, reason = "Copy-pasted for some types that don't need it")]
-        /// Helper method to get a direct reference to a child widget's `WidgetState` from its `WidgetPod`.
-        fn get_child_state(&self, child: &'_ WidgetPod<impl Widget + ?Sized>) -> &'_ WidgetState {
-            &self
-                .children
-                .item(child.id())
-                .expect("get_child_state: child not found")
-                .item
-                .state
-        }
-
-        #[allow(dead_code, reason = "Copy-pasted for some types that don't need it")]
         /// Returns the local transform of this widget.
         ///
         /// This transform is used during the mapping of this widget's border-box coordinate space
         /// to the parent's border-box coordinate space.
         ///
         /// This transform is applied before `scroll_translation` and `origin`.
-        pub fn transform(&self) -> Affine {
+        #[must_use = "Use the local transform."]
+        pub const fn transform(&self) -> Affine {
             self.widget_state.transform
+        }
+    }
+);
+
+impl_context_method!(
+    MutateCtx<'_>,
+    ActionCtx<'_>,
+    QueryCtx<'_>,
+    EventCtx<'_>,
+    UpdateCtx<'_>,
+    MeasureCtx<'_>,
+    LayoutCtx<'_>,
+    ComposeCtx<'_>,
+    PaintCtx<'_>,
+    AccessCtx<'_>,
+    {
+        /// Helper method to get a direct reference to a child widget's `WidgetState` from its `WidgetPod`.
+        #[track_caller]
+        fn get_child_state(&self, child: &WidgetPod<impl Widget + ?Sized>) -> Option<&WidgetState> {
+            let Some(node) = self.children.item(child.id()) else {
+                debug_panic!(
+                    "Widget {} has no registered child {}",
+                    self.widget_id(),
+                    child.id()
+                );
+                return None;
+            };
+            Some(&node.item.state)
         }
     }
 );
@@ -245,7 +240,7 @@ impl_context_method!(
     RawCtx<'_>,
     {
         /// Returns a mutable reference to this widget's property cache.
-        pub fn property_cache(&mut self) -> &mut PropertyCache {
+        pub const fn property_cache(&mut self) -> &mut PropertyCache {
             &mut self.widget_state.property_cache
         }
     }
@@ -253,7 +248,8 @@ impl_context_method!(
 
 impl QueryCtx<'_> {
     /// Returns a reference to this widget's property cache.
-    pub fn property_cache(&self) -> &PropertyCache {
+    #[must_use = "Inspect the cached property resolutions."]
+    pub const fn property_cache(&self) -> &PropertyCache {
         &self.widget_state.property_cache
     }
 }
@@ -273,16 +269,16 @@ impl_context_method!(
         /// This one isn't defined for `PaintCtx` and `AccessCtx` because those contexts
         /// can't mutate `WidgetState`.
         #[track_caller]
-        fn get_child_state_mut<Child: Widget + ?Sized>(
+        fn get_child_state_mut(
             &mut self,
-            child: &'_ mut WidgetPod<Child>,
-        ) -> &'_ mut WidgetState {
-            &mut self
-                .children
-                .item_mut(child.id())
-                .expect("get_child_state_mut: child not found")
-                .item
-                .state
+            child: &WidgetPod<impl Widget + ?Sized>,
+        ) -> Option<&mut WidgetState> {
+            let parent = self.widget_id();
+            let Some(node) = self.children.item_mut(child.id()) else {
+                debug_panic!("Widget {parent} has no registered child {}", child.id());
+                return None;
+            };
+            Some(&mut node.item.state)
         }
     }
 );
@@ -290,35 +286,21 @@ impl_context_method!(
 // --- MARK: WIDGET_MUT
 // Methods to get a child WidgetMut from a parent.
 impl MutateCtx<'_> {
-    /// Returns a [`WidgetMut`] to a child widget.
-    pub fn get_mut<'c, Child: Widget + FromDynWidget + ?Sized>(
-        &'c mut self,
-        child: &'c mut WidgetPod<Child>,
-    ) -> WidgetMut<'c, Child> {
-        let node_mut = self
-            .children
-            .item_mut(child.id())
-            .expect("get_mut: child not found");
-        let child_stack_id = node_mut.item.state.property_stack_id;
-        let child_type_id = (*node_mut.item.widget).type_id();
-        let child_stack = self.property_arena.get(child_stack_id, child_type_id);
-        let child_ctx = MutateCtx {
-            global_state: self.global_state,
-            parent_widget_state: Some(&mut self.widget_state),
-            widget_state: &mut node_mut.item.state,
-            properties: PropertiesMut {
-                local: &mut node_mut.item.properties,
-                default_map: self.properties.default_map,
-                stack: child_stack,
-                class_set: &node_mut.item.class_set,
-            },
-            children: node_mut.children,
-            property_arena: self.property_arena,
-        };
-        WidgetMut {
-            ctx: child_ctx,
-            widget: Child::from_dyn_mut(&mut *node_mut.item.widget).unwrap(),
-        }
+    /// Returns a typed mutable handle to a direct child by its identifier.
+    /// Returns None when the child is absent or of another widget type.
+    ///
+    /// A pod created or replaced during this edit may not be registered until
+    /// the next widget-tree pass. Such a pod cannot yet be mutated through a context.
+    pub fn get_mut<Child: Widget + FromDynWidget + ?Sized>(
+        &mut self,
+        child: WidgetId,
+    ) -> Option<WidgetMut<'_, Child>> {
+        WidgetMut::from_node(
+            self.children.item_mut(child)?,
+            self.global_state,
+            self.property_arena,
+            Some(self.widget_state),
+        )
     }
 
     pub(crate) fn reborrow_mut(&mut self) -> MutateCtx<'_> {
@@ -340,7 +322,7 @@ impl MutateCtx<'_> {
         }
     }
 
-    pub(crate) fn update_mut(&mut self) -> UpdateCtx<'_> {
+    pub(crate) const fn update_mut(&mut self) -> UpdateCtx<'_> {
         UpdateCtx {
             global_state: self.global_state,
             widget_state: self.widget_state,
@@ -349,42 +331,20 @@ impl MutateCtx<'_> {
             property_arena: self.property_arena,
         }
     }
-
-    /// Sets which property stack this widget uses for property resolution.
-    pub fn set_property_stack(&mut self, stack_id: PropertyStackId) {
-        self.widget_state.request_update_props = true;
-        self.widget_state.needs_update_props = true;
-        self.widget_state.property_cache.invalidated = true;
-        self.widget_state.property_stack_id = Some(stack_id);
-    }
 }
 
 // --- MARK: WIDGET_REF
 // Methods to get a child WidgetRef from a parent.
 impl<'w> QueryCtx<'w> {
-    /// Returns a [`WidgetRef`] to a child widget.
-    pub fn get(self, child: WidgetId) -> WidgetRef<'w, dyn Widget> {
-        let child_node = self.children.item(child).expect("get_mut: child not found");
-        let child_type_id = (*child_node.item.widget).type_id();
-        let child_stack = self
-            .property_arena
-            .get(child_node.item.state.property_stack_id, child_type_id);
-        let child_ctx = QueryCtx {
-            global_state: self.global_state,
-            widget_state: &child_node.item.state,
-            properties: PropertiesRef {
-                local: &child_node.item.properties,
-                default_map: self.properties.default_map,
-                stack: child_stack,
-                class_set: &child_node.item.class_set,
-            },
-            children: child_node.children,
-            property_arena: self.property_arena,
-        };
-        WidgetRef {
-            ctx: child_ctx,
-            widget: &*child_node.item.widget,
-        }
+    /// Returns a reference to a registered child, or None if it is absent.
+    #[must_use = "Use the child reference if it exists."]
+    pub fn get(self, child: WidgetId) -> Option<WidgetRef<'w, dyn Widget>> {
+        let node = self.children.item(child)?;
+        Some(WidgetRef::from_node(
+            node,
+            self.global_state,
+            self.property_arena,
+        ))
     }
 }
 
@@ -411,7 +371,9 @@ impl_context_method!(
         /// Any cached text layouts should be invalidated when receiving [`Update::FontsChanged`].
         ///
         /// [`Update::FontsChanged`]: crate::core::Update::FontsChanged
-        pub fn text_contexts(&mut self) -> (&mut FontContext, &mut LayoutContext<BrushIndex>) {
+        pub const fn text_contexts(
+            &mut self,
+        ) -> (&mut FontContext, &mut LayoutContext<BrushIndex>) {
             (
                 &mut self.global_state.font_context,
                 &mut self.global_state.text_layout_context,
@@ -461,7 +423,7 @@ impl EventCtx<'_> {
         }
         // TODO: plumb pointer capture through to platform (through winit)
         self.global_state.pointer_capture_target = Some(id);
-        self.global_state.needs_pointer_pass = true;
+        self.global_state.set_needs_pointer_pass(true);
     }
 
     /// Releases the pointer previously [captured] through [`capture_pointer`].
@@ -479,21 +441,32 @@ impl EventCtx<'_> {
             return;
         }
         self.global_state.pointer_capture_target = None;
-        self.global_state.needs_pointer_pass = true;
+        self.global_state.set_needs_pointer_pass(true);
     }
 
     /// The widget originally targeted by the event.
     ///
     /// This will be different from [`widget_id`](Self::widget_id) during event bubbling.
-    pub fn target(&self) -> WidgetId {
+    #[must_use = "Use the event target."]
+    pub const fn target(&self) -> WidgetId {
         self.target
+    }
+
+    /// Whether the original event target belongs to the subtree of a direct child.
+    /// This includes events targeted at the child itself.
+    #[must_use = "Use the result to route the event to the appropriate child."]
+    pub fn target_in_child(&self, child: &WidgetPod<impl Widget + ?Sized>) -> bool {
+        self.children.item(child.id()).is_some_and(|node| {
+            child.id() == self.target || node.children.find(self.target).is_some()
+        })
     }
 
     /// Converts the given position from the window's coordinate space
     /// to this widget's content-box coordinate space.
+    #[must_use = "Use the transformed event position."]
     pub fn local_position(&self, p: PhysicalPosition<f64>) -> Point {
         let LogicalPosition { x, y } = p.to_logical(self.global_state.scale_factor);
-        self.to_local(Point { x, y })
+        self.window_to_local(Point { x, y })
     }
 }
 
@@ -526,7 +499,8 @@ impl_context_method!(ActionCtx<'_>, EventCtx<'_>, {
     }
 
     /// Determines whether the event has been handled.
-    pub fn is_handled(&self) -> bool {
+    #[must_use = "Check whether event propagation was stopped."]
+    pub const fn is_handled(&self) -> bool {
         self.is_handled
     }
 
@@ -580,11 +554,12 @@ impl AccessCtx<'_> {
     // but this seems too powerful. We should figure out another API.
     /// A mutable reference to the global [`TreeUpdate`] object in which all modified/new
     /// accessibility nodes are stored.
-    pub fn tree_update(&mut self) -> &mut TreeUpdate {
+    pub const fn tree_update(&mut self) -> &mut TreeUpdate {
         self.tree_update
     }
 
     /// Returns an id which is guaranteed not to collide with [`WidgetId`]s or with previous ids returned by this function.
+    #[must_use = "Assign the new identifier to an accessibility node."]
     pub fn next_node_id() -> NodeId {
         // TODO - Return from a pool disjoint from widget ids.
         WidgetId::next().into()
@@ -626,14 +601,20 @@ impl_context_method!(MeasureCtx<'_>, LayoutCtx<'_>, {
     /// [`LenReq::reduce`]: crate::layout::LenReq::reduce
     pub fn compute_length(
         &mut self,
-        child: &mut WidgetPod<impl Widget + ?Sized>,
+        child: &WidgetPod<impl Widget + ?Sized>,
         auto_length: LenDef,
         context_size: LayoutSize,
         axis: Axis,
         cross_length: Option<Length>,
     ) -> Length {
-        let id = child.id();
-        let node = self.children.item_mut(id).unwrap();
+        let parent = self.widget_id();
+        let Some(node) = self.children.item_mut(child.id()) else {
+            debug_panic!(
+                "Widget {parent} cannot measure unregistered child {}",
+                child.id()
+            );
+            return Length::ZERO;
+        };
         resolve_length(
             self.global_state,
             self.property_arena,
@@ -648,6 +629,28 @@ impl_context_method!(MeasureCtx<'_>, LayoutCtx<'_>, {
 
 // --- MARK: MEASURE
 impl MeasureCtx<'_> {
+    /// Measures a child within this widget's local content box.
+    ///
+    /// The child's automatic size follows the current length request and its
+    /// relative cross-axis size resolves against the available cross length.
+    /// Unlike [`redirect_measurement`](Self::redirect_measurement), this does not
+    /// propagate the outer container's measurement context or disable caching.
+    pub fn measure_child(
+        &mut self,
+        child: &WidgetPod<impl Widget + ?Sized>,
+        axis: Axis,
+        len_req: LenReq,
+        cross_length: Option<Length>,
+    ) -> Length {
+        self.compute_length(
+            child,
+            len_req.into(),
+            LayoutSize::maybe(axis.cross(), cross_length),
+            axis,
+            cross_length,
+        )
+    }
+
     /// Returns the fallback [`LenDef`] of this measurement.
     ///
     /// This is essential information for widgets that want pass through measurements.
@@ -663,7 +666,7 @@ impl MeasureCtx<'_> {
     /// [`measure`]: Widget::measure
     /// [`compute_length`]: Self::compute_length
     /// [`redirect_measurement`]: Self::redirect_measurement
-    pub fn auto_length(&mut self) -> LenDef {
+    pub const fn auto_length(&mut self) -> LenDef {
         // We're adding a new variable, auto_length, into the measure function,
         // which is not part of the cache key. Hence, we need to not cache.
         self.cache_result = false;
@@ -698,7 +701,7 @@ impl MeasureCtx<'_> {
     /// [`Ratio(0.5)`]: crate::layout::Dim::Ratio
     /// [`compute_length`]: Self::compute_length
     /// [`redirect_measurement`]: Self::redirect_measurement
-    pub fn context_size(&mut self) -> LayoutSize {
+    pub const fn context_size(&mut self) -> LayoutSize {
         // We're adding a new variable, context_size, into the measure function,
         // which is not part of the cache key. Hence, we need to not cache.
         self.cache_result = false;
@@ -716,7 +719,7 @@ impl MeasureCtx<'_> {
     ///
     /// [`measure`]: Widget::measure
     /// [`property_changed`]: Widget::property_changed
-    pub fn cache_result(&mut self, cache_result: bool) {
+    pub const fn cache_result(&mut self, cache_result: bool) {
         self.cache_result = cache_result;
     }
 
@@ -739,7 +742,7 @@ impl MeasureCtx<'_> {
     /// [`context_size`]: Self::context_size
     pub fn redirect_measurement(
         &mut self,
-        child: &mut WidgetPod<impl Widget + ?Sized>,
+        child: &WidgetPod<impl Widget + ?Sized>,
         axis: Axis,
         cross_length: Option<Length>,
     ) -> Length {
@@ -756,40 +759,98 @@ impl MeasureCtx<'_> {
     }
 }
 
+/// The child's resolved, unaligned border-box geometry after layout.
+#[derive(Debug, Clone, Copy)]
+pub struct ChildLayout {
+    /// Resolved border-box size in logical pixels.
+    pub size: Size,
+    /// First and last baselines measured from the top of the layout border box.
+    pub baselines: (f64, f64),
+}
+
+/// The child's aligned geometry after placement.
+#[derive(Debug, Clone, Copy)]
+pub struct ChildPlacement {
+    /// Origin relative to the parent's content box.
+    pub origin: Point,
+    /// First and last baselines measured from the top of the aligned border box.
+    pub baselines: (f64, f64),
+}
+
+impl ChildPlacement {
+    /// Baselines relative to the parent content box.
+    #[must_use = "Use the parent-relative baselines."]
+    pub fn parent_baselines(self) -> (f64, f64) {
+        (
+            self.origin.y + self.baselines.0,
+            self.origin.y + self.baselines.1,
+        )
+    }
+}
+
 // --- MARK: UPDATE LAYOUT
 impl LayoutCtx<'_> {
     #[track_caller]
-    fn assert_layout_done(&self, child: &WidgetPod<impl Widget + ?Sized>, method_name: &str) {
-        let child_state = self.get_child_state(child);
-        // If debug_assertions are enabled, then request_layout is always true until visited.
-        let child_not_visited = cfg!(debug_assertions) && child_state.request_layout;
-        if child_state.needs_layout() || child_not_visited {
+    fn laid_out_child(
+        &self,
+        child: &WidgetPod<impl Widget + ?Sized>,
+        method_name: &str,
+    ) -> Option<&WidgetState> {
+        let state = self.get_child_state(child)?;
+        // In debug builds, request_layout remains true until visited.
+        if state.needs_layout() || (cfg!(debug_assertions) && state.request_layout()) {
             debug_panic!(
-                "Error in {}: trying to call '{}' with child '{}' {} before computing its layout",
+                "Error in {}: trying to call '{}' with child {} before computing its layout",
                 self.widget_id(),
                 method_name,
-                self.get_child_dyn(child).short_type_name(),
-                child.id(),
+                child.id()
             );
+            return None;
         }
+        Some(state)
     }
 
     #[track_caller]
-    fn assert_placed(&self, child: &WidgetPod<impl Widget + ?Sized>, method_name: &str) {
-        if self.get_child_state(child).is_expecting_place_child_call {
+    fn placed_child(
+        &self,
+        child: &WidgetPod<impl Widget + ?Sized>,
+        method_name: &str,
+    ) -> Option<&WidgetState> {
+        let state = self.laid_out_child(child, method_name)?;
+        if state.is_expecting_place_child_call() {
             debug_panic!(
-                "Error in {}: trying to call '{}' with child '{}' {} before placing it",
+                "Error in {}: trying to call '{}' with child {} before placing it",
                 self.widget_id(),
                 method_name,
-                self.get_child_dyn(child).short_type_name(),
-                child.id(),
+                child.id()
             );
+            return None;
         }
+        Some(state)
+    }
+
+    /// Lays out one child at its preferred size within the given content box.
+    ///
+    /// Aligns the child in the remaining space and forwards its baselines to
+    /// the parent. For oversized children, alignment also controls overflow.
+    pub fn layout_child(
+        &mut self,
+        child: &WidgetPod<impl Widget + ?Sized>,
+        size: Size,
+        alignment: UnitPoint,
+    ) {
+        let child_size = self.compute_size(child, SizeDef::fit(size), size.into());
+        self.run_layout(child, child_size);
+        let remaining = size - child_size;
+        let origin = alignment.resolve(Rect::new(0.0, 0.0, remaining.width, remaining.height));
+        self.place_child(child, origin);
+        self.derive_baselines(child);
     }
 
     /// Computes the `child`'s preferred border-box size.
     ///
     /// The returned size will be finite, non-negative, and in logical pixels.
+    /// An unregistered child produces a debug diagnostic and zero size in release builds.
     ///
     /// Container widgets usually call this method as part of their [`layout`] logic, but
     /// ultimately they can disregard the result and pass a different size to [`run_layout`].
@@ -813,12 +874,18 @@ impl LayoutCtx<'_> {
     /// [`run_layout`]: Self::run_layout
     pub fn compute_size(
         &mut self,
-        child: &mut WidgetPod<impl Widget + ?Sized>,
+        child: &WidgetPod<impl Widget + ?Sized>,
         auto_size: SizeDef,
         context_size: LayoutSize,
     ) -> Size {
-        let id = child.id();
-        let node = self.children.item_mut(id).unwrap();
+        let parent = self.widget_id();
+        let Some(node) = self.children.item_mut(child.id()) else {
+            debug_panic!(
+                "Widget {parent} cannot measure unregistered child {}",
+                child.id()
+            );
+            return Size::ZERO;
+        };
         resolve_size(
             self.global_state,
             self.property_arena,
@@ -848,14 +915,22 @@ impl LayoutCtx<'_> {
     ///
     /// [`layout`]: Widget::layout
     /// [`compute_size`]: Self::compute_size
-    pub fn run_layout(&mut self, child: &mut WidgetPod<impl Widget + ?Sized>, chosen_size: Size) {
-        let id = child.id();
-        let node = self.children.item_mut(id).unwrap();
-
-        run_layout_on(self.global_state, self.property_arena, node, chosen_size);
-
-        let state_mut = &mut self.children.item_mut(id).unwrap().item.state;
-        self.widget_state.merge_up(state_mut);
+    pub fn run_layout(&mut self, child: &WidgetPod<impl Widget + ?Sized>, chosen_size: Size) {
+        let parent = self.widget_id();
+        let Some(mut node) = self.children.item_mut(child.id()) else {
+            debug_panic!(
+                "Widget {parent} cannot lay out unregistered child {}",
+                child.id()
+            );
+            return;
+        };
+        run_layout_on(
+            self.global_state,
+            self.property_arena,
+            node.reborrow_mut(),
+            chosen_size,
+        );
+        self.widget_state.merge_up(&node.item.state);
     }
 
     /// Sets the position of the `child` widget, in this widget's content-box coordinate space.
@@ -869,28 +944,24 @@ impl LayoutCtx<'_> {
     ///
     /// [`layout`]: Widget::layout
     #[track_caller]
-    pub fn place_child(&mut self, child: &mut WidgetPod<impl Widget + ?Sized>, origin: Point) {
-        self.assert_layout_done(child, "place_child");
-        if origin.x.is_nan()
-            || origin.x.is_infinite()
-            || origin.y.is_nan()
-            || origin.y.is_infinite()
-        {
-            debug_panic!(
-                "Error in {}: trying to call 'place_child' with child '{}' {} with invalid origin {:?}",
-                self.widget_id(),
-                self.get_child_dyn(child).short_type_name(),
-                child.id(),
-                origin,
-            );
+    pub fn place_child(&mut self, child: &WidgetPod<impl Widget + ?Sized>, origin: Point) {
+        if self.laid_out_child(child, "place_child").is_none() {
+            return;
         }
-
-        // Convert child's origin from this widget's content-box space to border-box space.
-        let translation = self.widget_state.border_box_translation();
-        let child_origin = origin + translation;
-        let child_state = self.get_child_state_mut(child);
-
-        place_widget(child_state, child_origin);
+        // Convert the content-box origin to border-box space before checking it.
+        let child_origin = origin + self.widget_state.border_box_translation();
+        if !child_origin.x.is_finite() || !child_origin.y.is_finite() {
+            debug_panic!(
+                "Error in {}: trying to call 'place_child' with child {} with invalid origin {:?}",
+                self.widget_id(),
+                child.id(),
+                origin
+            );
+            return;
+        }
+        if let Some(state) = self.get_child_state_mut(child) {
+            place_widget(state, child_origin);
+        }
     }
 
     /// Sets explicit paint [`Insets`] for this widget.
@@ -930,10 +1001,10 @@ impl LayoutCtx<'_> {
     /// baselines then set the same baseline as both `first` and `last`.
     ///
     /// Most container widgets can use [`derive_baselines`] instead.
-    /// Multi-child containers should derive their baselines using [`child_aligned_baselines`].
+    /// Multi-child containers should derive their baselines using [`child_placement`].
     ///
     /// [`derive_baselines`]: Self::derive_baselines
-    /// [`child_aligned_baselines`]: Self::child_aligned_baselines
+    /// [`child_placement`]: Self::child_placement
     pub fn set_baselines(&mut self, first_baseline: f64, last_baseline: f64) {
         self.widget_state.first_baseline = first_baseline + self.widget_state.border_box_insets.y0;
         self.widget_state.last_baseline = last_baseline + self.widget_state.border_box_insets.y0;
@@ -942,30 +1013,28 @@ impl LayoutCtx<'_> {
     /// Sets explicit baselines for this widget such that they match the child's aligned baselines.
     ///
     /// Most container widgets should use this method to derive their baselines from their child.
-    /// More complex containers can use [`child_aligned_baselines`] in multi-child scenarios.
+    /// More complex containers can use [`child_placement`] in multi-child scenarios.
     ///
     /// # Panics
     ///
     /// This method will panic if [`LayoutCtx::run_layout`] or [`LayoutCtx::place_child`]
     /// have not been called yet for the child.
     ///
-    /// [`child_aligned_baselines`]: Self::child_aligned_baselines
+    /// [`child_placement`]: Self::child_placement
     #[track_caller]
     pub fn derive_baselines(&mut self, child: &WidgetPod<impl Widget + ?Sized>) {
-        self.assert_layout_done(child, "derive_baselines");
-        self.assert_placed(child, "derive_baselines");
-
-        let child_state = self.get_child_state(child);
-        let first_baseline = child_state.origin.y + child_state.aligned_first_baseline();
-        let last_baseline = child_state.origin.y + child_state.aligned_last_baseline();
-        self.widget_state.first_baseline = first_baseline;
-        self.widget_state.last_baseline = last_baseline;
+        if let Some(placement) = self.child_placement(child) {
+            let (first, last) = placement.parent_baselines();
+            self.set_baselines(first, last);
+        } else {
+            self.clear_baselines();
+        }
     }
 
     /// Clears explicitly set baseline positions for this widget.
     ///
     /// This results in the effective baseline being the bottom edge of this widget's border-box.
-    pub fn clear_baselines(&mut self) {
+    pub const fn clear_baselines(&mut self) {
         self.widget_state.first_baseline = f64::NAN;
         self.widget_state.last_baseline = f64::NAN;
     }
@@ -974,98 +1043,57 @@ impl LayoutCtx<'_> {
     ///
     /// Add these insets to the content-box to get the border-box,
     /// and subtract these insets from the border-box to get the content-box.
-    pub fn border_box_insets(&mut self) -> Insets {
+    #[must_use = "Use the insets to convert between coordinate spaces."]
+    pub const fn border_box_insets(&self) -> Insets {
         self.widget_state.border_box_insets
     }
 
     /// Returns whether this widget needs to call [`LayoutCtx::run_layout`].
-    pub fn needs_layout(&self) -> bool {
+    #[must_use = "Check whether layout must be run."]
+    pub const fn needs_layout(&self) -> bool {
         self.widget_state.needs_layout()
     }
 
     /// Returns whether a child of this widget needs to call [`LayoutCtx::run_layout`].
+    #[must_use = "Check whether the child requires layout."]
     pub fn child_needs_layout(&self, child: &WidgetPod<impl Widget + ?Sized>) -> bool {
-        self.get_child_state(child).needs_layout()
+        self.get_child_state(child)
+            .is_some_and(WidgetState::needs_layout)
     }
 
-    /// Returns the `child` widget's `(first, last)` layout baselines.
+    /// Returns the child's resolved layout size and unaligned baselines.
     ///
-    /// The distances are from the top of the child widget's layout border-box to its baseline.
-    ///
-    /// Call this if the child's baseline plays a role in choosing its placement.
-    /// For deriving this widget's baselines call [`child_aligned_baselines`] instead,
-    /// or better yet use [`derive_baselines`] if possible.
-    ///
-    /// # Panics
-    ///
-    /// This method will panic if [`LayoutCtx::run_layout`] has not been called yet for
-    /// the child.
-    ///
-    /// [`child_aligned_baselines`]: Self::child_aligned_baselines
-    /// [`derive_baselines`]: Self::derive_baselines
+    /// Returns None for an absent or not yet laid out child; debug builds
+    /// report the invalid layout sequence.
     #[track_caller]
-    pub fn child_layout_baselines(&self, child: &WidgetPod<impl Widget + ?Sized>) -> (f64, f64) {
-        self.assert_layout_done(child, "child_layout_baselines");
-
-        let child_state = self.get_child_state(child);
-        (
-            child_state.layout_first_baseline(),
-            child_state.layout_last_baseline(),
-        )
+    #[must_use = "Use the child's resolved layout geometry."]
+    pub fn child_layout(&self, child: &WidgetPod<impl Widget + ?Sized>) -> Option<ChildLayout> {
+        let state = self.laid_out_child(child, "child_layout")?;
+        Some(ChildLayout {
+            size: state.layout_border_box_size,
+            baselines: (state.layout_first_baseline(), state.layout_last_baseline()),
+        })
     }
 
-    /// Returns the `child` widget's `(first, last)` aligned baselines.
+    /// Returns the child's placed origin and aligned baselines.
     ///
-    /// The distances are from the top of the child widget's aligned border-box to its baseline.
-    ///
-    /// This aligned version should be used for deriving this widget's own baselines based
-    /// on the child's baselines. That is if [`derive_baselines`] can't be used.
-    /// For deciding where to place the child based on its baselines,
-    /// you need to use [`child_layout_baselines`] instead.
-    ///
-    /// # Panics
-    ///
-    /// This method will panic if [`LayoutCtx::run_layout`] or [`LayoutCtx::place_child`]
-    /// have not been called yet for the child.
-    ///
-    /// [`derive_baselines`]: Self::derive_baselines
-    /// [`child_layout_baselines`]: Self::child_layout_baselines
+    /// The origin is relative to this widget's content box; the baselines
+    /// are relative to the child's aligned border box.
+    /// Returns None for absent or unplaced children, with a debug diagnostic.
     #[track_caller]
-    pub fn child_aligned_baselines(&self, child: &WidgetPod<impl Widget + ?Sized>) -> (f64, f64) {
-        self.assert_layout_done(child, "child_aligned_baselines");
-        self.assert_placed(child, "child_aligned_baselines");
-
-        let child_state = self.get_child_state(child);
-        (
-            child_state.aligned_first_baseline(),
-            child_state.aligned_last_baseline(),
-        )
-    }
-
-    /// Returns the given child's aligned border-box origin
-    /// in this widget's content-box coordinate space.
-    ///
-    /// # Panics
-    ///
-    /// This method will panic if [`LayoutCtx::run_layout`] or [`LayoutCtx::place_child`]
-    /// have not been called yet for the child.
-    #[track_caller]
-    pub fn child_origin(&self, child: &WidgetPod<impl Widget + ?Sized>) -> Point {
-        self.assert_layout_done(child, "child_origin");
-        self.assert_placed(child, "child_origin");
-        self.get_child_state(child).origin - self.widget_state.border_box_translation()
-    }
-
-    /// Returns the given child's layout border-box size.
-    ///
-    /// # Panics
-    ///
-    /// This method will panic if [`LayoutCtx::run_layout`] has not been called yet for
-    /// the child.
-    #[track_caller]
-    pub fn child_size(&self, child: &WidgetPod<impl Widget + ?Sized>) -> Size {
-        self.assert_layout_done(child, "child_size");
-        self.get_child_state(child).layout_border_box_size
+    #[must_use = "Use the child's placed geometry."]
+    pub fn child_placement(
+        &self,
+        child: &WidgetPod<impl Widget + ?Sized>,
+    ) -> Option<ChildPlacement> {
+        let state = self.placed_child(child, "child_placement")?;
+        Some(ChildPlacement {
+            origin: state.origin - self.widget_state.border_box_translation(),
+            baselines: (
+                state.aligned_first_baseline(),
+                state.aligned_last_baseline(),
+            ),
+        })
     }
 
     /// Sets the widget's clip path in the widget's content-box coordinate space.
@@ -1090,9 +1118,9 @@ impl LayoutCtx<'_> {
         self.widget_state.clip_path = Some(path);
         // TODO - Updating the clip path may have
         // other knock-on effects we'd need to document.
-        self.widget_state.request_accessibility = true;
-        self.widget_state.needs_accessibility = true;
-        self.widget_state.needs_paint = true;
+        self.widget_state.set_request_accessibility(true);
+        self.widget_state.set_needs_accessibility(true);
+        self.widget_state.set_needs_paint(true);
     }
 
     /// Removes the widget's clip path.
@@ -1103,9 +1131,9 @@ impl LayoutCtx<'_> {
         self.widget_state.clip_path = None;
         // TODO - Updating the clip path may have
         // other knock-on effects we'd need to document.
-        self.widget_state.request_accessibility = true;
-        self.widget_state.needs_accessibility = true;
-        self.widget_state.needs_paint = true;
+        self.widget_state.set_request_accessibility(true);
+        self.widget_state.set_needs_accessibility(true);
+        self.widget_state.set_needs_paint(true);
     }
 }
 
@@ -1118,31 +1146,10 @@ impl ComposeCtx<'_> {
     /// stays pixel-perfect.
     pub fn set_child_scroll_translation(
         &mut self,
-        child: &mut WidgetPod<impl Widget + ?Sized>,
+        child: &WidgetPod<impl Widget + ?Sized>,
         translation: Vec2,
     ) {
-        if translation.x.is_nan()
-            || translation.x.is_infinite()
-            || translation.y.is_nan()
-            || translation.y.is_infinite()
-        {
-            debug_panic!(
-                "Error in {}: trying to call 'set_child_scroll_translation' with child '{}' {} with invalid translation {:?}",
-                self.widget_id(),
-                self.get_child_dyn(child).short_type_name(),
-                child.id(),
-                translation,
-            );
-        }
-
-        let translation = translation.round();
-
-        let child = self.get_child_state_mut(child);
-        if translation != child.scroll_translation {
-            child.scroll_translation = translation;
-            child.transform_changed = true;
-            child.needs_compose = true;
-        }
+        self.set_animated_child_scroll_translation(child, translation.round());
     }
 
     /// Sets the scroll translation for the child widget.
@@ -1153,28 +1160,24 @@ impl ComposeCtx<'_> {
     /// This method should be used for intermediary scroll values during scroll animations.
     pub fn set_animated_child_scroll_translation(
         &mut self,
-        child: &mut WidgetPod<impl Widget + ?Sized>,
+        child: &WidgetPod<impl Widget + ?Sized>,
         translation: Vec2,
     ) {
-        if translation.x.is_nan()
-            || translation.x.is_infinite()
-            || translation.y.is_nan()
-            || translation.y.is_infinite()
-        {
+        if !translation.x.is_finite() || !translation.y.is_finite() {
             debug_panic!(
-                "Error in {}: trying to call 'set_animated_child_scroll_translation' with child '{}' {} with invalid translation {:?}",
+                "Widget {} cannot set child {} scroll translation to {:?}",
                 self.widget_id(),
-                self.get_child_dyn(child).short_type_name(),
                 child.id(),
-                translation,
+                translation
             );
+            return;
         }
-
-        let child = self.get_child_state_mut(child);
-        if translation != child.scroll_translation {
+        if let Some(child) = self.get_child_state_mut(child)
+            && translation != child.scroll_translation
+        {
             child.scroll_translation = translation;
-            child.transform_changed = true;
-            child.needs_compose = true;
+            child.set_transform_changed(true);
+            child.set_needs_compose(true);
         }
     }
 }
@@ -1194,6 +1197,7 @@ impl_context_method!(
     {
         /// Returns the aligned content-box rect of this widget
         /// in this widget's content-box coordinate space.
+        #[must_use = "Use the content-box geometry."]
         pub fn content_box(&self) -> Rect {
             let translation = self.widget_state.border_box_translation();
             self.widget_state.content_box() - translation
@@ -1201,6 +1205,7 @@ impl_context_method!(
 
         /// Returns the aligned border-box rect of this widget
         /// in this widget's content-box coordinate space.
+        #[must_use = "Use the border-box geometry."]
         pub fn border_box(&self) -> Rect {
             let translation = self.widget_state.border_box_translation();
             self.widget_state.border_box() - translation
@@ -1210,6 +1215,7 @@ impl_context_method!(
         /// in this widget's content-box coordinate space.
         ///
         /// Covers the area we expect to be invalidated when the widget is painted.
+        #[must_use = "Use the paint bounds."]
         pub fn paint_box(&self) -> Rect {
             let translation = self.widget_state.border_box_translation();
             self.widget_state.paint_box() - translation
@@ -1225,17 +1231,20 @@ impl_context_method!(
         /// See [bounding box documentation] for more details.
         ///
         /// [bounding box documentation]: crate::doc::masonry_concepts#bounding-box
-        pub fn bounding_box(&self) -> Rect {
+        #[must_use = "Use the window-space bounds."]
+        pub const fn bounding_box(&self) -> Rect {
             self.widget_state.bounding_box
         }
 
         /// Returns the first baseline relative to the top of the widget's aligned content-box.
+        #[must_use = "Use the first baseline."]
         pub fn first_baseline(&self) -> f64 {
             let border_box_baseline = self.widget_state.aligned_first_baseline();
             border_box_baseline - self.widget_state.border_box_insets.y0
         }
 
         /// Returns the last baseline relative to the top of the widget's aligned content-box.
+        #[must_use = "Use the last baseline."]
         pub fn last_baseline(&self) -> f64 {
             let border_box_baseline = self.widget_state.aligned_last_baseline();
             border_box_baseline - self.widget_state.border_box_insets.y0
@@ -1247,6 +1256,7 @@ impl_context_method!(
         ///
         /// For more information, see
         /// [`LayoutCtx::set_clip_path`](crate::core::LayoutCtx::set_clip_path).
+        #[must_use = "Use the clip geometry if present."]
         pub fn clip_path(&self) -> Option<Rect> {
             // Translate the clip path to the widget's content-box coordinate space.
             let translation = self.widget_state.border_box_translation();
@@ -1258,7 +1268,8 @@ impl_context_method!(
         ///
         /// Add this [`Vec2`] to translate from content-box to border-box,
         /// and subtract this [`Vec2`] to translate from border-box to content-box.
-        pub fn border_box_translation(&self) -> Vec2 {
+        #[must_use = "Use the content-to-border translation."]
+        pub const fn border_box_translation(&self) -> Vec2 {
             self.widget_state.border_box_translation()
         }
 
@@ -1270,6 +1281,7 @@ impl_context_method!(
         ///
         /// Multiply by this to convert from this widget's content-box coordinate space to the window's,
         /// or use the inverse of this transform to go from window's space to this widget's content-box.
+        #[must_use = "Use the window-space transform."]
         pub fn window_transform(&self) -> Affine {
             let translation = self.widget_state.border_box_translation();
             self.widget_state
@@ -1279,7 +1291,8 @@ impl_context_method!(
 
         /// Converts the `point` from the window's coordinate space
         /// to this widget's content-box coordinate space.
-        pub fn to_local(&self, point: Point) -> Point {
+        #[must_use = "Use the point in local coordinates."]
+        pub fn window_to_local(&self, point: Point) -> Point {
             let to_border_box = self.widget_state.window_transform.inverse();
             let to_content_box = -self.widget_state.border_box_translation();
             to_border_box.then_translate(to_content_box) * point
@@ -1289,7 +1302,8 @@ impl_context_method!(
         /// to the window's coordinate space.
         ///
         /// The returned point is relative to the window's content area; it excludes window chrome.
-        pub fn to_window(&self, point: Point) -> Point {
+        #[must_use = "Use the point in window coordinates."]
+        pub fn local_to_window(&self, point: Point) -> Point {
             let translation = self.widget_state.border_box_translation();
             self.widget_state.window_transform * (point + translation)
         }
@@ -1297,7 +1311,8 @@ impl_context_method!(
         /// Returns the DPI scaling factor.
         ///
         /// This can be useful for loading image resources meant for a specific scale.
-        pub fn scale_factor(&self) -> f64 {
+        #[must_use = "Use the DPI scale factor."]
+        pub const fn scale_factor(&self) -> f64 {
             self.global_state.scale_factor
         }
     }
@@ -1330,15 +1345,17 @@ impl_context_method!(
         /// widget, then no widget has the hovered status.
         ///
         /// [captured]: crate::doc::masonry_concepts#pointer-capture
-        pub fn is_hovered(&self) -> bool {
-            self.widget_state.is_hovered
+        #[must_use = "Inspect the widget's hover state."]
+        pub const fn is_hovered(&self) -> bool {
+            self.widget_state.is_hovered()
         }
 
         /// Whether this widget or any of its descendants are hovered.
         ///
         /// To check if only this specific widget is hovered use [`is_hovered`](Self::is_hovered).
-        pub fn has_hovered(&self) -> bool {
-            self.widget_state.has_hovered
+        #[must_use = "Inspect hover state in the subtree."]
+        pub const fn has_hovered(&self) -> bool {
+            self.widget_state.has_hovered()
         }
 
         /// The "active" status of a widget.
@@ -1348,15 +1365,17 @@ impl_context_method!(
         /// but this may change in the future to account for e.g. keyboard interactions.
         ///
         /// [captured]: crate::doc::masonry_concepts#pointer-capture
-        pub fn is_active(&self) -> bool {
-            self.widget_state.is_active
+        #[must_use = "Inspect the widget's active state."]
+        pub const fn is_active(&self) -> bool {
+            self.widget_state.is_active()
         }
 
         /// Whether this widget or any of its descendants are active.
         ///
         /// To check if only this specific widget is active use [`is_active`](Self::is_active).
-        pub fn has_active(&self) -> bool {
-            self.widget_state.has_active
+        #[must_use = "Inspect active state in the subtree."]
+        pub const fn has_active(&self) -> bool {
+            self.widget_state.has_active()
         }
 
         /// Whether a pointer is [captured] by this widget.
@@ -1365,6 +1384,7 @@ impl_context_method!(
         /// function will take a pointer id as input to test a specific pointer.
         ///
         /// [captured]: crate::doc::masonry_concepts#pointer-capture
+        #[must_use = "Check whether this widget captures the pointer."]
         pub fn is_pointer_capture_target(&self) -> bool {
             self.global_state.pointer_capture_target == Some(self.widget_state.id)
         }
@@ -1378,6 +1398,7 @@ impl_context_method!(
         ///
         /// [text focus]: crate::doc::masonry_concepts#text-focus
         /// [`has_focus_target`]: Self::has_focus_target
+        #[must_use = "Check whether this widget has focus."]
         pub fn is_focus_target(&self) -> bool {
             self.global_state.focused_widget == Some(self.widget_id())
         }
@@ -1385,13 +1406,15 @@ impl_context_method!(
         /// Whether this widget or any of its descendants are focused.
         ///
         /// To check if only this specific widget is focused use [`is_focus_target`](Self::is_focus_target).
-        pub fn has_focus_target(&self) -> bool {
-            self.widget_state.has_focus_target
+        #[must_use = "Check whether this subtree contains focus."]
+        pub const fn has_focus_target(&self) -> bool {
+            self.widget_state.has_focus_target()
         }
 
         /// Whether the window is focused.
-        pub fn is_window_focused(&self) -> bool {
-            self.global_state.window_focused
+        #[must_use = "Check the window's focus state."]
+        pub const fn is_window_focused(&self) -> bool {
+            self.global_state.window_focused()
         }
 
         /// The widget, if any, which has [pointer capture].
@@ -1400,7 +1423,8 @@ impl_context_method!(
         /// function will take a pointer id as input to test a specific pointer.
         ///
         /// [pointer capture]: crate::doc::masonry_concepts#pointer-capture
-        pub fn pointer_capture_target_id(&self) -> Option<WidgetId> {
+        #[must_use = "Use the pointer capture target if present."]
+        pub const fn pointer_capture_target_id(&self) -> Option<WidgetId> {
             self.global_state.pointer_capture_target
         }
 
@@ -1409,36 +1433,41 @@ impl_context_method!(
         /// The focused widget is the one that receives keyboard events.
         ///
         /// [text focus]: crate::doc::masonry_concepts#text-focus
-        pub fn focus_target_id(&self) -> Option<WidgetId> {
+        #[must_use = "Use the focused widget identifier if present."]
+        pub const fn focus_target_id(&self) -> Option<WidgetId> {
             self.global_state.focused_widget
         }
 
         /// Whether this widget gets pointer events and hovered status.
         ///
         /// See [`Widget::accepts_pointer_interaction()`] for details.
-        pub fn accepts_pointer_interaction(&self) -> bool {
-            self.widget_state.accepts_pointer_interaction
+        #[must_use = "Check whether this widget accepts pointer input."]
+        pub const fn accepts_pointer_interaction(&self) -> bool {
+            self.widget_state.accepts_pointer_interaction()
         }
 
         /// Whether children of this widget get pointer events and hovered status.
         ///
         /// See [`Widget::propagates_pointer_interaction()`] for details.
-        pub fn propagates_pointer_interaction(&self) -> bool {
-            self.widget_state.propagates_pointer_interaction
+        #[must_use = "Check whether this widget permits pointer input to children."]
+        pub const fn propagates_pointer_interaction(&self) -> bool {
+            self.widget_state.propagates_pointer_interaction()
         }
 
         /// Whether this widget gets text focus.
         ///
         /// See [`Widget::accepts_focus()`] for details.
-        pub fn accepts_focus(&self) -> bool {
-            self.widget_state.accepts_focus
+        #[must_use = "Check whether this widget accepts keyboard focus."]
+        pub const fn accepts_focus(&self) -> bool {
+            self.widget_state.accepts_focus()
         }
 
         /// Whether this widget gets IME events.
         ///
         /// See [`Widget::accepts_text_input()`] for details.
-        pub fn accepts_text_input(&self) -> bool {
-            self.widget_state.accepts_text_input
+        #[must_use = "Check whether this widget accepts IME input."]
+        pub const fn accepts_text_input(&self) -> bool {
+            self.widget_state.accepts_text_input()
         }
 
         /// Whether this widget is [disabled].
@@ -1448,15 +1477,17 @@ impl_context_method!(
         ///
         /// [disabled]: crate::doc::masonry_concepts#disabled
         /// [`set_disabled`]: EventCtx::set_disabled
-        pub fn is_disabled(&self) -> bool {
-            self.widget_state.is_disabled
+        #[must_use = "Inspect the effective disabled state."]
+        pub const fn is_disabled(&self) -> bool {
+            self.widget_state.is_disabled()
         }
 
         /// Whether this widget is [stashed].
         ///
         /// [stashed]: crate::doc::masonry_concepts#stashed
-        pub fn is_stashed(&self) -> bool {
-            self.widget_state.is_stashed
+        #[must_use = "Inspect the effective stashed state."]
+        pub const fn is_stashed(&self) -> bool {
+            self.widget_state.is_stashed()
         }
 
         /// Returns whether the given child is [stashed].
@@ -1466,8 +1497,10 @@ impl_context_method!(
         ///
         /// [stashed]: crate::doc::masonry_concepts#stashed
         /// [`update_stashed`]: crate::doc::pass_system#update-passes
+        #[must_use = "Check whether the child is stashed."]
         pub fn child_is_stashed(&self, child: &WidgetPod<impl Widget + ?Sized>) -> bool {
-            self.get_child_state(child).is_stashed
+            self.get_child_state(child)
+                .is_none_or(WidgetState::is_stashed)
         }
     }
 );
@@ -1484,19 +1517,19 @@ impl_context_method!(
         /// [`accessibility`](crate::core::Widget::accessibility) pass.
         pub fn request_render(&mut self) {
             trace!("request_render");
-            self.widget_state.request_pre_paint = true;
-            self.widget_state.request_paint = true;
-            self.widget_state.request_post_paint = true;
-            self.widget_state.needs_paint = true;
-            self.widget_state.needs_accessibility = true;
-            self.widget_state.request_accessibility = true;
+            self.widget_state.set_request_pre_paint(true);
+            self.widget_state.set_request_paint(true);
+            self.widget_state.set_request_post_paint(true);
+            self.widget_state.set_needs_paint(true);
+            self.widget_state.set_needs_accessibility(true);
+            self.widget_state.set_request_accessibility(true);
         }
 
         /// Requests a paint pass for the [`pre_paint`](crate::core::Widget::pre_paint) method.
         pub fn request_pre_paint(&mut self) {
             trace!("request_pre_paint");
-            self.widget_state.request_pre_paint = true;
-            self.widget_state.needs_paint = true;
+            self.widget_state.set_request_pre_paint(true);
+            self.widget_state.set_needs_paint(true);
         }
 
         /// Requests a paint pass, specifically for the [`paint`] method.
@@ -1513,15 +1546,15 @@ impl_context_method!(
         /// [`post_paint`]: crate::core::Widget::post_paint
         pub fn request_paint_only(&mut self) {
             trace!("request_paint_only");
-            self.widget_state.request_paint = true;
-            self.widget_state.needs_paint = true;
+            self.widget_state.set_request_paint(true);
+            self.widget_state.set_needs_paint(true);
         }
 
         /// Requests a paint pass for the [`post_paint`](crate::core::Widget::post_paint) method.
         pub fn request_post_paint(&mut self) {
             trace!("request_post_paint");
-            self.widget_state.request_post_paint = true;
-            self.widget_state.needs_paint = true;
+            self.widget_state.set_request_post_paint(true);
+            self.widget_state.set_needs_paint(true);
         }
 
         /// Requests an [`accessibility`](crate::core::Widget::accessibility) pass.
@@ -1531,8 +1564,8 @@ impl_context_method!(
         /// use [`request_render`](Self::request_render).
         pub fn request_accessibility_update(&mut self) {
             trace!("request_accessibility_update");
-            self.widget_state.needs_accessibility = true;
-            self.widget_state.request_accessibility = true;
+            self.widget_state.set_needs_accessibility(true);
+            self.widget_state.set_request_accessibility(true);
         }
 
         /// Requests a [`layout`] pass.
@@ -1542,7 +1575,7 @@ impl_context_method!(
         /// [`layout`]: crate::core::Widget::layout
         pub fn request_layout(&mut self) {
             trace!("request_layout");
-            self.widget_state.request_layout = true;
+            self.widget_state.set_request_layout(true);
             self.widget_state.set_needs_layout(true);
         }
 
@@ -1556,15 +1589,15 @@ impl_context_method!(
         /// [`compose`]: crate::core::Widget::compose
         pub fn request_compose(&mut self) {
             trace!("request_compose");
-            self.widget_state.needs_compose = true;
-            self.widget_state.request_compose = true;
+            self.widget_state.set_needs_compose(true);
+            self.widget_state.set_request_compose(true);
         }
 
         /// Requests an animation frame.
         pub fn request_anim_frame(&mut self) {
             trace!("request_anim_frame");
-            self.widget_state.request_anim = true;
-            self.widget_state.needs_anim = true;
+            self.widget_state.set_request_anim(true);
+            self.widget_state.set_needs_anim(true);
         }
 
         /// Notifies Masonry that the cursor returned by [`Widget::get_cursor`] has changed.
@@ -1573,7 +1606,7 @@ impl_context_method!(
         /// move, because the nature of the widget has changed somehow.
         pub fn request_cursor_icon_change(&mut self) {
             trace!("request_cursor_icon_change");
-            self.global_state.needs_pointer_pass = true;
+            self.global_state.set_needs_pointer_pass(true);
         }
 
         /// Indicates that your children have changed.
@@ -1583,8 +1616,8 @@ impl_context_method!(
         /// This method will also call [`request_layout`](Self::request_layout).
         pub fn children_changed(&mut self) {
             trace!("children_changed");
-            self.widget_state.children_changed = true;
-            self.widget_state.needs_update_focusable = true;
+            self.widget_state.set_children_changed(true);
+            self.widget_state.set_needs_update_focusable(true);
             self.request_layout();
         }
 
@@ -1597,30 +1630,25 @@ impl_context_method!(
         pub fn remove_child(&mut self, child: WidgetPod<impl Widget + ?Sized>) {
             fn remove_node(
                 global_state: &mut RenderRootState,
-                parent_state: &mut WidgetState,
-                node: ArenaMut<'_, WidgetArenaNode>,
+                parent_id: WidgetId,
+                node: ArenaRef<'_, WidgetArenaNode>,
             ) {
-                let mut children = node.children;
-                let widget = &mut *node.item.widget;
-                let state = &mut node.item.state;
+                let state = &node.item.state;
 
-                // TODO - Send event to widget
+                // Visit the ownership tree, not the container's declaration.
+                for id in node.child_ids() {
+                    if let Some(child) = node.children.item(id) {
+                        remove_node(global_state, state.id, child);
+                    }
+                }
 
-                let parent_name = widget.short_type_name();
-                let parent_id = state.id;
-                for child_id in widget.children_ids() {
-                    let Some(node) = children.item_mut(child_id) else {
-                        panic!(
-                            "Error in '{parent_name}' {parent_id}: cannot find child {child_id} returned by children_ids()"
-                        );
-                    };
-
-                    remove_node(global_state, state, node);
+                if let Some(tag) = node.item.tag {
+                    global_state.widget_tags.remove(&tag);
                 }
 
                 // If we remove the focus anchor, its parent becomes the anchor.
                 if global_state.focus_anchor == Some(state.id) {
-                    global_state.focus_anchor = Some(parent_state.id);
+                    global_state.focus_anchor = Some(parent_id);
                 }
 
                 global_state.scene_cache.remove(&state.id);
@@ -1633,15 +1661,14 @@ impl_context_method!(
             }
 
             let id = child.id();
-            let node = self
-                .children
-                .item_mut(id)
-                .expect("remove_child: child not found");
-            remove_node(self.global_state, self.widget_state, node);
-
-            let _ = self.children.remove(id).unwrap();
+            // A newly created pod may be removed before the registration pass.
+            if let Some(node) = self.children.item(id) {
+                remove_node(self.global_state, self.widget_state.id, node);
+                let _ = self.children.remove(id);
+            }
 
             self.children_changed();
+            drop(child);
         }
 
         /// Sets the disabled state for this widget.
@@ -1650,9 +1677,9 @@ impl_context_method!(
         /// still be disabled by an ancestor. See [`is_disabled`] for more information.
         ///
         /// [`is_disabled`]: EventCtx::is_disabled
-        pub fn set_disabled(&mut self, disabled: bool) {
-            self.widget_state.needs_update_disabled = true;
-            self.widget_state.is_explicitly_disabled = disabled;
+        pub const fn set_disabled(&mut self, disabled: bool) {
+            self.widget_state.set_needs_update_disabled(true);
+            self.widget_state.set_is_explicitly_disabled(disabled);
         }
 
         /// Sets the local transform for this widget.
@@ -1661,10 +1688,10 @@ impl_context_method!(
         /// to the parent's border-box coordinate space.
         ///
         /// It behaves similarly as CSS transforms.
-        pub fn set_transform(&mut self, transform: Affine) {
+        pub const fn set_transform(&mut self, transform: Affine) {
             self.widget_state.transform = transform;
-            self.widget_state.transform_changed = true;
-            self.widget_state.needs_compose = true;
+            self.widget_state.set_transform_changed(true);
+            self.widget_state.set_needs_compose(true);
         }
 
         /// Adds a string to this widget's [class set].
@@ -1674,8 +1701,8 @@ impl_context_method!(
         /// [class]: crate::doc::masonry_concepts#classes
         pub fn add_class(&mut self, class: &str) {
             self.widget_state.class_diff.add(class);
-            self.widget_state.request_update_props = true;
-            self.widget_state.needs_update_props = true;
+            self.widget_state.set_request_update_props(true);
+            self.widget_state.set_needs_update_props(true);
         }
 
         /// Removes a string from this widget's [class set].
@@ -1685,8 +1712,8 @@ impl_context_method!(
         /// [class]: crate::doc::masonry_concepts#classes
         pub fn remove_class(&mut self, class: &str) {
             self.widget_state.class_diff.remove(class);
-            self.widget_state.request_update_props = true;
-            self.widget_state.needs_update_props = true;
+            self.widget_state.set_request_update_props(true);
+            self.widget_state.set_needs_update_props(true);
         }
     }
 );
@@ -1709,84 +1736,69 @@ impl_context_method!(
         /// If `stashed` is true, the child will not be painted or listed in the accessibility tree.
         ///
         /// This will *not* trigger a layout pass.
-        pub fn set_stashed(&mut self, child: &mut WidgetPod<impl Widget + ?Sized>, stashed: bool) {
-            let child_state = self.get_child_state_mut(child);
+        pub fn set_stashed(&mut self, child: &WidgetPod<impl Widget + ?Sized>, stashed: bool) {
+            let Some(child_state) = self.get_child_state_mut(child) else {
+                return;
+            };
             // Stashing is generally a property derived from the parent widget's state
             // (rather than set imperatively), so it is likely to be set as part of passes.
             // Therefore, we avoid re-running the update_stashed_pass in most cases.
-            if child_state.is_explicitly_stashed != stashed {
-                child_state.is_explicitly_stashed = stashed;
-                child_state.needs_update_stashed = true;
-                self.widget_state.needs_update_stashed = true;
+            if child_state.is_explicitly_stashed() != stashed {
+                child_state.set_is_explicitly_stashed(stashed);
+                child_state.set_needs_update_stashed(true);
+                self.widget_state.set_needs_update_stashed(true);
             }
         }
 
-        // TODO - Remove from MutateCtx?
-        /// Queues a callback that will be called with a [`WidgetMut`] for this widget.
+        /// Queues a typed callback for this widget.
         ///
-        /// The callbacks will be run in the order they were submitted during the mutate pass.
-        pub fn mutate_self_later(
+        /// Callbacks run in submission order during the mutate pass and are skipped
+        /// if the target is absent or does not have the requested type.
+        pub fn mutate_self_later<W: Widget + FromDynWidget + ?Sized>(
             &mut self,
-            f: impl FnOnce(WidgetMut<'_, dyn Widget>) + Send + 'static,
-        ) {
-            let callback = MutateCallback {
-                id: self.widget_state.id,
-                callback: Box::new(f),
-            };
-            self.global_state.mutate_callbacks.push(callback);
-        }
-
-        /// Queues a callback that will be called with a [`WidgetMut`] for the given child widget.
-        ///
-        /// The callbacks will be run in the order they were submitted during the mutate pass.
-        pub fn mutate_child_later<W: Widget + FromDynWidget + ?Sized>(
-            &mut self,
-            child: &mut WidgetPod<W>,
             f: impl FnOnce(WidgetMut<'_, W>) + Send + 'static,
         ) {
-            let callback = MutateCallback {
-                id: child.id(),
-                callback: Box::new(|mut widget_mut| f(widget_mut.downcast())),
-            };
-            self.global_state.mutate_callbacks.push(callback);
+            self.mutate_later(self.widget_id(), f);
         }
 
-        /// Queues a callback that will be called with a [`WidgetMut`] for the widget with the given id.
+        /// Queues a typed callback for the given child widget.
         ///
-        /// The callbacks will be run in the order they were submitted during the mutate pass.
-        pub fn mutate_later(
+        /// The same ordering and target validation as [`Self::mutate_later`] apply.
+        pub fn mutate_child_later<W: Widget + FromDynWidget + ?Sized>(
             &mut self,
-            // TODO - Use WidgetTag instead?
-            target: WidgetId,
-            f: impl FnOnce(WidgetMut<'_, dyn Widget>) + Send + 'static,
+            child: &WidgetPod<W>,
+            f: impl FnOnce(WidgetMut<'_, W>) + Send + 'static,
         ) {
-            let callback = MutateCallback {
-                id: target,
-                callback: Box::new(f),
-            };
-            self.global_state.mutate_callbacks.push(callback);
+            self.mutate_later(child.id(), f);
         }
 
-        /// Returns direct reference to the stored child, and a context handle for that child.
-        pub fn get_raw<Child: Widget + FromDynWidget + ?Sized>(
+        /// Queues a typed callback for the widget with the given id.
+        ///
+        /// Callbacks run in submission order during the mutate pass and are skipped
+        /// if the target is absent or does not have the requested type.
+        pub fn mutate_later<W: Widget + FromDynWidget + ?Sized>(
             &mut self,
-            child: &mut WidgetPod<Child>,
-        ) -> (&Child, RawCtx<'_>) {
-            let node_mut = self
-                .children
-                .item_mut(child.id())
-                .expect("get_mut: child not found");
-            let child_ctx = RawCtx {
-                global_state: self.global_state,
-                parent_widget_state: self.widget_state,
-                widget_state: &mut node_mut.item.state,
-                children: node_mut.children,
-                property_arena: self.property_arena,
-            };
+            target: WidgetId,
+            f: impl FnOnce(WidgetMut<'_, W>) + Send + 'static,
+        ) {
+            self.global_state.mutate_callbacks.push(MutateCallback {
+                id: target,
+                callback: Box::new(|mut widget| {
+                    if let Some(widget) = widget.try_downcast() {
+                        f(widget);
+                    }
+                }),
+            });
+        }
 
-            let widget = Child::from_dyn(&*node_mut.item.widget).unwrap();
-
-            (widget, child_ctx)
+        /// Returns a shared typed reference to a registered child, if present.
+        /// This does not borrow the child's mutable state or propagate pass flags.
+        #[must_use = "Inspect the child if it exists."]
+        pub fn get_child<Child: Widget + FromDynWidget + ?Sized>(
+            &self,
+            child: &WidgetPod<Child>,
+        ) -> Option<&Child> {
+            Child::from_dyn(&*self.children.item(child.id())?.item.widget)
         }
 
         /// Returns direct mutable reference to the stored child, and a context handle for that child.
@@ -1804,23 +1816,18 @@ impl_context_method!(
         /// See [pass documentation](crate::doc::pass_system) for the pass order.
         pub fn get_raw_mut<Child: Widget + FromDynWidget + AllowRawMut + ?Sized>(
             &mut self,
-            child: &mut WidgetPod<Child>,
-        ) -> (&mut Child, RawCtx<'_>) {
-            let node_mut = self
-                .children
-                .item_mut(child.id())
-                .expect("get_mut: child not found");
-            let child_ctx = RawCtx {
+            child: &WidgetPod<Child>,
+        ) -> Option<(&mut Child, RawCtx<'_>)> {
+            let node = self.children.item_mut(child.id())?;
+            let widget = Child::from_dyn_mut(&mut *node.item.widget)?;
+            let ctx = RawCtx {
                 global_state: self.global_state,
                 parent_widget_state: self.widget_state,
-                widget_state: &mut node_mut.item.state,
-                children: node_mut.children,
+                widget_state: &mut node.item.state,
+                children: node.children,
                 property_arena: self.property_arena,
             };
-
-            let widget = Child::from_dyn_mut(&mut *node_mut.item.widget).unwrap();
-
-            (widget, child_ctx)
+            Some((widget, ctx))
         }
 
         /// Submits an action, which indicates that this widget requires something be handled
@@ -1886,7 +1893,7 @@ impl_context_method!(
         /// See [`set_ime_area`] for more details.
         ///
         /// [`set_ime_area`]: Self::set_ime_area
-        pub fn clear_ime_area(&mut self) {
+        pub const fn clear_ime_area(&mut self) {
             self.widget_state.ime_area = None;
         }
 
@@ -2026,6 +2033,7 @@ impl_context_method!(
         /// Returns the attached layer created by this widget with the given type `W`.
         ///
         /// See [`Self::create_attached_layer`] for more details.
+        #[must_use = "Use the attached layer identifier if present."]
         pub fn get_attached_layer<W: Widget + ?Sized>(&self) -> Option<WidgetId> {
             self.global_state
                 .attached_layers
@@ -2070,6 +2078,7 @@ impl UpdateCtx<'_> {
     /// This should only be called during [`WidgetAdded`](crate::core::Update::WidgetAdded).
     /// Calling it in other contexts will always return `None`.
     // FIXME: We should move this method out of `UpdateCtx` to avoid having this disclaimer.
+    #[must_use = "Use the matching ancestor if present."]
     pub fn nearest_ancestor<W: Widget>(&self) -> Option<(&W, WidgetId)> {
         let mut list = self.ancestors;
         while let Some(node) = list {
@@ -2119,21 +2128,24 @@ impl RegisterCtx<'_> {
             action_type_name,
         );
 
-        if let Some(tag) = tag {
-            let entry = self.global_state.widget_tags.entry(tag);
-
-            let Entry::Vacant(vacant_entry) = entry else {
+        // Keep the widget registered even if a duplicate tag is supplied in
+        // a release build. Only the original owner retains the tag.
+        let tag = tag.filter(|tag| match self.global_state.widget_tags.entry(*tag) {
+            Entry::Vacant(entry) => {
+                entry.insert(id);
+                true
+            }
+            Entry::Occupied(_) => {
                 debug_panic!("Tag '{tag}' already exists in the widget tree");
-                return;
-            };
-
-            vacant_entry.insert(id);
-        }
+                false
+            }
+        });
 
         let node = WidgetArenaNode {
             widget: widget.as_box_dyn(),
             state,
             properties,
+            tag,
             class_set: ClassSet {
                 classes,
                 ..ClassSet::default()
@@ -2153,11 +2165,11 @@ impl Drop for RawCtx<'_> {
 impl PaintCtx<'_> {
     /// Controls how this widget subtree is recorded in the current paint pass.
     ///
-    /// This is reset to [`PaintLayerMode::Inline`] at the start of each paint
-    /// pass for the widget. Widgets that want isolated scene layers should set
-    /// this during `pre_paint`, `paint`, or `post_paint` each time they paint.
-    pub fn set_paint_layer_mode(&mut self, mode: PaintLayerMode) {
-        self.widget_state.paint_layer_mode = mode;
+    /// Each paint phase caches its most recent declaration until it is run again.
+    /// If multiple phases declare a mode, the last in painter order wins.
+    /// Without a declaration the subtree is inline.
+    pub const fn set_paint_layer_mode(&mut self, mode: PaintLayerMode) {
+        self.layer_mode = Some(mode);
     }
 
     /// Whether debug paint is enabled.
@@ -2169,14 +2181,16 @@ impl PaintCtx<'_> {
     /// outlined by Masonry, so you should avoid duplicating that.
     ///
     /// Debug paint can be enabled by setting the environment variable `MASONRY_DEBUG_PAINT`.
-    pub fn debug_paint_enabled(&self) -> bool {
-        self.global_state.debug_paint
+    #[must_use = "Check whether debug painting is enabled."]
+    pub const fn debug_paint_enabled(&self) -> bool {
+        self.global_state.debug_paint()
     }
 
     /// A color used for debug painting in this widget.
     ///
     /// This is normally used to paint additional debugging information
     /// when debug paint is enabled, see [`Self::debug_paint_enabled`].
+    #[must_use = "Use the assigned debug color."]
     pub fn debug_color(&self) -> Color {
         get_debug_color(self.widget_id().to_raw())
     }

@@ -37,6 +37,7 @@ impl VisualLayerPlan {
     ///
     /// In the current compatibility model, this is the first scene layer that
     /// flattened consumers treat as the base scene.
+    #[must_use = "Use the first scene layer if present."]
     pub fn root_layer(&self) -> Option<&VisualLayer> {
         self.layers
             .iter()

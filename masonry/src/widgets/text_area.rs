@@ -11,8 +11,8 @@ use crate::core::keyboard::{Key, KeyState, NamedKey};
 use crate::core::{
     AccessCtx, AccessEvent, ArcStr, BrushIndex, ChildrenIds, CursorIcon, EventCtx, Ime, LayoutCtx,
     MeasureCtx, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PointerUpdate,
-    PropertiesMut, PropertiesRef, QueryCtx, RegisterCtx, StyleProperty, TextEvent, Update,
-    UpdateCtx, Widget, WidgetId, WidgetMut, render_text, set_accesskit_brush_properties,
+    PropertiesMut, PropertiesRef, Property, QueryCtx, RegisterCtx, StyleProperty, TextEvent,
+    Update, UpdateCtx, Widget, WidgetId, WidgetMut, render_text, set_accesskit_brush_properties,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Affine, Axis, Point, Rect, Size};
@@ -24,6 +24,24 @@ use crate::theme::default_text_styles;
 use crate::util::bounding_box_to_rect;
 use crate::util::debug_panic;
 use crate::{TextAlign, theme};
+
+// Inherit the resolved parent property after registration and property updates.
+pub(super) fn inherit_property<
+    P: Property,
+    Q: Property,
+    W: Widget + crate::core::FromDynWidget + ?Sized,
+>(
+    ctx: &mut UpdateCtx<'_>,
+    child: WidgetId,
+    map: impl FnOnce(P) -> Q + Send + 'static,
+) {
+    ctx.mutate_self_later::<dyn Widget>(move |mut parent| {
+        let property = map(parent.get_prop::<P>().clone());
+        if let Some(mut child) = parent.ctx.get_mut::<W>(child) {
+            child.insert_prop(property);
+        }
+    });
+}
 
 /// `TextArea` implements the core of interactive text.
 ///
@@ -92,6 +110,7 @@ impl TextArea<true> {
     /// Useful for creating a styled [`TextInput`](super::TextInput).
     // This is written out fully to appease rust-analyzer; StyleProperty is imported but not recognised.
     /// To change the font size, use `with_style`, setting [`StyleProperty::FontSize`](crate::parley::StyleProperty::FontSize).
+    #[must_use = "Use the returned value."]
     pub fn new_editable(text: &str) -> Self {
         Self::new(text)
     }
@@ -103,6 +122,7 @@ impl TextArea<false> {
     /// Useful for creating a styled [`Prose`](super::Prose).
     // This is written out fully to appease rust-analyzer; StyleProperty is imported but not recognised.
     /// To change the font size, use `with_style`, setting [`StyleProperty::FontSize`](crate::parley::StyleProperty::FontSize).
+    #[must_use = "Use the returned value."]
     pub fn new_immutable(text: &str) -> Self {
         Self::new(text)
     }
@@ -113,6 +133,7 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
     ///
     // This is written out fully to appease rust-analyzer; StyleProperty is imported but not recognised.
     /// To change the font size, use `with_style`, setting [`StyleProperty::FontSize`](crate::parley::StyleProperty::FontSize).
+    #[must_use = "Use the returned value."]
     pub fn new(text: &str) -> Self {
         let mut editor = PlainEditor::new(theme::TEXT_SIZE_NORMAL);
         default_text_styles(editor.edit_styles());
@@ -150,6 +171,7 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
     /// [variable font parameters]: crate::parley::StyleProperty::FontVariations
     /// [`StyleProperty::Brush`]: crate::parley::StyleProperty::Brush
     #[track_caller]
+    #[must_use = "Use the configured value."]
     pub fn with_style(mut self, property: impl Into<StyleProperty>) -> Self {
         self.insert_style_inner(property.into());
         self
@@ -176,7 +198,8 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
     /// so it is recommended to leave word wrapping enabled.
     ///
     /// To modify this on an active text area, use [`set_word_wrap`](Self::set_word_wrap).
-    pub fn with_word_wrap(mut self, wrap_words: bool) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_word_wrap(mut self, wrap_words: bool) -> Self {
         self.word_wrap = wrap_words;
         self
     }
@@ -184,6 +207,7 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
     /// Sets the [text alignment](https://en.wikipedia.org/wiki/Typographic_alignment) of the text.
     ///
     /// To modify this on an active text area, use [`set_text_alignment`](Self::set_text_alignment).
+    #[must_use = "Use the returned value."]
     pub fn with_text_alignment(mut self, text_alignment: TextAlign) -> Self {
         self.editor.set_alignment(text_alignment);
         self
@@ -204,13 +228,15 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
     /// You should do so as an animation starts and ends.
     // TODO: Should we tell each widget if smooth scrolling is ongoing so they can disable their hinting?
     // Alternatively, we should automate disabling hinting at the Vello layer when composing.
-    pub fn with_hint(mut self, hint: bool) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_hint(mut self, hint: bool) -> Self {
         self.hint = hint;
         self
     }
 
     /// Configures how this text area handles the user pressing Enter <kbd>↵</kbd>.
-    pub fn with_insert_newline(mut self, insert_newline: InsertNewline) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_insert_newline(mut self, insert_newline: InsertNewline) -> Self {
         self.insert_newline = insert_newline;
         self
     }
@@ -240,11 +266,13 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
     /// To update the text of an active text area, use [`reset_text`](Self::reset_text).
     ///
     /// The return value is not just `&str` to handle IME preedits.
+    #[must_use = "Use the returned value."]
     pub fn text(&self) -> SplitString<'_> {
         self.editor.text()
     }
 
     /// Check if this text area holds nothing, including IME preedit content.
+    #[must_use = "Use the returned value."]
     pub fn is_empty(&self) -> bool {
         self.editor.raw_text().is_empty()
     }
@@ -415,7 +443,7 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
 }
 
 /// Text in a text area has been changed or submitted with enter.
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 // TODO: Should this be two different structs?
 pub enum TextAction {
     /// The text has been changed.
@@ -428,6 +456,229 @@ pub enum TextAction {
     /// The Escape key was pressed, signalling a cancel action.
     Cancelled,
     // TODO: TextCursor changed, ImeChanged
+}
+
+impl<const EDITABLE: bool> TextArea<EDITABLE> {
+    fn navigate_key(
+        &mut self,
+        ctx: &mut EventCtx<'_>,
+        key: &Key,
+        shift: bool,
+        action_mod: bool,
+    ) -> bool {
+        let (fctx, lctx) = ctx.text_contexts();
+        let mut drv = self.editor.driver(fctx, lctx);
+        match key {
+            Key::Named(NamedKey::ArrowLeft) => {
+                if action_mod {
+                    if shift {
+                        drv.select_word_left();
+                    } else {
+                        drv.move_word_left();
+                    }
+                } else if shift {
+                    drv.select_left();
+                } else {
+                    drv.move_left();
+                }
+            }
+            Key::Named(NamedKey::ArrowRight) => {
+                if action_mod {
+                    if shift {
+                        drv.select_word_right();
+                    } else {
+                        drv.move_word_right();
+                    }
+                } else if shift {
+                    drv.select_right();
+                } else {
+                    drv.move_right();
+                }
+            }
+            Key::Named(NamedKey::ArrowUp) => {
+                if shift {
+                    drv.select_up();
+                } else {
+                    drv.move_up();
+                }
+            }
+            Key::Named(NamedKey::ArrowDown) => {
+                if shift {
+                    drv.select_down();
+                } else {
+                    drv.move_down();
+                }
+            }
+            Key::Named(NamedKey::Home) => {
+                if action_mod {
+                    if shift {
+                        drv.select_to_text_start();
+                    } else {
+                        drv.move_to_text_start();
+                    }
+                } else if shift {
+                    drv.select_to_line_start();
+                } else {
+                    drv.move_to_line_start();
+                }
+            }
+            Key::Named(NamedKey::End) => {
+                if action_mod {
+                    if shift {
+                        drv.select_to_text_end();
+                    } else {
+                        drv.move_to_text_end();
+                    }
+                } else if shift {
+                    drv.select_to_line_end();
+                } else {
+                    drv.move_to_line_end();
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    fn edit_key(
+        &mut self,
+        ctx: &mut EventCtx<'_>,
+        key: &Key,
+        shift: bool,
+        action_mod: bool,
+    ) -> Option<bool> {
+        let (fctx, lctx) = ctx.text_contexts();
+        let mut edited = false;
+        match key {
+            // Cut
+            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+            Key::Character(x) if EDITABLE && action_mod && x.as_str().eq_ignore_ascii_case("x") => {
+                if let Some(text) = self.editor.selected_text()
+                    && !text.is_empty()
+                {
+                    let text = text.to_string();
+                    self.editor.driver(fctx, lctx).delete_selection();
+                    edited = true;
+                    ctx.set_clipboard(text);
+                }
+            }
+            // Copy
+            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+            Key::Character(c) if action_mod && c.as_str().eq_ignore_ascii_case("c") => {
+                if let Some(text) = self.editor.selected_text()
+                    && !text.is_empty()
+                {
+                    ctx.set_clipboard(text.to_string());
+                }
+            }
+            Key::Character(a) if action_mod && a.as_str().eq_ignore_ascii_case("a") => {
+                let mut drv = self.editor.driver(fctx, lctx);
+
+                if shift {
+                    drv.collapse_selection();
+                } else {
+                    drv.select_all();
+                }
+            }
+            Key::Named(NamedKey::Delete) if EDITABLE => {
+                let mut drv = self.editor.driver(fctx, lctx);
+                if action_mod {
+                    drv.delete_word();
+                } else {
+                    drv.delete();
+                }
+
+                edited = true;
+            }
+            Key::Named(NamedKey::Backspace) if EDITABLE => {
+                let mut drv = self.editor.driver(fctx, lctx);
+                if action_mod {
+                    drv.backdelete_word();
+                } else {
+                    drv.backdelete();
+                }
+
+                edited = true;
+            }
+            Key::Character(sp) if EDITABLE && sp.as_str() == " " => {
+                self.editor
+                    .driver(fctx, lctx)
+                    .insert_or_replace_selection(" ");
+                edited = true;
+            }
+            Key::Named(NamedKey::Enter) => {
+                let insert_newline = match self.insert_newline {
+                    InsertNewline::OnEnter => true,
+                    InsertNewline::OnShiftEnter => shift,
+                    InsertNewline::Never => false,
+                };
+                if insert_newline {
+                    let (fctx, lctx) = ctx.text_contexts();
+                    self.editor
+                        .driver(fctx, lctx)
+                        .insert_or_replace_selection("\n");
+                    edited = true;
+                } else {
+                    ctx.submit_action::<TextAction>(TextAction::Entered(self.text().to_string()));
+                }
+            }
+
+            Key::Named(NamedKey::Tab) => {
+                // Intentionally do nothing so that tabbing from a TextInput/Prose works.
+                // Note that this doesn't allow input of the tab character; we need to be more clever here at some point
+                return None;
+            }
+            Key::Named(NamedKey::Escape) => {
+                ctx.submit_action::<TextAction>(TextAction::Cancelled);
+            }
+            Key::Character(text) if EDITABLE => {
+                self.editor
+                    .driver(fctx, lctx)
+                    .insert_or_replace_selection(text);
+                edited = true;
+            }
+            _ => {
+                // Do nothing, don't set as handled.
+                return None;
+            }
+        }
+        Some(edited)
+    }
+
+    fn handle_keyboard(&mut self, ctx: &mut EventCtx<'_>, key_event: &crate::core::KeyboardEvent) {
+        if key_event.state != KeyState::Down || self.editor.is_composing() {
+            return;
+        }
+        let (shift, action_mod) = (
+            key_event.modifiers.shift(),
+            if cfg!(target_os = "macos") {
+                key_event.modifiers.meta()
+            } else {
+                key_event.modifiers.ctrl()
+            },
+        );
+        let edited = if self.navigate_key(ctx, &key_event.key, shift, action_mod) {
+            false
+        } else if let Some(edited) = self.edit_key(ctx, &key_event.key, shift, action_mod) {
+            edited
+        } else {
+            return;
+        };
+        ctx.set_handled();
+        let new_generation = self.editor.generation();
+        if new_generation != self.rendered_generation {
+            if edited {
+                ctx.submit_action::<TextAction>(TextAction::Changed(
+                    self.text().into_iter().collect(),
+                ));
+                ctx.request_layout();
+            } else {
+                ctx.request_render();
+                ctx.set_ime_area(self.ime_area());
+            }
+            self.rendered_generation = new_generation;
+        }
+    }
 }
 
 // --- MARK: IMPL WIDGET
@@ -553,205 +804,7 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
         ctx.request_anim_frame();
 
         match event {
-            TextEvent::Keyboard(key_event) => {
-                if key_event.state != KeyState::Down || self.editor.is_composing() {
-                    return;
-                }
-                let (shift, action_mod) = (
-                    key_event.modifiers.shift(),
-                    if cfg!(target_os = "macos") {
-                        key_event.modifiers.meta()
-                    } else {
-                        key_event.modifiers.ctrl()
-                    },
-                );
-                let (fctx, lctx) = ctx.text_contexts();
-                // Whether the text was changed.
-                let mut edited = false;
-                match &key_event.key {
-                    // Cut
-                    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-                    Key::Character(x)
-                        if EDITABLE && action_mod && x.as_str().eq_ignore_ascii_case("x") =>
-                    {
-                        if let Some(text) = self.editor.selected_text()
-                            && !text.is_empty()
-                        {
-                            let text = text.to_string();
-                            self.editor.driver(fctx, lctx).delete_selection();
-                            edited = true;
-                            ctx.set_clipboard(text);
-                        }
-                    }
-                    // Copy
-                    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-                    Key::Character(c) if action_mod && c.as_str().eq_ignore_ascii_case("c") => {
-                        if let Some(text) = self.editor.selected_text()
-                            && !text.is_empty()
-                        {
-                            ctx.set_clipboard(text.to_string());
-                        }
-                    }
-                    Key::Character(a) if action_mod && a.as_str().eq_ignore_ascii_case("a") => {
-                        let mut drv = self.editor.driver(fctx, lctx);
-
-                        if shift {
-                            drv.collapse_selection();
-                        } else {
-                            drv.select_all();
-                        }
-                    }
-                    Key::Named(NamedKey::ArrowLeft) => {
-                        let mut drv = self.editor.driver(fctx, lctx);
-                        if action_mod {
-                            if shift {
-                                drv.select_word_left();
-                            } else {
-                                drv.move_word_left();
-                            }
-                        } else if shift {
-                            drv.select_left();
-                        } else {
-                            drv.move_left();
-                        }
-                    }
-                    Key::Named(NamedKey::ArrowRight) => {
-                        let mut drv = self.editor.driver(fctx, lctx);
-                        if action_mod {
-                            if shift {
-                                drv.select_word_right();
-                            } else {
-                                drv.move_word_right();
-                            }
-                        } else if shift {
-                            drv.select_right();
-                        } else {
-                            drv.move_right();
-                        }
-                    }
-                    Key::Named(NamedKey::ArrowUp) => {
-                        let mut drv = self.editor.driver(fctx, lctx);
-                        if shift {
-                            drv.select_up();
-                        } else {
-                            drv.move_up();
-                        }
-                    }
-                    Key::Named(NamedKey::ArrowDown) => {
-                        let mut drv = self.editor.driver(fctx, lctx);
-                        if shift {
-                            drv.select_down();
-                        } else {
-                            drv.move_down();
-                        }
-                    }
-                    Key::Named(NamedKey::Home) => {
-                        let mut drv = self.editor.driver(fctx, lctx);
-                        if action_mod {
-                            if shift {
-                                drv.select_to_text_start();
-                            } else {
-                                drv.move_to_text_start();
-                            }
-                        } else if shift {
-                            drv.select_to_line_start();
-                        } else {
-                            drv.move_to_line_start();
-                        }
-                    }
-                    Key::Named(NamedKey::End) => {
-                        let mut drv = self.editor.driver(fctx, lctx);
-                        if action_mod {
-                            if shift {
-                                drv.select_to_text_end();
-                            } else {
-                                drv.move_to_text_end();
-                            }
-                        } else if shift {
-                            drv.select_to_line_end();
-                        } else {
-                            drv.move_to_line_end();
-                        }
-                    }
-                    Key::Named(NamedKey::Delete) if EDITABLE => {
-                        let mut drv = self.editor.driver(fctx, lctx);
-                        if action_mod {
-                            drv.delete_word();
-                        } else {
-                            drv.delete();
-                        }
-
-                        edited = true;
-                    }
-                    Key::Named(NamedKey::Backspace) if EDITABLE => {
-                        let mut drv = self.editor.driver(fctx, lctx);
-                        if action_mod {
-                            drv.backdelete_word();
-                        } else {
-                            drv.backdelete();
-                        }
-
-                        edited = true;
-                    }
-                    Key::Character(sp) if EDITABLE && sp.as_str() == " " => {
-                        self.editor
-                            .driver(fctx, lctx)
-                            .insert_or_replace_selection(" ");
-                        edited = true;
-                    }
-                    Key::Named(NamedKey::Enter) => {
-                        let insert_newline = match self.insert_newline {
-                            InsertNewline::OnEnter => true,
-                            InsertNewline::OnShiftEnter => shift,
-                            InsertNewline::Never => false,
-                        };
-                        if insert_newline {
-                            let (fctx, lctx) = ctx.text_contexts();
-                            self.editor
-                                .driver(fctx, lctx)
-                                .insert_or_replace_selection("\n");
-                            edited = true;
-                        } else {
-                            ctx.submit_action::<Self::Action>(TextAction::Entered(
-                                self.text().to_string(),
-                            ));
-                        }
-                    }
-
-                    Key::Named(NamedKey::Tab) => {
-                        // Intentionally do nothing so that tabbing from a TextInput/Prose works.
-                        // Note that this doesn't allow input of the tab character; we need to be more clever here at some point
-                        return;
-                    }
-                    Key::Named(NamedKey::Escape) => {
-                        ctx.submit_action::<Self::Action>(TextAction::Cancelled);
-                    }
-                    Key::Character(text) if EDITABLE => {
-                        self.editor
-                            .driver(fctx, lctx)
-                            .insert_or_replace_selection(text);
-                        edited = true;
-                    }
-                    _ => {
-                        // Do nothing, don't set as handled.
-                        return;
-                    }
-                }
-                ctx.set_handled();
-                let new_generation = self.editor.generation();
-                if new_generation != self.rendered_generation {
-                    if edited {
-                        ctx.submit_action::<Self::Action>(TextAction::Changed(
-                            self.text().into_iter().collect(),
-                        ));
-                        ctx.request_layout();
-                    } else {
-                        ctx.request_render();
-                        ctx.set_ime_area(self.ime_area());
-                    }
-                    self.rendered_generation = new_generation;
-                }
-            }
+            TextEvent::Keyboard(key_event) => self.handle_keyboard(ctx, key_event),
 
             TextEvent::WindowFocusChange(_) => {
                 // To use a different selection color when unfocused.
@@ -898,34 +951,32 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
         //       so these could be more unified and share a single implementation.
 
         // Calculate the max advance for the inline axis, with None indicating unbounded.
-        let max_advance = match self.word_wrap {
-            true => {
-                if axis == inline {
-                    // Inline axis measurement ignores cross_length as a performance optimization.
-                    // The search complexity of dealing with it is just too prohibitive.
-                    // This is a common optimization also present on the web.
-                    match len_req {
-                        // Zero space will get us the length of longest unbreakable word
-                        LenReq::MinContent => Some(Length::ZERO),
-                        // Unbounded space will get us the length of the unwrapped string
-                        LenReq::MaxContent => None,
-                        // Attempt to wrap according to the parent's request
-                        LenReq::FitContent(space) => Some(space),
-                    }
-                } else {
-                    // Block axis is dependent on the inline axis, so cross_length dominates.
-                    // If there is no explicit cross_length present, we fall back to inline defaults.
-                    match len_req {
-                        // Fallback is inline axis MinContent
-                        LenReq::MinContent => cross_length.or(Some(Length::ZERO)),
-                        // Fallback is inline axis MaxContent, even for FitContent, because
-                        // as we don't have the inline space bound we'll consider it unbounded.
-                        LenReq::MaxContent | LenReq::FitContent(_) => cross_length,
-                    }
+        let max_advance = if self.word_wrap {
+            if axis == inline {
+                // Inline axis measurement ignores cross_length as a performance optimization.
+                // The search complexity of dealing with it is just too prohibitive.
+                // This is a common optimization also present on the web.
+                match len_req {
+                    // Zero space will get us the length of longest unbreakable word
+                    LenReq::Min => Some(Length::ZERO),
+                    // Unbounded space will get us the length of the unwrapped string
+                    LenReq::Max => None,
+                    // Attempt to wrap according to the parent's request
+                    LenReq::Fit(space) => Some(space),
+                }
+            } else {
+                // Block axis is dependent on the inline axis, so cross_length dominates.
+                // If there is no explicit cross_length present, we fall back to inline defaults.
+                match len_req {
+                    // Fallback is inline axis MinContent
+                    LenReq::Min => cross_length.or(Some(Length::ZERO)),
+                    // Fallback is inline axis MaxContent, even for FitContent, because
+                    // as we don't have the inline space bound we'll consider it unbounded.
+                    LenReq::Max | LenReq::Fit(_) => cross_length,
                 }
             }
-            // If we're never wrapping, then there's no max advance.
-            false => None,
+        } else {
+            None
         }
         .map(|v| v.get() as f32);
 
@@ -942,7 +993,7 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
 
         let (fctx, lctx) = ctx.text_contexts();
         let layout = self.editor.layout(fctx, lctx);
-        let text_width = max_advance.unwrap_or(layout.full_width());
+        let text_width = max_advance.unwrap_or_else(|| layout.full_width());
         let text_size = Size::new(text_width.into(), layout.height().into());
 
         let length = text_size.get_coord(axis);
@@ -966,9 +1017,10 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
 
         let inline_space = size.get_coord(inline) as f32;
 
-        let max_advance = match self.word_wrap {
-            true => Some(inline_space),
-            false => None,
+        let max_advance = if self.word_wrap {
+            Some(inline_space)
+        } else {
+            None
         };
 
         if self.last_max_advance != max_advance {
@@ -984,12 +1036,11 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
         let (fctx, lctx) = ctx.text_contexts();
         let layout = self.editor.layout(fctx, lctx);
 
-        let line_count = layout.len();
-        if line_count > 0 {
-            let line_first = layout.get(0).unwrap();
-            let line_last = layout.get(line_count - 1).unwrap();
-            let first_baseline = line_first.metrics().baseline as f64;
-            let last_baseline = line_last.metrics().baseline as f64;
+        if let (Some(line_first), Some(line_last)) =
+            (layout.get(0), layout.get(layout.len().saturating_sub(1)))
+        {
+            let first_baseline = f64::from(line_first.metrics().baseline);
+            let last_baseline = f64::from(line_last.metrics().baseline);
             ctx.set_baselines(first_baseline, last_baseline);
         } else {
             ctx.clear_baselines();
@@ -1011,7 +1062,10 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
             let (fctx, lctx) = ctx.text_contexts();
             // The `layout` method takes `&mut self`, so we get borrow-checker errors if we return it from this block.
             self.editor.refresh_layout(fctx, lctx);
-            self.editor.try_layout().unwrap()
+            let Some(layout) = self.editor.try_layout() else {
+                return;
+            };
+            layout
         };
         if ctx.is_focus_target() {
             let (caret_color, selection_color) = {
@@ -1021,7 +1075,7 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
                     props.get::<SelectionColor>(cache).color,
                 )
             };
-            for (rect, _) in self.editor.selection_geometry().iter() {
+            for (rect, _) in &self.editor.selection_geometry() {
                 let rect = bounding_box_to_rect(*rect);
                 painter.fill(rect, selection_color).draw();
             }
@@ -1031,7 +1085,7 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
             {
                 let rect = bounding_box_to_rect(cursor);
                 painter.fill(rect, caret_color).draw();
-            };
+            }
         }
 
         let cache = ctx.property_cache();
@@ -1054,7 +1108,7 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
         if EDITABLE {
             match self.insert_newline {
                 InsertNewline::OnShiftEnter | InsertNewline::OnEnter => Role::MultilineTextInput,
-                _ => Role::TextInput,
+                InsertNewline::Never => Role::TextInput,
             }
         } else {
             Role::Document
@@ -1146,7 +1200,7 @@ mod tests {
 
             let mut harness = TestHarness::create_with_size(test_property_set(), area, (60, 40));
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         {
@@ -1156,7 +1210,7 @@ mod tests {
 
             let mut harness = TestHarness::create_with_size(test_property_set(), area, (60, 40));
 
-            let without_wrapping = harness.render();
+            let without_wrapping = harness.render().unwrap();
 
             // Hack: If we are using `SKIP_RENDER_TESTS`, the output image is a 1x1 white pixel
             // This means that the not equal comparison won't work, so we skip it.
@@ -1169,11 +1223,13 @@ mod tests {
                 );
             }
 
-            harness.edit_root_widget(|mut area| {
-                TextArea::set_word_wrap(&mut area, true);
-            });
+            harness
+                .edit_root_widget(|mut area| {
+                    TextArea::set_word_wrap(&mut area, true);
+                })
+                .unwrap();
 
-            let with_enabled_wrap = harness.render();
+            let with_enabled_wrap = harness.render().unwrap();
 
             // We don't use assert_eq because we don't want rich assert
             assert!(
@@ -1193,7 +1249,7 @@ mod tests {
 
             let mut harness = TestHarness::create_with(test_property_set(), area, test_params);
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         {
@@ -1202,11 +1258,13 @@ mod tests {
 
             let mut harness = TestHarness::create_with(test_property_set(), area, test_params);
 
-            harness.edit_root_widget(|mut area| {
-                TextArea::reset_text(&mut area, "Test string");
-            });
+            harness
+                .edit_root_widget(|mut area| {
+                    TextArea::reset_text(&mut area, "Test string");
+                })
+                .unwrap();
 
-            let with_updated_text = harness.render();
+            let with_updated_text = harness.render().unwrap();
 
             // We don't use assert_eq because we don't want rich assert
             assert!(
@@ -1214,11 +1272,13 @@ mod tests {
                 "Updating the text should match with base text"
             );
 
-            harness.edit_root_widget(|mut area| {
-                area.insert_prop(ContentColor::new(palette::css::BROWN));
-            });
+            harness
+                .edit_root_widget(|mut area| {
+                    area.insert_prop(ContentColor::new(palette::css::BROWN));
+                })
+                .unwrap();
 
-            let with_updated_brush = harness.render();
+            let with_updated_brush = harness.render().unwrap();
 
             // Hack: If we are using `SKIP_RENDER_TESTS`, the output image is a 1x1 white pixel
             // This means that the not equal comparison won't work, so we skip it.
@@ -1282,15 +1342,15 @@ mod tests {
             let text_id = harness.root_id();
 
             harness.focus_on(Some(text_id));
-            harness.process_text_event(TextEvent::Keyboard(KeyboardEvent {
+            harness.process_text_event(&TextEvent::Keyboard(KeyboardEvent {
                 key: scenario.key,
                 modifiers: scenario.modifiers,
                 ..Default::default()
             }));
 
-            let area = harness.root_widget();
+            let area = harness.root_widget().unwrap();
             let text = area.text().to_string();
-            let (action, widget_id) = harness.pop_action::<TextAction>().unwrap();
+            let (action, widget_id) = harness.pop_action::<TextAction>().unwrap().unwrap();
             assert_eq!(widget_id, text_id);
 
             // Check that only the one action was emitted so we don't miss an error case
@@ -1315,15 +1375,15 @@ mod tests {
         let text_id = harness.root_id();
 
         harness.focus_on(Some(text_id));
-        harness.process_text_event(TextEvent::Keyboard(KeyboardEvent {
+        harness.process_text_event(&TextEvent::Keyboard(KeyboardEvent {
             key: Key::Named(NamedKey::Escape),
             modifiers: Modifiers::default(),
             ..Default::default()
         }));
 
-        let area = harness.root_widget();
+        let area = harness.root_widget().unwrap();
         let text = area.text().to_string();
-        let (action, widget_id) = harness.pop_action::<TextAction>().unwrap();
+        let (action, widget_id) = harness.pop_action::<TextAction>().unwrap().unwrap();
         assert_eq!(widget_id, text_id);
         assert_eq!(action, TextAction::Cancelled);
         assert!(harness.pop_action_erased().is_none());
@@ -1378,26 +1438,34 @@ mod tests {
         };
 
         harness.focus_on(Some(area_id));
-        harness.edit_root_widget(|mut area| {
-            TextArea::select_text(&mut area, "Initial");
-        });
+        harness
+            .edit_root_widget(|mut area| {
+                TextArea::select_text(&mut area, "Initial");
+            })
+            .unwrap();
 
-        harness.process_text_event(TextEvent::Keyboard(KeyboardEvent {
+        harness.process_text_event(&TextEvent::Keyboard(KeyboardEvent {
             state: KeyState::Down,
             key: Key::Character("c".into()),
             modifiers,
             ..Default::default()
         }));
         assert_eq!(harness.clipboard_contents(), "Initial");
-        assert_eq!(harness.root_widget().text().to_string(), "[Initial]");
+        assert_eq!(
+            harness.root_widget().unwrap().text().to_string(),
+            "[Initial]"
+        );
         assert!(harness.pop_action_erased().is_none());
 
-        harness.process_text_event(TextEvent::ClipboardPaste("<PASTED>".into()));
+        harness.process_text_event(&TextEvent::ClipboardPaste("<PASTED>".into()));
 
         // shows [<PASTED>] replacing "Initial"
-        assert_eq!(harness.root_widget().text().to_string(), "[<PASTED>]");
         assert_eq!(
-            harness.pop_action::<TextAction>(),
+            harness.root_widget().unwrap().text().to_string(),
+            "[<PASTED>]"
+        );
+        assert_eq!(
+            harness.pop_action::<TextAction>().unwrap(),
             Some((TextAction::Changed("[<PASTED>]".into()), area_id)),
         );
     }

@@ -13,13 +13,13 @@ struct AppState {
 }
 
 impl AppState {
-    fn increment(&mut self) {
+    const fn increment(&mut self) {
         self.clicks += 1;
     }
-    fn decrement(&mut self) {
+    const fn decrement(&mut self) {
         self.clicks -= 1;
     }
-    fn reset(&mut self) {
+    const fn reset(&mut self) {
         self.clicks = 0;
     }
 }
@@ -45,7 +45,8 @@ fn app_logic(state: &mut AppState) -> impl DomView<AppState> + use<> {
     )
 }
 
-fn main() {
+fn main() -> Result<(), xilem_web::DomError> {
     console_error_panic_hook::set_once();
-    App::new(document_body(), AppState::default(), app_logic).run();
+    App::new(document_body()?, AppState::default(), app_logic)?.run();
+    Ok(())
 }

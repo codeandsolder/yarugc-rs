@@ -3,7 +3,6 @@
 
 use std::fmt::{Debug, Display};
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::core::Widget;
 
@@ -16,7 +15,7 @@ use crate::core::Widget;
 ///
 /// You can only add one widget with a given tag to the entire widget tree.
 /// Trying to add another widget with the same tag will debug-panic or fail silently.
-/// Tags currently aren't garbage-collected even when the widget is removed from the tree.
+/// Removing a widget releases its tag for reuse.
 ///
 /// [`NewWidget::with_tag`]: crate::core::NewWidget::with_tag
 pub struct WidgetTag<W: Widget + ?Sized> {
@@ -37,6 +36,7 @@ impl<W: Widget> WidgetTag<W> {
     /// Users should avoid name collisions when adding widgets with named tags.
     ///
     /// This method can be called in const contexts (e.g. to initialize a static).
+    #[must_use = "Use the named widget tag."]
     pub const fn named(name: &'static str) -> Self {
         Self {
             inner: WidgetTagInner { id: 0, name },
@@ -47,9 +47,10 @@ impl<W: Widget> WidgetTag<W> {
     /// Creates a new unique tag.
     ///
     /// Calling this method twice will return two different tags.
+    #[must_use = "Use the allocated widget tag."]
     pub fn unique() -> Self {
-        static TAG_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-        let id = TAG_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+        static TAG_ID_COUNTER: crate::util::IdAllocator = crate::util::IdAllocator::new();
+        let id = TAG_ID_COUNTER.allocate().get();
 
         Self {
             inner: WidgetTagInner { id, name: "" },
@@ -82,10 +83,10 @@ impl<W: Widget + ?Sized> Display for WidgetTag<W> {
 
 impl Display for WidgetTagInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if !self.name.is_empty() {
-            write!(f, "#{}", self.name)
-        } else {
+        if self.name.is_empty() {
             write!(f, "#{}", self.id)
+        } else {
+            write!(f, "#{}", self.name)
         }
     }
 }

@@ -22,18 +22,21 @@ fn update_anim_for_widget(
     let properties = &mut node.item.properties;
     let class_set = &node.item.class_set;
     let id = state.id;
-    let _span = enter_span_if(global_state.trace.anim, state);
+    let _span = enter_span_if(
+        global_state.trace.enabled(crate::passes::TracePass::Anim),
+        state,
+    );
 
-    if !state.needs_anim {
+    if !state.needs_anim() {
         return;
     }
-    state.needs_anim = false;
+    state.set_needs_anim(false);
 
     // Most passes reset their `needs` and `request` flags after the call to
     // the widget method, but it's valid and expected for `request_anim` to be
     // set in response to `AnimFrame`.
-    if state.request_anim {
-        state.request_anim = false;
+    if state.request_anim() {
+        state.set_request_anim(false);
         let stack = property_arena.get(state.property_stack_id, widget.type_id());
         let mut ctx = UpdateCtx {
             global_state,
@@ -60,7 +63,7 @@ fn update_anim_for_widget(
             node.reborrow_mut(),
             elapsed_ns,
         );
-        parent_state.merge_up(&mut node.item.state);
+        parent_state.merge_up(&node.item.state);
     });
 }
 
@@ -74,7 +77,9 @@ fn update_anim_for_widget(
 pub(crate) fn run_update_anim_pass(root: &mut RenderRoot, elapsed_ns: u64) {
     let _span = info_span!("update_anim").entered();
 
-    let root_node = root.widget_arena.get_node_mut(root.root_id());
+    let Some(root_node) = root.widget_arena.nodes.find_mut(root.root_id()) else {
+        return;
+    };
     update_anim_for_widget(
         &mut root.global_state,
         &root.property_arena.default_properties,

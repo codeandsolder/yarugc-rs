@@ -1,0 +1,94 @@
+// Copyright 2026 the Xilem Authors
+// SPDX-License-Identifier: Apache-2.0
+
+//! Browser regression fixture, exercised by tests/browser/lifecycle.mjs.
+
+use wasm_bindgen::UnwrapThrowExt;
+use xilem_web::concurrent::memoized_await;
+use xilem_web::elements::{custom_element, html};
+use xilem_web::interfaces::Element;
+use xilem_web::modifiers::style;
+use xilem_web::{App, DomFragment, document_body, get_element_by_id};
+
+#[derive(Default)]
+struct State {
+    phase: usize,
+    count: usize,
+    request: usize,
+    output: String,
+}
+
+fn view(state: &mut State) -> impl DomFragment<State> + use<> {
+    let tag = if state.phase == 0 { "button" } else { "span" };
+    let event = if state.phase == 2 {
+        "mousedown"
+    } else {
+        "click"
+    };
+    let classes = if state.phase == 0 {
+        vec!["shared", "initial"]
+    } else {
+        vec!["shared"]
+    };
+
+    xilem_web::core::fork(
+        html::div((
+            html::button("advance")
+                .id("advance")
+                .on_click(|state: &mut State, _| {
+                    state.phase += 1;
+                }),
+            custom_element(tag, "target")
+                .id("target")
+                .class(classes)
+                .class("outer")
+                .style(style("color", "red"))
+                .on(event, |state: &mut State, _: web_sys::Event| {
+                    state.count += 1;
+                }),
+            html::button("reentrant")
+                .id("reentrant")
+                .on_click(|state: &mut State, _| {
+                    state.count += 10;
+                    let element = get_element_by_id("target").unwrap_throw();
+                    let event = web_sys::Event::new("mousedown").unwrap_throw();
+                    element.dispatch_event(&event).unwrap_throw();
+                }),
+            html::div(state.count).id("count"),
+            html::button("request")
+                .id("request")
+                .on_click(|state: &mut State, _| {
+                    state.request += 1;
+                }),
+            html::div(state.output.clone()).id("output"),
+        )),
+        memoized_await(
+            state.request,
+            |request| {
+                let name = format!("resolveRequest{request}");
+                let promise = web_sys::js_sys::Promise::new(&mut |resolve, _| {
+                    web_sys::js_sys::Reflect::set(
+                        &web_sys::js_sys::global(),
+                        &name.clone().into(),
+                        &resolve,
+                    )
+                    .unwrap_throw();
+                });
+                async move {
+                    wasm_bindgen_futures::JsFuture::from(promise)
+                        .await
+                        .unwrap_throw()
+                        .as_string()
+                        .unwrap_throw()
+                }
+            },
+            |state: &mut State, output| state.output = output,
+        )
+        .debounce_ms(if state.request == 0 { 0 } else { 100 }),
+    )
+}
+
+fn main() -> Result<(), xilem_web::DomError> {
+    App::new(document_body()?, State::default(), view)?.run();
+    Ok(())
+}

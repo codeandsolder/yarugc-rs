@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use masonry::layout::{AsUnit, Dim, Length};
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::core::{Resource, fork, provides, run_once, with_context, without_elements};
 use xilem::kurbo::{Axis, Size};
 use xilem::style::Style as _;
@@ -32,9 +32,12 @@ impl Resource for SomeContext {}
 ///
 /// Requires the `SomeContext` resource to be [provided](provides).
 fn env_using() -> impl WidgetView<AppData> + use<> {
-    with_context(|context: &mut SomeContext, _: &mut AppData| {
+    with_context(|context: Option<&mut SomeContext>, _: &mut AppData| {
         Box::new(text_button(
-            format!("Context: {}", context.0),
+            context.map_or_else(
+                || "No context provided".into(),
+                |context| format!("Context: {}", context.0),
+            ),
             |_: &mut AppData| {
                 tracing::warn!("Does nothing");
             },
@@ -59,31 +62,7 @@ fn app_logic(data: &mut AppData) -> impl WidgetView<AppData> + use<> {
         Axis::Vertical
     };
 
-    let flex_sequence = (0..count)
-        .map(|x: i32| {
-            (
-                Box::new(text_button(format!("+{x}"), move |data: &mut AppData| {
-                    data.count += x;
-                })) as Box<AnyWidgetView<AppData>>,
-                if data.active {
-                    FlexSpacer::Flex(x as f64)
-                } else {
-                    FlexSpacer::Fixed(Length::px((count - x) as f64))
-                },
-            )
-        })
-        .collect::<Vec<_>>();
-
-    let fizz_buzz_flex_sequence = [(3, "Fizz"), (5, "Buzz")].map(|c| {
-        if data.count.abs() % c.0 == 0 {
-            text_button(c.1, move |data: &mut AppData| {
-                data.count += 1;
-            })
-            .into_any_flex()
-        } else {
-            FlexSpacer::Fixed(Length::px(10.0 * c.0 as f64)).into_any_flex()
-        }
-    });
+    let dynamic_items = dynamic_items(data);
 
     provides(
         |_: &mut AppData| SomeContext(120),
@@ -142,7 +121,7 @@ fn app_logic(data: &mut AppData) -> impl WidgetView<AppData> + use<> {
                 env_using(),
                 text_button("Decrement", |data: &mut AppData| data.count -= 1),
                 text_button("Reset", |data: &mut AppData| data.count = 0),
-                flex(axis, (fizz_buzz_flex_sequence, flex_sequence)),
+                flex(axis, dynamic_items),
             ))
             .padding(8.px()),
             // The following `task` view only exists whilst the example is in the "active" state, so
@@ -167,7 +146,38 @@ fn app_logic(data: &mut AppData) -> impl WidgetView<AppData> + use<> {
     )
 }
 
-fn toggleable(data: &mut AppData) -> impl WidgetView<AppData> + use<> {
+fn dynamic_items(data: &AppData) -> impl xilem::view::FlexSequence<AppData> + use<> {
+    let count = data.count;
+    let sequence = (0..count)
+        .map(|x: i32| {
+            (
+                Box::new(text_button(format!("+{x}"), move |data: &mut AppData| {
+                    data.count += x;
+                })) as Box<AnyWidgetView<AppData>>,
+                if data.active {
+                    FlexSpacer::Flex(f64::from(x))
+                } else {
+                    FlexSpacer::Fixed(Length::px(f64::from(count - x)))
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let fizz_buzz = [(3, "Fizz"), (5, "Buzz")].map(|c| {
+        if data.count % c.0 == 0 {
+            text_button(c.1, move |data: &mut AppData| {
+                data.count += 1;
+            })
+            .into_any_flex()
+        } else {
+            FlexSpacer::Fixed(Length::px(10.0 * f64::from(c.0))).into_any_flex()
+        }
+    });
+
+    (fizz_buzz, sequence)
+}
+
+fn toggleable(data: &AppData) -> impl WidgetView<AppData> + use<> {
     if data.active {
         provides(
             |_| SomeContext(777),
@@ -198,7 +208,7 @@ struct AppData {
     observed_size: Size,
 }
 
-pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
+pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
     let data = AppData {
         count: 0,
         text_input_contents: "Not quite a placeholder".into(),
@@ -214,6 +224,6 @@ pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
 
 // Boilerplate code: Identical across all applications which support Android
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     run(EventLoop::with_user_event())
 }

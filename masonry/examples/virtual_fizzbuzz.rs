@@ -1,7 +1,7 @@
 // Copyright 2024 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! A demonstration of the [`VirtualScroll`] widget, producing an infinite[^1] FizzBuzz.
+//! A demonstration of the [`VirtualScroll`] widget, producing an infinite[^1] `FizzBuzz`.
 //!
 //! [^1]: Limited to `i64::MIN..i64::MAX-1`; that is, there are `2^64-1` possible items.
 //! However, there is (currently...) no way to jump to a specific item, so it's impossible to reach the end.
@@ -40,59 +40,62 @@ impl AppDriver for Driver {
     ) {
         debug_assert_eq!(window_id, self.window_id, "unknown window");
 
-        let scroll_id = ctx
-            .render_root(window_id)
+        let Some(render_root) = ctx.render_root(window_id) else {
+            return;
+        };
+        let scroll_id = render_root
             .get_widget_with_tag(self.scroll_tag)
             .map(|w| w.id());
 
         if Some(widget_id) == scroll_id {
             // The VirtualScroll widget will send us a VirtualScrollAction every time it wants different
             // items to be loaded or unloaded.
-            let action = action
-                .downcast::<VirtualScrollAction>()
-                .expect("Only expected Virtual Scroll actions");
+            let Ok(action) = action.downcast::<VirtualScrollAction>() else {
+                return;
+            };
             let VirtualScrollAction::Fetch(action) = *action else {
                 tracing::trace!("Got scroll action {action:?}");
                 return;
             };
-            ctx.render_root(window_id).edit_base_layer(|mut root| {
-                let mut scroll = root.downcast::<VirtualScroll>();
-                // We need to tell the `VirtualScroll` which request this is associated with
-                // This is so that the controller knows which actions have been handled.
-                VirtualScroll::will_handle_action(&mut scroll, &action);
-                for idx in action.old_active().clone() {
-                    if !action.target().contains(&idx) {
-                        // If we had different work to do in response to the item being unloaded
-                        // (for example, saving some related data?), then we'd do it here
-                        VirtualScroll::remove_child(&mut scroll, idx);
+            let _ = render_root.edit_base_layer(
+                |mut scroll: masonry::core::WidgetMut<'_, VirtualScroll>| {
+                    // We need to tell the `VirtualScroll` which request this is associated with
+                    // This is so that the controller knows which actions have been handled.
+                    VirtualScroll::will_handle_action(&mut scroll, &action);
+                    for idx in action.old_active().clone() {
+                        if !action.target().contains(&idx) {
+                            // If we had different work to do in response to the item being unloaded
+                            // (for example, saving some related data?), then we'd do it here
+                            VirtualScroll::remove_child(&mut scroll, idx);
+                        }
                     }
-                }
-                for idx in action.target().clone() {
-                    if !action.old_active().contains(&idx) {
-                        let label: ArcStr = match (idx % 3 == 0, idx % 5 == 0) {
-                            (false, true) => self.buzz.clone(),
-                            (true, false) => self.fizz.clone(),
-                            (true, true) => self.fizzbuzz.clone(),
-                            (false, false) => format!("{idx}").into(),
-                        };
-                        VirtualScroll::add_child(
-                            &mut scroll,
-                            idx,
-                            NewWidget::new(Label::new(label).with_style(StyleProperty::FontSize(
-                                if idx % 100 == 0 { 40. } else { 20. },
-                            )))
-                            .erased(),
-                        );
+                    for idx in action.target().clone() {
+                        if !action.old_active().contains(&idx) {
+                            let label: ArcStr = match (idx % 3 == 0, idx % 5 == 0) {
+                                (false, true) => self.buzz.clone(),
+                                (true, false) => self.fizz.clone(),
+                                (true, true) => self.fizzbuzz.clone(),
+                                (false, false) => format!("{idx}").into(),
+                            };
+                            VirtualScroll::add_child(
+                                &mut scroll,
+                                idx,
+                                NewWidget::new(Label::new(label).with_style(
+                                    StyleProperty::FontSize(if idx % 100 == 0 { 40. } else { 20. }),
+                                ))
+                                .erased(),
+                            );
+                        }
                     }
-                }
-            });
+                },
+            );
         } else {
             tracing::warn!("Got unexpected action {action:?}");
         }
     }
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scroll_tag = WidgetTag::unique();
     let main_widget = NewWidget::new(init()).with_tag(scroll_tag).erased();
     let driver = Driver {
@@ -116,6 +119,6 @@ fn main() {
         )],
         driver,
         default_property_set(),
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }

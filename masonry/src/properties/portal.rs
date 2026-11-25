@@ -4,7 +4,7 @@
 use crate::core::Property;
 
 /// Declares if the scroll bar collapses when not being hovered.
-#[derive(Default, Clone, Copy, Debug, PartialEq)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AutoHideScrollBar(pub bool);
 
 impl Property for AutoHideScrollBar {

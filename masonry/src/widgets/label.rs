@@ -92,7 +92,7 @@ impl TextLayout {
     }
 
     /// Discards this layout, making it an obvious choice for cache eviction.
-    fn discard(&mut self) {
+    const fn discard(&mut self) {
         // Mark it as least recently used.
         self.last_used = 0;
         // Set a fake unlikely-to-be-seen max advance so it won't get any use.
@@ -200,6 +200,7 @@ impl Label {
     /// Use the [`ContentColor`] property instead.
     ///
     /// To set a style property on an active label, use [`insert_style`](Self::insert_style).
+    #[must_use = "Use the configured value."]
     pub fn with_style(mut self, property: impl Into<StyleProperty>) -> Self {
         self.insert_style_inner(property.into());
         self
@@ -220,7 +221,8 @@ impl Label {
     ///
     /// Text alignment might have unexpected results when the label has no horizontal constraints.
     /// To modify this on an active label, use [`set_text_alignment`](Self::set_text_alignment).
-    pub fn with_text_alignment(mut self, text_alignment: TextAlign) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_text_alignment(mut self, text_alignment: TextAlign) -> Self {
         self.text_alignment = text_alignment;
         self
     }
@@ -239,13 +241,15 @@ impl Label {
     /// To modify this on an active label, use [`set_hint`](Self::set_hint).
     // TODO: Should we tell each widget if smooth scrolling is ongoing so they can disable their hinting?
     // Alternatively, we should automate disabling hinting at the Vello layer when composing.
-    pub fn with_hint(mut self, hint: bool) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_hint(mut self, hint: bool) -> Self {
         self.hint = hint;
         self
     }
 
     /// Sets whether this label is hidden from the accessibility tree.
-    pub fn accessibility_hidden(mut self, hidden: bool) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn accessibility_hidden(mut self, hidden: bool) -> Self {
         self.accessibility_hidden = hidden;
         self
     }
@@ -269,7 +273,8 @@ impl Label {
     /// Returns a reference to the current text of this label.
     ///
     /// To update the text of an active label, use [`set_text`](Self::set_text).
-    pub fn text(&self) -> &ArcStr {
+    #[must_use = "Use the returned value."]
+    pub const fn text(&self) -> &ArcStr {
         &self.text
     }
 }
@@ -401,23 +406,26 @@ impl Label {
         }
 
         // No known compatible cache entry, so need to do text layout.
-        let (mut idx, layout) = if self.layouts.len() < Self::CACHE_CAPACITY {
-            // Create a new cache entry.
+        // Select a reusable cache slot, or append when no safe eviction candidate exists.
+        let reusable = (self.layouts.len() >= Self::CACHE_CAPACITY)
+            .then(|| {
+                self.layouts
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| *index != self.active_layout)
+                    .min_by_key(|(_, layout)| layout.last_used)
+                    .map(|(index, _)| index)
+            })
+            .flatten();
+        let mut idx = reusable.unwrap_or(self.layouts.len());
+        if idx == self.layouts.len() {
             self.layouts.push(TextLayout::new(max_advance, timestamp));
-            (self.layouts.len() - 1, self.layouts.last_mut().unwrap())
-        } else {
-            // Repurpose the least recently used non-active cache entry.
-            let (idx, layout) = self
-                .layouts
-                .iter_mut()
-                .enumerate()
-                .filter(|(idx, _)| *idx != self.active_layout)
-                .min_by(|a, b| a.1.last_used.cmp(&b.1.last_used))
-                .unwrap();
-            layout.max_advance = max_advance;
-            layout.last_used = timestamp;
-            (idx, layout)
-        };
+        }
+        let layout = &mut self.layouts[idx];
+        layout.max_advance = max_advance;
+        layout.last_used = timestamp;
+        // Building into the Parley layout resets its alignment.
+        layout.alignment_width = -1.;
 
         // TODO: Should we use a different scale?
         // See https://github.com/linebender/xilem/issues/1264
@@ -441,12 +449,11 @@ impl Label {
             // Only those that are more constrained than the new constraint are viable.
             .filter(|(_, layout)| layout.more_constrained(max_advance))
             // We want the one that is closest to the new constraint.
-            .max_by(|a, b| {
-                // Because we only look at more constrained entries,
-                // these are all guaranteed to be Option::Some.
-                a.1.max_advance
-                    .unwrap()
-                    .total_cmp(&b.1.max_advance.unwrap())
+            .max_by(|a, b| match (a.1.max_advance, b.1.max_advance) {
+                (Some(a), Some(b)) => a.total_cmp(&b),
+                (Some(_), None) => core::cmp::Ordering::Greater,
+                (None, Some(_)) => core::cmp::Ordering::Less,
+                (None, None) => core::cmp::Ordering::Equal,
             })
             // Make sure that it actually matches the new layout.
             .filter(|(_, layout)| layout.equals(&self.layouts[idx]))
@@ -525,21 +532,21 @@ impl Widget for Label {
                     // This is a common optimization also present on the web.
                     match len_req {
                         // Zero space will get us the length of longest unbreakable word
-                        LenReq::MinContent => Some(Length::ZERO),
+                        LenReq::Min => Some(Length::ZERO),
                         // Unbounded space will get us the length of the unwrapped string
-                        LenReq::MaxContent => None,
+                        LenReq::Max => None,
                         // Attempt to wrap according to the parent's request
-                        LenReq::FitContent(space) => Some(space),
+                        LenReq::Fit(space) => Some(space),
                     }
                 } else {
                     // Block axis is dependent on the inline axis, so cross_length dominates.
                     // If there is no explicit cross_length present, we fall back to inline defaults.
                     match len_req {
                         // Fallback is inline axis MinContent
-                        LenReq::MinContent => cross_length.or(Some(Length::ZERO)),
+                        LenReq::Min => cross_length.or(Some(Length::ZERO)),
                         // Fallback is inline axis MaxContent, even for FitContent, because
                         // as we don't have the inline space bound we'll consider it unbounded.
-                        LenReq::MaxContent | LenReq::FitContent(_) => cross_length,
+                        LenReq::Max | LenReq::Fit(_) => cross_length,
                     }
                 }
             }
@@ -583,11 +590,12 @@ impl Widget for Label {
         layout.align(self.text_alignment, inline_space);
 
         let line_count = layout.layout.len();
-        if line_count > 0 {
-            let line_first = layout.layout.get(0).unwrap();
-            let line_last = layout.layout.get(line_count - 1).unwrap();
-            let first_baseline = line_first.metrics().baseline as f64;
-            let last_baseline = line_last.metrics().baseline as f64;
+        if let (Some(line_first), Some(line_last)) = (
+            layout.layout.get(0),
+            layout.layout.get(line_count.saturating_sub(1)),
+        ) {
+            let first_baseline = f64::from(line_first.metrics().baseline);
+            let last_baseline = f64::from(line_last.metrics().baseline);
             ctx.set_baselines(first_baseline, last_baseline);
         } else {
             ctx.clear_baselines();
@@ -826,7 +834,7 @@ mod tests {
 
             let mut harness = TestHarness::create_with_size(test_property_set(), label, (50, 50));
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         let image_2 = {
@@ -836,19 +844,21 @@ mod tests {
 
             let mut harness = TestHarness::create_with_size(test_property_set(), label, (50, 50));
 
-            harness.edit_root_widget(|mut label| {
-                label.insert_prop(ContentColor::new(ACCENT_COLOR));
-                label.insert_prop(LineBreaking::WordWrap);
-                Label::set_text(&mut label, "The quick brown fox jumps over the lazy dog");
-                Label::insert_style(
-                    &mut label,
-                    FontFamily::Single(FontFamilyName::Generic(GenericFamily::Monospace)),
-                );
-                Label::insert_style(&mut label, StyleProperty::FontSize(20.0));
-                Label::set_text_alignment(&mut label, TextAlign::Center);
-            });
+            harness
+                .edit_root_widget(|mut label| {
+                    label.insert_prop(ContentColor::new(ACCENT_COLOR));
+                    label.insert_prop(LineBreaking::WordWrap);
+                    Label::set_text(&mut label, "The quick brown fox jumps over the lazy dog");
+                    Label::insert_style(
+                        &mut label,
+                        FontFamily::Single(FontFamilyName::Generic(GenericFamily::Monospace)),
+                    );
+                    Label::insert_style(&mut label, StyleProperty::FontSize(20.0));
+                    Label::set_text_alignment(&mut label, TextAlign::Center);
+                })
+                .unwrap();
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         // We don't use assert_eq because we don't want rich assert

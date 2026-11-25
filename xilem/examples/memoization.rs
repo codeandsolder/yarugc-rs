@@ -72,12 +72,12 @@ fn app_logic(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
     ))
 }
 
-fn main() {
+fn main() -> Result<(), xilem::RunError> {
     let data = AppState {
         count: 0,
         increase_button: MemoizedArcView::default(),
     };
 
     let app = Xilem::new_simple(data, app_logic, WindowOptions::new("Memoization"));
-    app.run_in(EventLoop::with_user_event()).unwrap();
+    app.run_in(EventLoop::with_user_event())
 }

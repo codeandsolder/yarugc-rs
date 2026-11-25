@@ -20,17 +20,16 @@
 
 use std::collections::VecDeque;
 use std::fs::File;
-use std::io::{BufReader, Cursor};
 use std::marker::PhantomData;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
 use std::time::UNIX_EPOCH;
 
-use image::{DynamicImage, ImageFormat, ImageReader, Rgba, RgbaImage};
+use image::{ImageFormat, Rgba, RgbaImage};
 use imaging_vello_cpu::VelloCpuRenderer;
 use masonry_core::imaging::record::{Scene, replay_transformed};
 use masonry_core::imaging::{ImageRenderer as _, Painter};
-use oxipng::{Options, optimize_from_memory};
+
 use tracing::debug;
 
 use masonry_core::accesskit::{Action, ActionRequest, Node, Role, Tree, TreeId, TreeUpdate};
@@ -51,7 +50,7 @@ use masonry_core::kurbo::{Affine, Point, Rect, Vec2};
 use masonry_core::peniko::{Blob, Color};
 use masonry_core::util::Duration;
 
-use crate::screenshots::get_image_diff;
+use crate::HarnessError;
 use crate::{Record, Recorder};
 
 /// A [`PointerInfo`] for a primary mouse, for testing.
@@ -86,7 +85,7 @@ pub const PRIMARY_MOUSE: PointerInfo = PointerInfo {
 /// - Check that the state of the widget graph matches what you expect.
 ///
 /// You can do that last part in a few different ways.
-/// You can get a [`WidgetRef`] to a specific widget through methods like [`try_get_widget`](Self::try_get_widget).
+/// You can get a [`WidgetRef`] to a specific widget through methods like [`get_widget_with_id`](Self::get_widget_with_id).
 /// [`WidgetRef`] implements `Debug`, so you can check the state of an entire tree with something like the [`insta`] crate.
 ///
 /// You can also render the widget tree directly with the [`render`](Self::render) method.
@@ -128,11 +127,11 @@ pub const PRIMARY_MOUSE: PointerInfo = PointerInfo {
 ///     assert_render_snapshot!(harness, "hello");
 ///     # }
 ///
-///     assert_eq!(harness.pop_action(), None);
+///     assert_eq!(harness.pop_action().unwrap(), None);
 ///
 ///     harness.mouse_click_on(button_id);
 ///     assert_eq!(
-///         harness.pop_action(),
+///         harness.pop_action().unwrap(),
 ///         Some((Action::ButtonPressed(Some(PointerButton::Primary)), button_id))
 ///     );
 /// }
@@ -146,6 +145,7 @@ pub const PRIMARY_MOUSE: PointerInfo = PointerInfo {
 pub struct TestHarness<W: Widget> {
     signal_receiver: mpsc::Receiver<RenderRootSignal>,
     render_root: RenderRoot,
+    root_id: WidgetId,
     access_tree: accesskit_consumer::Tree,
     renderer: Option<VelloCpuRenderer>,
     mouse_state: PointerState,
@@ -165,6 +165,7 @@ pub struct TestHarness<W: Widget> {
 /// Parameters for creating a [`TestHarness`].
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
+#[must_use = "Use the configured harness parameters."]
 pub struct TestHarnessParams {
     /// The size of the virtual window the harness renders into for snapshot testing.
     /// Defaults to [`TestHarnessParams::DEFAULT_SIZE`].
@@ -220,9 +221,10 @@ pub struct TestHarnessParams {
 /// differences are intended and overwrite all the screenshots with new values.
 #[macro_export]
 macro_rules! assert_render_snapshot {
-    ($test_harness:expr, $name:expr) => {
-        $test_harness.check_render_snapshot(env!("CARGO_MANIFEST_DIR"), $name, false)
-    };
+    ($test_harness:expr, $name:expr) => {{
+        let result = $test_harness.check_render_snapshot(env!("CARGO_MANIFEST_DIR"), $name, false);
+        assert!(result.is_ok(), "Snapshot assertion failed: {result:?}");
+    }};
 }
 
 /// Assert a snapshot of a rendered frame of your app, expecting it to fail.
@@ -239,9 +241,10 @@ macro_rules! assert_render_snapshot {
 /// [`assert_render_snapshot`]: crate::assert_render_snapshot
 #[macro_export]
 macro_rules! assert_failing_render_snapshot {
-    ($test_harness:expr, $name:expr) => {
-        $test_harness.check_render_snapshot(env!("CARGO_MANIFEST_DIR"), $name, true)
-    };
+    ($test_harness:expr, $name:expr) => {{
+        let result = $test_harness.check_render_snapshot(env!("CARGO_MANIFEST_DIR"), $name, true);
+        assert!(result.is_ok(), "Snapshot assertion failed: {result:?}");
+    }};
 }
 
 impl TestHarnessParams {
@@ -339,6 +342,7 @@ impl<W: Widget> TestHarness<W> {
     ///
     /// Window size will be [`TestHarnessParams::DEFAULT_SIZE`].
     /// Background color will be [`TestHarnessParams::DEFAULT_BACKGROUND_COLOR`].
+    #[must_use = "Use the constructed test harness."]
     pub fn create(default_props: DefaultProperties, root_widget: NewWidget<W>) -> Self {
         Self::create_with(default_props, root_widget, TestHarnessParams::default())
     }
@@ -357,11 +361,16 @@ impl<W: Widget> TestHarness<W> {
     }
 
     /// Builds harness with given root widget and additional parameters.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the widget tree violates a test assertion, including rewrite-pass saturation.
     pub fn create_with(
         default_props: DefaultProperties,
         root_widget: NewWidget<W>,
         params: TestHarnessParams,
     ) -> Self {
+        let root_id = root_widget.id();
         let mouse_state = PointerState::default();
         let window_size = params.window_size;
 
@@ -388,9 +397,12 @@ impl<W: Widget> TestHarness<W> {
         };
         let mut harness = Self {
             signal_receiver,
+            root_id,
             render_root: RenderRoot::new(
                 root_widget,
-                move |signal| signal_sender.send(signal).unwrap(),
+                move |signal| {
+                    let _ = signal_sender.send(signal);
+                },
                 RenderRootOptions {
                     default_properties: Arc::new(default_props),
                     use_system_fonts: false,
@@ -421,10 +433,11 @@ impl<W: Widget> TestHarness<W> {
         harness.animate_ms(0);
 
         let (_, tree_update) = harness.render_root.redraw();
-        let tree_update = tree_update.unwrap();
-        harness
-            .access_tree
-            .update_and_process_changes(tree_update, &mut NoOpTreeChangeHandler);
+        if let Some(tree_update) = tree_update {
+            harness
+                .access_tree
+                .update_and_process_changes(tree_update, &mut NoOpTreeChangeHandler);
+        }
 
         harness
     }
@@ -445,7 +458,7 @@ impl<W: Widget> TestHarness<W> {
     /// Sends a [`PointerEvent`] to the simulated window.
     ///
     /// This will run [rewrite passes](masonry_core::doc::pass_system#rewrite-passes) after the event is processed.
-    pub fn process_pointer_event(&mut self, event: PointerEvent) -> Handled {
+    pub fn process_pointer_event(&mut self, event: &PointerEvent) -> Handled {
         let handled = self.render_root.handle_pointer_event(event);
         self.process_signals();
         handled
@@ -454,7 +467,7 @@ impl<W: Widget> TestHarness<W> {
     /// Sends a [`TextEvent`] to the simulated window.
     ///
     /// This will run [rewrite passes](masonry_core::doc::pass_system#rewrite-passes) after the event is processed.
-    pub fn process_text_event(&mut self, event: TextEvent) -> Handled {
+    pub fn process_text_event(&mut self, event: &TextEvent) -> Handled {
         let handled = self.render_root.handle_text_event(event);
         self.process_signals();
         handled
@@ -471,9 +484,6 @@ impl<W: Widget> TestHarness<W> {
     // This should be ran after any operation which runs the rewrite passes
     // (i.e. processing an event, etc.)
     fn process_signals(&mut self) {
-        if self.panic_on_rewrite_saturation && self.render_root.needs_rewrite_passes() {
-            panic!("Loop detected in rewrite passes");
-        }
         while let Some(signal) = self.signal_receiver.try_iter().next() {
             match signal {
                 RenderRootSignal::Action(action, widget_id) => {
@@ -491,24 +501,25 @@ impl<W: Widget> TestHarness<W> {
                 RenderRootSignal::ClipboardStore(text) => {
                     self.clipboard = text;
                 }
-                RenderRootSignal::RequestRedraw => (),
-                RenderRootSignal::RequestAnimFrame => (),
-                RenderRootSignal::TakeFocus => (),
-                RenderRootSignal::SetCursor(_) => (),
                 RenderRootSignal::SetSize(physical_size) => {
                     self.window_size = physical_size;
-                    self.process_window_event(WindowEvent::Resize(physical_size));
+                    self.render_root
+                        .handle_window_event(WindowEvent::Resize(physical_size));
                 }
                 RenderRootSignal::SetTitle(title) => {
                     self.title = title;
                 }
-                RenderRootSignal::DragWindow => (),
-                RenderRootSignal::DragResizeWindow(_) => (),
-                RenderRootSignal::ToggleMaximized => (),
-                RenderRootSignal::Minimize => (),
-                RenderRootSignal::Exit => (),
-                RenderRootSignal::ShowWindowMenu(_) => (),
-                RenderRootSignal::WidgetSelectedInInspector(_) => (),
+                RenderRootSignal::RequestRedraw
+                | RenderRootSignal::RequestAnimFrame
+                | RenderRootSignal::TakeFocus
+                | RenderRootSignal::SetCursor(_)
+                | RenderRootSignal::DragWindow
+                | RenderRootSignal::DragResizeWindow(_)
+                | RenderRootSignal::ToggleMaximized
+                | RenderRootSignal::Minimize
+                | RenderRootSignal::Exit
+                | RenderRootSignal::ShowWindowMenu(_)
+                | RenderRootSignal::WidgetSelectedInInspector(_) => {}
                 RenderRootSignal::NewLayer(_type, root, pos) => {
                     self.render_root.add_layer(root, pos);
                 }
@@ -518,6 +529,11 @@ impl<W: Widget> TestHarness<W> {
                 }
             }
         }
+
+        assert!(
+            !self.panic_on_rewrite_saturation || !self.render_root.needs_rewrite_passes(),
+            "Loop detected in rewrite passes"
+        );
     }
 
     // --- MARK: RENDER
@@ -529,17 +545,35 @@ impl<W: Widget> TestHarness<W> {
     ///
     /// If you just want to run the rendering passes and get the render data without
     /// rastering it into an image, use [`Self::redraw`] instead.
-    pub fn render(&mut self) -> RgbaImage {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for overflowing dimensions, rendering failure or invalid pixels.
+    pub fn render(&mut self) -> Result<RgbaImage, HarnessError> {
         let (visual_layers, _tree_update) = self.redraw();
 
         if std::env::var("SKIP_RENDER_TESTS").is_ok_and(|it| !it.is_empty()) {
-            return RgbaImage::from_pixel(1, 1, Rgba([255, 255, 255, 255]));
+            return Ok(RgbaImage::from_pixel(1, 1, Rgba([255, 255, 255, 255])));
         }
 
         let (width, height) = {
             // Avoid having a zero-sized image.
-            let width = self.window_size.width.max(1) + self.root_padding * 2;
-            let height = self.window_size.height.max(1) + self.root_padding * 2;
+            let padding = self
+                .root_padding
+                .checked_mul(2)
+                .ok_or(HarnessError::ImageDimensions)?;
+            let width = self
+                .window_size
+                .width
+                .max(1)
+                .checked_add(padding)
+                .ok_or(HarnessError::ImageDimensions)?;
+            let height = self
+                .window_size
+                .height
+                .max(1)
+                .checked_add(padding)
+                .ok_or(HarnessError::ImageDimensions)?;
             (width, height)
         };
 
@@ -560,54 +594,50 @@ impl<W: Widget> TestHarness<W> {
             }
         }
 
-        if self.renderer.is_none() {
-            self.renderer = Some(VelloCpuRenderer::new(1, 1));
-        }
-        let renderer = self.renderer.as_mut().unwrap();
-
-        let image = renderer
-            .render_source(&mut full_scene, width, height)
-            .unwrap();
-        RgbaImage::from_vec(image.width, image.height, image.data).expect("failed to create image")
+        let renderer = self
+            .renderer
+            .get_or_insert_with(|| VelloCpuRenderer::new(1, 1));
+        let image = renderer.render_source(&mut full_scene, width, height)?;
+        RgbaImage::from_vec(image.width, image.height, image.data)
+            .ok_or(HarnessError::InvalidPixels)
     }
 
     /// Returns render root of the harness
-    pub fn render_root(&mut self) -> &mut RenderRoot {
+    pub const fn render_root(&mut self) -> &mut RenderRoot {
         &mut self.render_root
     }
 
     /// Redraws the window.
     ///
     /// If you want to get a bitmap image of the contents, use [`Self::render`] instead.
-    pub fn redraw(&mut self) -> (VisualLayerPlan, TreeUpdate) {
+    pub fn redraw(&mut self) -> (VisualLayerPlan, Option<TreeUpdate>) {
         let (visual_layers, tree_update) = self.render_root.redraw();
-        let tree_update = tree_update.unwrap();
-        self.access_tree
-            .update_and_process_changes(tree_update.clone(), &mut NoOpTreeChangeHandler);
+        if let Some(update) = &tree_update {
+            self.access_tree
+                .update_and_process_changes(update.clone(), &mut NoOpTreeChangeHandler);
+        }
 
         (visual_layers, tree_update)
     }
 
     /// Returns a reference to the current state of the accessibility tree.
-    pub fn access_tree(&self) -> &accesskit_consumer::Tree {
+    pub const fn access_tree(&self) -> &accesskit_consumer::Tree {
         &self.access_tree
     }
 
     /// Returns a reference to the current value of a node of the accessibility tree.
     pub fn access_node(&self, id: WidgetId) -> Option<accesskit_consumer::Node<'_>> {
-        let mut node_id = self.access_tree.state().root_id();
-        #[expect(
-            unsafe_code,
-            reason = "No public API exists for modifying/creating a accesskit_consumer::NodeId"
-        )]
-        // SAFETY: This hack isn't safe as there is no memory layout guarantee.
-        //         Remove when a public API becomes available.
-        //         https://github.com/AccessKit/accesskit/issues/701
-        unsafe {
-            let p = &mut node_id as *mut accesskit_consumer::NodeId as *mut u64;
-            core::ptr::write_unaligned(p, id.to_raw());
+        // AccessKit 0.35 exposes the local ID through its public u128 conversion.
+        // The harness owns a single root tree, so match the full local ID by walking
+        // the exposed nodes rather than constructing a private NodeId.
+        let mut pending = vec![self.access_tree.state().root()];
+        while let Some(node) = pending.pop() {
+            if u128::from(node.id()) >> 64 == u128::from(id.to_raw()) {
+                return Some(node);
+            }
+            pending.extend(node.children());
         }
-        self.access_tree.state().node_by_id(node_id)
+        None
     }
 
     // --- MARK: EVENT HELPERS
@@ -623,7 +653,7 @@ impl<W: Widget> TestHarness<W> {
 
         debug!("Harness mouse moved to {x}, {y}");
 
-        self.process_pointer_event(PointerEvent::Move(PointerUpdate {
+        self.process_pointer_event(&PointerEvent::Move(PointerUpdate {
             pointer: PRIMARY_MOUSE,
             current: self.mouse_state.clone(),
             coalesced: vec![],
@@ -636,7 +666,7 @@ impl<W: Widget> TestHarness<W> {
         if let Some(button) = button {
             self.mouse_state.buttons.insert(button);
         }
-        self.process_pointer_event(PointerEvent::Down(PointerButtonEvent {
+        self.process_pointer_event(&PointerEvent::Down(PointerButtonEvent {
             pointer: PRIMARY_MOUSE,
             button,
             state: self.mouse_state.clone(),
@@ -648,7 +678,7 @@ impl<W: Widget> TestHarness<W> {
         if let Some(button) = button {
             self.mouse_state.buttons.remove(button);
         }
-        self.process_pointer_event(PointerEvent::Up(PointerButtonEvent {
+        self.process_pointer_event(&PointerEvent::Up(PointerButtonEvent {
             pointer: PRIMARY_MOUSE,
             button,
             state: self.mouse_state.clone(),
@@ -660,87 +690,71 @@ impl<W: Widget> TestHarness<W> {
     /// The delta is in logical pixels.
     pub fn mouse_wheel(&mut self, Vec2 { x, y }: Vec2) {
         let scale_factor = self.render_root.scale_factor();
-        self.process_pointer_event(PointerEvent::Scroll(PointerScrollEvent {
+        self.process_pointer_event(&PointerEvent::Scroll(PointerScrollEvent {
             pointer: PRIMARY_MOUSE,
             delta: ScrollDelta::PixelDelta(LogicalPosition { x, y }.to_physical(scale_factor)),
             state: self.mouse_state.clone(),
         }));
     }
 
-    /// Sends events that lead to a given widget being clicked.
+    /// Moves the mouse to an interactive widget, then presses and releases the button.
     ///
-    /// Combines [`mouse_move`](Self::mouse_move), [`mouse_button_press`](Self::mouse_button_press), and [`mouse_button_release`](Self::mouse_button_release).
+    /// # Errors
     ///
-    /// # Panics
-    ///
-    /// - If the widget is not found in the tree.
-    /// - If the widget is stashed.
-    /// - If the widget doesn't accept pointer events.
-    /// - If the widget is scrolled out of view.
+    /// Returns an error if the widget cannot be reached.
     #[track_caller]
-    pub fn mouse_click_on(&mut self, id: WidgetId, button: Option<PointerButton>) {
-        self.mouse_move_to(id);
+    pub fn mouse_click_on(
+        &mut self,
+        id: WidgetId,
+        button: Option<PointerButton>,
+    ) -> Result<(), HarnessError> {
+        self.mouse_move_to(id)?;
         self.mouse_button_press(button);
         self.mouse_button_release(button);
+        Ok(())
     }
 
-    /// Uses [`mouse_move`](Self::mouse_move) to set the internal mouse pos to the center of the given widget.
+    /// Moves the mouse to the center of an interactive and visible widget.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// - If the widget is not found in the tree.
-    /// - If the widget is stashed.
-    /// - If the widget doesn't accept pointer events.
-    /// - If the widget is scrolled out of view.
-    #[track_caller]
-    pub fn mouse_move_to(&mut self, id: WidgetId) {
-        let widget = self.get_widget_with_id(id);
-        let local_widget_center = widget.ctx().border_box().center();
-        let widget_center = widget.ctx().window_transform() * local_widget_center;
-
-        // TODO - Add reachable_by_pointer() method.
-        if !widget.ctx().accepts_pointer_interaction() {
-            panic!("Widget {id} doesn't accept pointer events");
-        }
-        if widget.ctx().is_stashed() {
-            panic!("Widget {id} is stashed");
+    /// Returns an error if the widget is absent, stashed, non-interactive, or obscured.
+    pub fn mouse_move_to(&mut self, id: WidgetId) -> Result<(), HarnessError> {
+        let widget = self
+            .get_widget_with_id(id)
+            .ok_or(HarnessError::MissingWidget(id))?;
+        let center = widget.ctx().window_transform() * widget.ctx().border_box().center();
+        if widget.ctx().is_stashed() || !widget.ctx().accepts_pointer_interaction() {
+            return Err(HarnessError::UnreachableWidget(id));
         }
         if self
             .render_root
             .get_layer_root(0)
-            .find_widget_under_pointer(widget_center)
-            .map(|w| w.id())
+            .and_then(|root| root.find_widget_under_pointer(center))
+            .map(|widget| widget.id())
             != Some(id)
         {
-            panic!("Widget {id} is not visible");
+            return Err(HarnessError::UnreachableWidget(id));
         }
-
-        self.mouse_move(widget_center);
+        self.mouse_move(center);
+        Ok(())
     }
 
-    /// Uses [`mouse_move`](Self::mouse_move) to set the internal mouse pos to the center of the given widget.
+    /// Moves to a widget's center without testing pointer interactivity or occlusion.
     ///
-    /// This does fewer checks than [`mouse_move_to`](Self::mouse_move_to), which in most cases should be preferred.
-    /// However, `mouse_move_to` does not allow moving to non-interactive widgets, which can sometimes be desirable.
+    /// # Errors
     ///
-    /// TODO: In the long term, this method should still check if the widget is visible, without requiring it to be interactive.
-    /// At that point, it might make sense to rename this to `mouse_move_to`, deleting the distinction.
-    ///
-    /// # Panics
-    ///
-    /// - If the widget is not found in the tree.
-    /// - If the widget is stashed.
-    #[track_caller]
-    pub fn mouse_move_to_unchecked(&mut self, id: WidgetId) {
-        let widget = self.get_widget_with_id(id);
-        let local_widget_center = widget.ctx().border_box().center();
-        let widget_center = widget.ctx().window_transform() * local_widget_center;
-
+    /// Returns an error if the widget is absent or stashed.
+    pub fn mouse_move_to_unchecked(&mut self, id: WidgetId) -> Result<(), HarnessError> {
+        let widget = self
+            .get_widget_with_id(id)
+            .ok_or(HarnessError::MissingWidget(id))?;
         if widget.ctx().is_stashed() {
-            panic!("Widget {id} is stashed");
+            return Err(HarnessError::UnreachableWidget(id));
         }
-
-        self.mouse_move(widget_center);
+        let center = widget.ctx().window_transform() * widget.ctx().border_box().center();
+        self.mouse_move(center);
+        Ok(())
     }
 
     /// Tries to get the target widget into the viewport.
@@ -791,7 +805,7 @@ impl<W: Widget> TestHarness<W> {
         // For each character
         for c in text.split("").filter(|s| !s.is_empty()) {
             let event = TextEvent::Ime(Ime::Commit(c.to_string()));
-            self.render_root.handle_text_event(event);
+            self.render_root.handle_text_event(&event);
         }
         self.process_signals();
     }
@@ -810,7 +824,7 @@ impl<W: Widget> TestHarness<W> {
             modifiers,
             ..KeyboardEvent::default()
         });
-        self.render_root.handle_text_event(event);
+        self.render_root.handle_text_event(&event);
         self.process_signals();
     }
 
@@ -822,33 +836,23 @@ impl<W: Widget> TestHarness<W> {
     /// If the widget is not found in the tree or can't be focused.
     #[track_caller]
     pub fn focus_on(&mut self, id: Option<WidgetId>) {
-        if let Some(id) = id {
-            let Some(widget) = self.render_root.get_widget(id) else {
-                panic!("Cannot focus widget {id}: widget not found in tree");
-            };
-            if widget.ctx().is_stashed() {
-                panic!("Cannot focus widget {id}: widget is stashed");
-            }
-            if widget.ctx().is_disabled() {
-                panic!("Cannot focus widget {id}: widget is disabled");
-            }
-        }
-        let succeeded = self.render_root.focus_on(id);
         assert!(
-            succeeded,
-            "RenderRoot::focus_on refused a widget which TestHarness::focus_on accepted."
+            self.render_root.focus_on(id),
+            "Cannot focus widget {id:?}: absent, stashed or disabled"
         );
         self.process_signals();
     }
 
     /// Sets the [focus fallback](masonry_core::doc::masonry_concepts#focus-fallback).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the target cannot be focused.
     pub fn set_focus_fallback(&mut self, id: Option<WidgetId>) {
-        if let Some(id) = id {
-            let Some(_) = self.render_root.get_widget(id) else {
-                panic!("Cannot set widget {id} as focus fallback: widget not found in tree");
-            };
-        }
-        let _ = self.render_root.set_focus_fallback(id);
+        assert!(
+            self.render_root.set_focus_fallback(id),
+            "Cannot set focus fallback to {id:?}"
+        );
     }
 
     /// Runs an animation pass on the widget tree.
@@ -859,22 +863,24 @@ impl<W: Widget> TestHarness<W> {
     }
 
     /// Helper method to directly enable/disable a widget.
-    pub fn set_disabled(&mut self, widget: WidgetTag<impl Widget>, disabled: bool) {
+    pub fn set_disabled(&mut self, widget: WidgetTag<impl Widget>, disabled: bool) -> Option<()> {
         self.edit_widget(widget, |mut target| {
             target.ctx.set_disabled(disabled);
-        });
+        })
     }
 
     // --- MARK: GETTERS
 
-    /// Returns a [`WidgetRef`] to the root widget.
-    pub fn root_widget(&self) -> WidgetRef<'_, W> {
-        self.render_root.get_layer_root(0).downcast().unwrap()
+    /// Returns the base-layer widget if it is registered with the expected type.
+    pub fn root_widget(&self) -> Option<WidgetRef<'_, W>> {
+        self.render_root
+            .get_layer_root(0)
+            .and_then(|root| root.downcast())
     }
 
-    /// Returns the [`WidgetId`] of the root widget.
-    pub fn root_id(&self) -> WidgetId {
-        self.render_root.get_layer_root(0).id()
+    /// Returns the identifier assigned to the base widget at construction.
+    pub const fn root_id(&self) -> WidgetId {
+        self.root_id
     }
 
     /// Replace the tree-wide default properties at runtime.
@@ -884,67 +890,39 @@ impl<W: Widget> TestHarness<W> {
         self.render_root.set_default_properties(default_properties);
     }
 
-    /// Returns a [`WidgetRef`] to the widget with the given id.
-    ///
-    /// # Panics
-    ///
-    /// Panics if no widget with this id can be found.
-    #[track_caller]
-    pub fn get_widget_with_id(&self, id: WidgetId) -> WidgetRef<'_, dyn Widget> {
-        self.render_root
-            .get_widget(id)
-            .unwrap_or_else(|| panic!("could not find widget {id}"))
+    /// Returns a registered widget with the given id, if present.
+    pub fn get_widget_with_id(&self, id: WidgetId) -> Option<WidgetRef<'_, dyn Widget>> {
+        self.render_root.get_widget(id)
     }
 
-    /// Returns a [`WidgetRef`] to the widget with the given tag.
-    ///
-    /// # Panics
-    ///
-    /// Panics if no widget with this tag can be found.
-    #[track_caller]
+    /// Returns a registered widget with the given tag and type, if present.
     pub fn get_widget<W2: Widget + FromDynWidget + ?Sized>(
         &self,
         tag: WidgetTag<W2>,
-    ) -> WidgetRef<'_, W2> {
-        self.render_root
-            .get_widget_with_tag(tag)
-            .unwrap_or_else(|| panic!("could not find widget '{tag}'"))
+    ) -> Option<WidgetRef<'_, W2>> {
+        self.render_root.get_widget_with_tag(tag)
     }
 
-    /// Drains the events recorded by the [`Recorder`] widget with the given tag.
-    ///
-    /// # Panics
-    ///
-    /// Panics if no widget with this tag can be found.
-    #[track_caller]
-    pub fn take_records_of<W2: Widget>(&self, tag: WidgetTag<Recorder<W2>>) -> Vec<Record> {
-        self.get_widget(tag).inner().recording().drain()
+    /// Drains events recorded by the given widget, if present.
+    pub fn take_records_of<W2: Widget>(&self, tag: WidgetTag<Recorder<W2>>) -> Option<Vec<Record>> {
+        Some(self.get_widget(tag)?.inner().recording().drain())
     }
 
-    /// Flushes the events recorded by the [`Recorder`] widget with the given tag.
-    ///
-    /// # Panics
-    ///
-    /// Panics if no widget with this tag can be found.
-    #[track_caller]
-    pub fn flush_records_of<W2: Widget>(&self, tag: WidgetTag<Recorder<W2>>) {
-        self.get_widget(tag).inner().recording().clear();
-    }
-
-    /// Tries to return a [`WidgetRef`] to the widget with the given id.
-    pub fn try_get_widget(&self, id: WidgetId) -> Option<WidgetRef<'_, dyn Widget>> {
-        self.render_root.get_widget(id)
+    /// Flushes events recorded by the given widget, if present.
+    pub fn flush_records_of<W2: Widget>(&self, tag: WidgetTag<Recorder<W2>>) -> Option<()> {
+        self.get_widget(tag)?.inner().recording().clear();
+        Some(())
     }
 
     /// Returns a [`WidgetRef`] to the [focused widget](masonry_core::doc::masonry_concepts#text-focus).
     pub fn focused_widget(&self) -> Option<WidgetRef<'_, dyn Widget>> {
         self.render_root
-            .get_layer_root(0)
+            .get_layer_root(0)?
             .find_widget_by_id(self.render_root.focused_widget()?)
     }
 
     /// Returns the id of the [focused widget](masonry_core::doc::masonry_concepts#text-focus).
-    pub fn focused_widget_id(&self) -> Option<WidgetId> {
+    pub const fn focused_widget_id(&self) -> Option<WidgetId> {
         self.render_root.focused_widget()
     }
 
@@ -956,12 +934,12 @@ impl<W: Widget> TestHarness<W> {
 
     /// Returns the id of the widget which [captures pointer events](masonry_core::doc::masonry_concepts#pointer-capture).
     // TODO - This is kinda redundant with the above
-    pub fn pointer_capture_target_id(&self) -> Option<WidgetId> {
+    pub const fn pointer_capture_target_id(&self) -> Option<WidgetId> {
         self.render_root.pointer_capture_target()
     }
 
     /// Calls the provided visitor on every widget in the widget tree.
-    pub fn inspect_widgets(&mut self, mut f: impl FnMut(WidgetRef<'_, dyn Widget>)) {
+    pub fn inspect_widgets(&self, mut f: impl FnMut(WidgetRef<'_, dyn Widget>)) {
         fn inspect(
             widget: WidgetRef<'_, dyn Widget>,
             f: &mut impl FnMut(WidgetRef<'_, dyn Widget>),
@@ -972,17 +950,16 @@ impl<W: Widget> TestHarness<W> {
             }
         }
 
-        inspect(self.render_root.get_layer_root(0), &mut f);
+        if let Some(root) = self.render_root.get_layer_root(0) {
+            inspect(root, &mut f);
+        }
     }
 
     /// Returns a [`WidgetMut`] to the root widget.
     ///
     /// Because of how `WidgetMut` works, it can only be passed to a user-provided callback.
-    pub fn edit_root_widget<R>(&mut self, f: impl FnOnce(WidgetMut<'_, W>) -> R) -> R {
-        let ret = self.render_root.edit_base_layer(|mut root| {
-            let root = root.downcast::<W>();
-            f(root)
-        });
+    pub fn edit_root_widget<R>(&mut self, f: impl FnOnce(WidgetMut<'_, W>) -> R) -> Option<R> {
+        let ret = self.render_root.edit_base_layer(f);
         self.process_signals();
         ret
     }
@@ -994,7 +971,7 @@ impl<W: Widget> TestHarness<W> {
         &mut self,
         id: WidgetId,
         f: impl FnOnce(WidgetMut<'_, dyn Widget>) -> R,
-    ) -> R {
+    ) -> Option<R> {
         let ret = self.render_root.edit_widget(id, f);
         self.process_signals();
         ret
@@ -1008,28 +985,27 @@ impl<W: Widget> TestHarness<W> {
         &mut self,
         tag: WidgetTag<W2>,
         f: impl FnOnce(WidgetMut<'_, W2>) -> R,
-    ) -> R {
+    ) -> Option<R> {
         let ret = self.render_root.edit_widget_with_tag(tag, f);
         self.process_signals();
         ret
     }
 
-    /// Pops the oldest [`ErasedAction`] emitted by the widget tree, downcasting it to `T`.
+    /// Pops and downcasts the oldest action, preserving an unexpected action as an error.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// If there is an action, but it is not of type `T`.
-    #[track_caller]
-    pub fn pop_action<T: AnyDebug>(&mut self) -> Option<(T, WidgetId)> {
-        let (action, widget) = self.pop_action_erased()?;
-        let action = action.downcast().unwrap_or_else(|action| {
-            panic!(
-                "Expected Action to be of type {}, but got a value of type {} ({action:?}).",
-                std::any::type_name::<T>(),
-                (*action).type_name()
-            )
-        });
-        Some((*action, widget))
+    /// Returns the original action and widget identifier if its type does not match.
+    pub fn pop_action<T: AnyDebug>(
+        &mut self,
+    ) -> Result<Option<(T, WidgetId)>, (ErasedAction, WidgetId)> {
+        let Some((action, widget)) = self.pop_action_erased() else {
+            return Ok(None);
+        };
+        action
+            .downcast()
+            .map(|action| Some((*action, widget)))
+            .map_err(|action| (action, widget))
     }
 
     /// Pops the oldest [`ErasedAction`] emitted by the widget tree.
@@ -1041,21 +1017,21 @@ impl<W: Widget> TestHarness<W> {
     ///
     /// The cursor icon is the icon that would be displayed to indicate the mouse
     /// position in a visual environment.
-    pub fn cursor_icon(&self) -> CursorIcon {
+    pub const fn cursor_icon(&self) -> CursorIcon {
         self.render_root.cursor_icon()
     }
 
     /// Returns whether the app has an IME session in progress.
     ///
     /// This usually means that a widget which [accepts text input](Widget::accepts_text_input) is focused.
-    pub fn has_ime_session(&self) -> bool {
+    pub const fn has_ime_session(&self) -> bool {
         self.has_ime_session
     }
 
     /// Returns the rectangle of the IME session.
     ///
     /// This is usually the effective border-box rectangle of the focused widget.
-    pub fn ime_rect(&self) -> (LogicalPosition<f64>, LogicalSize<f64>) {
+    pub const fn ime_rect(&self) -> (LogicalPosition<f64>, LogicalSize<f64>) {
         self.ime_rect
     }
 
@@ -1067,7 +1043,7 @@ impl<W: Widget> TestHarness<W> {
     }
 
     /// Returns the size of the simulated window.
-    pub fn window_size(&self) -> PhysicalSize<u32> {
+    pub const fn window_size(&self) -> PhysicalSize<u32> {
         self.window_size
     }
 
@@ -1078,138 +1054,50 @@ impl<W: Widget> TestHarness<W> {
 
     // --- MARK: SNAPSHOT
 
-    /// Renders the current widget tree to a pixmap, and writes it to a temporary PNG file.
-    pub fn save_render_snapshot(&mut self) {
-        let image = self.render();
-
-        let mut buffer = Cursor::new(Vec::new());
-        image.write_to(&mut buffer, ImageFormat::Png).unwrap();
-        let image_data = buffer.into_inner();
-
-        let id = std::time::SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-        let tmp_path = std::env::temp_dir().join(format!("masonry-{id:016}-screenshot.png"));
-
-        std::fs::write(&tmp_path, image_data).unwrap();
-        debug!("Screenshot saved to {}", tmp_path.display());
+    /// Renders the current widget tree and writes a uniquely named temporary PNG file.
+    ///
+    /// # Errors
+    ///
+    /// Returns rendering, time or file errors.
+    pub fn save_render_snapshot(&mut self) -> Result<PathBuf, HarnessError> {
+        let image = self.render()?;
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH)?
+            .as_nanos();
+        let pid = std::process::id();
+        let path =
+            std::env::temp_dir().join(format!("masonry-{pid}-{timestamp:032x}-screenshot.png"));
+        let mut file = File::create_new(&path)?;
+        image.write_to(&mut file, ImageFormat::Png)?;
+        debug!("Screenshot saved to {}", path.display());
+        Ok(path)
     }
 
-    /// Method used by [`assert_render_snapshot`] and [`assert_failing_render_snapshot`]. Use these macros, not this method.
+    /// Compares the rendered widget tree with a reference snapshot.
     ///
-    /// Renders the current widget tree to a pixmap, and compares the pixmap against the
-    /// snapshot stored in `<CRATE ROOT>/screenshots/<test_name>.png`.
+    /// # Errors
     ///
-    /// * `manifest_dir`: directory where `Cargo.toml` can be found.
-    /// * `test_name`: arbitrary name; second argument of [`assert_render_snapshot`].
-    /// * `expect_failure`: whether the snapshot is expected to fail to match.
-    ///
-    /// [`assert_render_snapshot`]: crate::assert_render_snapshot
+    /// Returns an error for a mismatch, unexpected match, missing reference, or file/rendering failure.
     #[doc(hidden)]
-    #[track_caller]
     pub fn check_render_snapshot(
         &mut self,
         manifest_dir: &str,
         test_name: &str,
         expect_failure: bool,
-    ) {
+    ) -> Result<(), HarnessError> {
         if std::env::var("SKIP_RENDER_TESTS").is_ok_and(|it| !it.is_empty()) {
-            // We still redraw to get some coverage in the paint code.
-            let _ = self.render_root.redraw();
-
-            return;
+            let _ = self.redraw();
+            return Ok(());
         }
-        let max_size = Some(usize::try_from(self.max_screenshot_size).unwrap());
-
-        #[track_caller]
-        fn save_image(image: &DynamicImage, path: &PathBuf, max_size: Option<usize>) {
-            let mut buffer = Cursor::new(Vec::new());
-            image.write_to(&mut buffer, ImageFormat::Png).unwrap();
-
-            let image_data = buffer.into_inner();
-            // Whenever we save a file, we optimise it.
-            // This avoids cases where people copy the `new` file to the reference path, thus avoiding optimisation
-            // (We could skip this for diff images, but that is so far off the hot path that it's not
-            // worth a different code path for it.)
-            let data =
-                optimize_from_memory(image_data.as_slice(), &Options::from_preset(5)).unwrap();
-            let saved_len = data.len();
-            std::fs::write(path, data).unwrap();
-            if let Some(max_size) = max_size
-                && saved_len > max_size
-            {
-                panic!(
-                    "New screenshot file ({saved_len} bytes) was larger than the supported file size ({max_size} bytes).\
-                        Consider increasing `TestHarnessParams::max_screenshot_size` when creating the test harness.",
-                );
-            }
-        }
-
-        let new_image: DynamicImage = self.render().into();
-
-        let screenshots_folder = PathBuf::from(manifest_dir).join("screenshots");
-        std::fs::create_dir_all(&screenshots_folder).unwrap();
-
-        let reference_path = screenshots_folder.join(format!("{test_name}.png"));
-        let new_path = screenshots_folder.join(format!("{test_name}.new.png"));
-        let diff_path = screenshots_folder.join(format!("{test_name}.diff.png"));
-
-        let bless_test = std::env::var_os("MASONRY_TEST_BLESS").is_some_and(|it| !it.is_empty());
-
-        let Ok(reference_file) = File::open(&reference_path) else {
-            if bless_test && !expect_failure {
-                let _ = std::fs::remove_file(&new_path);
-                let _ = std::fs::remove_file(&diff_path);
-                save_image(&new_image, &reference_path, max_size);
-                return;
-            }
-
-            // Remove '<test_name>.new.png' file if it exists
-            let _ = std::fs::remove_file(&new_path);
-            save_image(&new_image, &new_path, max_size);
-            panic!("Snapshot test '{test_name}' failed: No reference file");
-        };
-        let reference_size = reference_file.metadata().unwrap().len();
-
-        let reference_file =
-            ImageReader::with_format(BufReader::new(reference_file), ImageFormat::Png);
-
-        let ref_image = reference_file.decode().unwrap().to_rgb8();
-
-        if expect_failure {
-            if get_image_diff(&ref_image, &new_image.to_rgb8()).is_some() {
-                return;
-            } else {
-                panic!(
-                    "Snapshot test '{test_name}' did not fail as expected: Images are identical"
-                );
-            }
-        }
-
-        if let Some(diff_image) = get_image_diff(&ref_image, &new_image.to_rgb8()) {
-            if bless_test {
-                let _ = std::fs::remove_file(&new_path);
-                let _ = std::fs::remove_file(&diff_path);
-                save_image(&new_image, &reference_path, max_size);
-            } else {
-                save_image(&new_image, &new_path, max_size);
-                // Don't fail if the diff file is too big!
-                save_image(&diff_image.into(), &diff_path, None);
-                panic!("Snapshot test '{test_name}' failed: Images are different");
-            }
-        } else {
-            // Remove the vestigial new and diff images
-            let _ = std::fs::remove_file(&new_path);
-            let _ = std::fs::remove_file(&diff_path);
-            if reference_size > u64::from(self.max_screenshot_size) {
-                panic!(
-                    "Existing file ({reference_size}) was larger than the supported file size ({}).\
-                    Consider increasing `TestHarnessParams::max_screenshot_size` when creating the test harness.",
-                    self.max_screenshot_size
-                );
-            }
-        }
+        let image = self.render()?;
+        crate::screenshots::compare_snapshot(
+            image,
+            Path::new(manifest_dir),
+            test_name,
+            expect_failure,
+            self.max_screenshot_size,
+            std::env::var_os("MASONRY_TEST_BLESS").is_some_and(|it| !it.is_empty()),
+        )
     }
 }
 

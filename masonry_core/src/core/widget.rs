@@ -4,7 +4,6 @@
 use std::any::{Any, TypeId};
 use std::fmt::{Debug, Display};
 use std::num::NonZeroU64;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use accesskit::{Node, Role};
 use kurbo::{Axis, Point, Size};
@@ -19,6 +18,85 @@ use crate::core::{
 };
 use crate::imaging::Painter;
 use crate::layout::{LenReq, Length};
+
+/// Implements the standard widget methods for a container with one child.
+///
+/// The child uses the parent's content box as its measurement context and is
+/// laid out at its preferred size with the supplied alignment. The container
+/// forwards baselines and has no content painting of its own; the standard
+/// pre-paint pass still draws its background and border.
+/// The widget implements its own accessibility role, attributes, and events.
+/// Optionally, specify minimum horizontal and vertical lengths.
+/// Use the `fill` form to redirect measurement and fill the entire content box.
+#[macro_export]
+macro_rules! single_child_container {
+    ($child:ident, fill $(,)?) => {
+        fn register_children(&mut self, ctx: &mut $crate::core::RegisterCtx<'_>) {
+            ctx.register_child(&mut self.$child);
+        }
+
+        fn measure(
+            &mut self,
+            ctx: &mut $crate::core::MeasureCtx<'_>,
+            _props: &$crate::core::PropertiesRef<'_>,
+            axis: $crate::kurbo::Axis,
+            _len_req: $crate::layout::LenReq,
+            cross_length: Option<$crate::layout::Length>,
+        ) -> $crate::layout::Length {
+            ctx.redirect_measurement(&self.$child, axis, cross_length)
+        }
+
+        fn layout(
+            &mut self,
+            ctx: &mut $crate::core::LayoutCtx<'_>,
+            _props: &$crate::core::PropertiesRef<'_>,
+            size: $crate::kurbo::Size,
+        ) {
+            ctx.run_layout(&self.$child, size);
+            ctx.place_child(&self.$child, $crate::kurbo::Point::ORIGIN);
+            ctx.derive_baselines(&self.$child);
+        }
+
+        fn children_ids(&self) -> $crate::core::ChildrenIds {
+            $crate::core::ChildrenIds::from_slice(&[self.$child.id()])
+        }
+    };
+    ($child:ident, $alignment:expr $(, min = ($width:expr, $height:expr $(,)?))? $(,)?) => {
+        fn register_children(&mut self, ctx: &mut $crate::core::RegisterCtx<'_>) {
+            ctx.register_child(&mut self.$child);
+        }
+
+        fn measure(
+            &mut self,
+            ctx: &mut $crate::core::MeasureCtx<'_>,
+            _props: &$crate::core::PropertiesRef<'_>,
+            axis: $crate::kurbo::Axis,
+            len_req: $crate::layout::LenReq,
+            cross_length: Option<$crate::layout::Length>,
+        ) -> $crate::layout::Length {
+            let length = ctx.measure_child(&mut self.$child, axis, len_req, cross_length);
+            $(let length = length.max(match axis {
+                $crate::kurbo::Axis::Horizontal => $width,
+                $crate::kurbo::Axis::Vertical => $height,
+            });)?
+            length
+        }
+
+        fn layout(
+            &mut self,
+            ctx: &mut $crate::core::LayoutCtx<'_>,
+            _props: &$crate::core::PropertiesRef<'_>,
+            size: $crate::kurbo::Size,
+        ) {
+            ctx.layout_child(&mut self.$child, size, $alignment);
+        }
+
+
+        fn children_ids(&self) -> $crate::core::ChildrenIds {
+            $crate::core::ChildrenIds::from_slice(&[self.$child.id()])
+        }
+    };
+}
 
 /// A unique identifier for a single [`Widget`].
 ///
@@ -43,6 +121,7 @@ pub struct WidgetId(pub(crate) NonZeroU64);
 
 impl WidgetId {
     /// A serialized representation of the `WidgetId` for debugging purposes.
+    #[must_use = "Use the tracing field value."]
     pub fn trace(self) -> DisplayValue<Self> {
         tracing::field::display(self)
     }
@@ -136,7 +215,6 @@ pub type ChildrenIds = SmallVec<[WidgetId; 16]>;
 /// Generally speaking, widgets aren't used directly. They are stored by Masonry and accessed
 /// through [`WidgetPod`](crate::core::WidgetPod)s. Widget methods are called by Masonry, and a
 /// widget should only be mutated either during a method call or through a [`WidgetMut`].
-#[allow(unused_variables, reason = "Default impls don't use method arguments")]
 pub trait Widget: AsDynWidget + Any {
     /// The action type that this widget will submit, through [`EventCtx::submit_action`]
     /// (or the method of the same name on a different context).
@@ -154,9 +232,9 @@ pub trait Widget: AsDynWidget + Any {
     /// event will bubble to each of its parents.
     fn on_pointer_event(
         &mut self,
-        ctx: &mut EventCtx<'_>,
-        props: &mut PropertiesMut<'_>,
-        event: &PointerEvent,
+        _ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _event: &PointerEvent,
     ) {
     }
 
@@ -167,9 +245,9 @@ pub trait Widget: AsDynWidget + Any {
     /// [focused widget]: crate::doc::masonry_concepts#text-focus
     fn on_text_event(
         &mut self,
-        ctx: &mut EventCtx<'_>,
-        props: &mut PropertiesMut<'_>,
-        event: &TextEvent,
+        _ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _event: &TextEvent,
     ) {
     }
 
@@ -178,9 +256,9 @@ pub trait Widget: AsDynWidget + Any {
     /// Accessibility events target a specific widget id, then bubble to each parent.
     fn on_access_event(
         &mut self,
-        ctx: &mut EventCtx<'_>,
-        props: &mut PropertiesMut<'_>,
-        event: &AccessEvent,
+        _ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _event: &AccessEvent,
     ) {
     }
 
@@ -205,9 +283,9 @@ pub trait Widget: AsDynWidget + Any {
     /// the monitor's refresh, causing lag or jerky animations.
     fn on_anim_frame(
         &mut self,
-        ctx: &mut UpdateCtx<'_>,
-        props: &mut PropertiesMut<'_>,
-        interval: u64,
+        _ctx: &mut UpdateCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _interval: u64,
     ) {
     }
 
@@ -217,10 +295,10 @@ pub trait Widget: AsDynWidget + Any {
     /// and eventually to the app driver.
     fn on_action(
         &mut self,
-        ctx: &mut ActionCtx<'_>,
-        props: &mut PropertiesMut<'_>,
-        action: &ErasedAction,
-        source: WidgetId,
+        _ctx: &mut ActionCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _action: &ErasedAction,
+        _source: WidgetId,
     ) {
     }
 
@@ -240,11 +318,17 @@ pub trait Widget: AsDynWidget + Any {
     /// This method is called to notify your widget of certain special events,
     /// (available in the [`Update`] enum) that are generally related to
     /// changes in the widget graph or in the state of your specific widget.
-    fn update(&mut self, ctx: &mut UpdateCtx<'_>, props: &mut PropertiesMut<'_>, event: &Update) {}
+    fn update(
+        &mut self,
+        _ctx: &mut UpdateCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _event: &Update,
+    ) {
+    }
 
     // TODO - Remove default implementation
     /// Handles a property being added, changed, or removed.
-    fn property_changed(&mut self, ctx: &mut UpdateCtx<'_>, property_type: TypeId) {}
+    fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: TypeId) {}
 
     /// Computes the content-box [`Length`] that the widget wants to be on the given `axis`.
     ///
@@ -369,7 +453,7 @@ pub trait Widget: AsDynWidget + Any {
     /// and after this widget explicitly requests compose. It may also be called in other scenarios.
     ///
     /// [`layout`]: Self::layout
-    fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {}
+    fn compose(&mut self, _ctx: &mut ComposeCtx<'_>) {}
 
     /// Paints the widget's background.
     ///
@@ -392,10 +476,11 @@ pub trait Widget: AsDynWidget + Any {
     /// To draw on top of children, see [`Widget::post_paint`].
     fn paint(
         &mut self,
-        ctx: &mut PaintCtx<'_>,
-        props: &PropertiesRef<'_>,
-        painter: &mut Painter<'_>,
-    );
+        _ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        _painter: &mut Painter<'_>,
+    ) {
+    }
 
     /// Final paint method, which paints on top of the widget's children.
     ///
@@ -403,9 +488,9 @@ pub trait Widget: AsDynWidget + Any {
     /// and can paint things outside the clip.
     fn post_paint(
         &mut self,
-        ctx: &mut PaintCtx<'_>,
-        props: &PropertiesRef<'_>,
-        painter: &mut Painter<'_>,
+        _ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        _painter: &mut Painter<'_>,
     ) {
     }
 
@@ -423,10 +508,11 @@ pub trait Widget: AsDynWidget + Any {
     /// be re-applied by this method every time it's called.
     fn accessibility(
         &mut self,
-        ctx: &mut AccessCtx<'_>,
-        props: &PropertiesRef<'_>,
-        node: &mut Node,
-    );
+        _ctx: &mut AccessCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        _node: &mut Node,
+    ) {
+    }
 
     /// Returns ids of this widget's children.
     ///
@@ -521,7 +607,7 @@ pub trait Widget: AsDynWidget + Any {
     ///
     /// **pos** - the mouse position in the window's coordinate space,
     /// e.g. `(0,0)` is the top-left corner of the window.
-    fn get_cursor(&self, ctx: &QueryCtx<'_>, pos: Point) -> CursorIcon {
+    fn get_cursor(&self, _ctx: &QueryCtx<'_>, _pos: Point) -> CursorIcon {
         CursorIcon::Default
     }
 
@@ -588,7 +674,7 @@ pub fn find_widget_under_pointer<'c>(
         return None;
     }
 
-    let local_pos = ctx.to_local(pos);
+    let local_pos = ctx.window_to_local(pos);
 
     if let Some(clip) = ctx.clip_path()
         && !clip.contains(local_pos)
@@ -601,7 +687,9 @@ pub fn find_widget_under_pointer<'c>(
         // Assumes `Self::children_ids` is in increasing "z-order", picking the last child in case
         // of overlapping children.
         for child_id in widget.children_ids().iter().rev() {
-            let child_ref = ctx.get(*child_id);
+            let Some(child_ref) = ctx.get(*child_id) else {
+                continue;
+            };
             if let Some(child) = child_ref
                 .widget
                 .find_widget_under_pointer(child_ref.ctx, pos)
@@ -618,7 +706,7 @@ pub fn find_widget_under_pointer<'c>(
     if !ctx.border_box().contains(local_pos) {
         return None;
     }
-    Some(WidgetRef { widget, ctx })
+    Some(WidgetRef { ctx, widget })
 }
 
 /// Marker trait for widgets whose parents can get a raw mutable reference to them.
@@ -648,12 +736,12 @@ impl WidgetId {
     /// You must ensure that a given `WidgetId` is only ever used for one
     /// widget at a time.
     pub(crate) fn next() -> Self {
-        static WIDGET_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-        let id = WIDGET_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
-        Self(id.try_into().unwrap())
+        static WIDGET_ID_COUNTER: crate::util::IdAllocator = crate::util::IdAllocator::new();
+        Self(WIDGET_ID_COUNTER.allocate())
     }
 
     /// Returns the integer value of the `WidgetId`.
+    #[must_use = "Use the numeric widget identifier."]
     pub fn to_raw(self) -> u64 {
         self.0.into()
     }
@@ -689,6 +777,36 @@ impl PartialEq<WidgetId> for accesskit::NodeId {
     }
 }
 
+/// A collection mutation rejected before changing the widget tree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CollectionError {
+    /// The index does not identify a valid slot.
+    OutOfBounds {
+        /// The requested index.
+        index: usize,
+        /// The current number of slots.
+        len: usize,
+    },
+    /// The slot is a spacer rather than a widget.
+    Spacer {
+        /// The requested index.
+        index: usize,
+    },
+}
+
+impl Display for CollectionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::OutOfBounds { index, len } => {
+                write!(f, "collection index {index} out of bounds for {len} slots")
+            }
+            Self::Spacer { index } => write!(f, "collection slot {index} is a spacer"),
+        }
+    }
+}
+
+impl std::error::Error for CollectionError {}
+
 /// Trait implemented by collection widgets.
 ///
 /// It provides a standard set of functions to manage children.
@@ -699,12 +817,12 @@ pub trait CollectionWidget<Params>: Widget {
     /// Returns `true` if there are no children.
     fn is_empty(&self) -> bool;
 
-    /// Returns a mutable reference to the child widget at the given index.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `idx` is out of bounds.
-    fn get_mut<'t>(this: &'t mut WidgetMut<'_, Self>, idx: usize) -> WidgetMut<'t, dyn Widget>;
+    /// Returns a typed mutable handle if the index contains a registered child
+    /// of the requested type.
+    fn get_mut<'t, W: Widget + FromDynWidget + ?Sized>(
+        this: &'t mut WidgetMut<'_, Self>,
+        idx: usize,
+    ) -> Option<WidgetMut<'t, W>>;
 
     /// Appends a child widget to the collection.
     fn add(
@@ -715,48 +833,52 @@ pub trait CollectionWidget<Params>: Widget {
 
     /// Inserts a child widget at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is larger than the number of children.
+    /// Returns an error if `idx` is larger than the number of children.
     fn insert(
         this: &mut WidgetMut<'_, Self>,
         idx: usize,
         child: NewWidget<impl Widget + ?Sized>,
         params: impl Into<Params>,
-    );
+    ) -> Result<(), CollectionError>;
 
     /// Replaces the child widget at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
+    /// Returns an error if `idx` is out of bounds.
     fn set(
         this: &mut WidgetMut<'_, Self>,
         idx: usize,
         child: NewWidget<impl Widget + ?Sized>,
         params: impl Into<Params>,
-    );
+    ) -> Result<(), CollectionError>;
 
     /// Sets the child params at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
-    fn set_params(this: &mut WidgetMut<'_, Self>, idx: usize, params: impl Into<Params>);
+    /// Returns an error if `idx` is out of bounds or contains a spacer.
+    fn set_params(
+        this: &mut WidgetMut<'_, Self>,
+        idx: usize,
+        params: impl Into<Params>,
+    ) -> Result<(), CollectionError>;
 
     /// Swaps the index of two children.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `a` or `b` are out of bounds.
-    fn swap(this: &mut WidgetMut<'_, Self>, a: usize, b: usize);
+    /// Returns an error if `a` or `b` are out of bounds.
+    fn swap(this: &mut WidgetMut<'_, Self>, a: usize, b: usize) -> Result<(), CollectionError>;
 
     /// Removes the child at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
-    fn remove(this: &mut WidgetMut<'_, Self>, idx: usize);
+    /// Returns an error if `idx` is out of bounds.
+    fn remove(this: &mut WidgetMut<'_, Self>, idx: usize) -> Result<(), CollectionError>;
 
     /// Removes all children.
     fn clear(this: &mut WidgetMut<'_, Self>);

@@ -8,14 +8,14 @@ use masonry::widgets::{Checkbox, CheckboxToggled, Flex, Label};
 
 use crate::demo::{CONTENT_GAP, DemoPage, ShellTags, wrap_in_shell};
 
-pub(crate) struct CheckboxDemo {
+pub(super) struct CheckboxDemo {
     shell: ShellTags,
     state_label: WidgetTag<Label>,
     checkbox: WidgetTag<Checkbox>,
 }
 
 impl CheckboxDemo {
-    pub(crate) fn new(shell: ShellTags) -> Self {
+    pub(super) fn new(shell: ShellTags) -> Self {
         Self {
             shell,
             state_label: WidgetTag::unique(),
@@ -61,15 +61,17 @@ impl DemoPage for CheckboxDemo {
         };
         let checked = toggled.0;
 
-        let checkbox_id = render_root.get_widget_with_tag(self.checkbox).unwrap().id();
-        if widget_id != checkbox_id {
+        let checkbox_id = render_root
+            .get_widget_with_tag(self.checkbox)
+            .map(|widget| widget.id());
+        if Some(widget_id) != checkbox_id {
             return Handled::No;
         }
 
-        render_root.edit_widget_with_tag(self.state_label, |mut label| {
+        let _ = render_root.edit_widget_with_tag(self.state_label, |mut label| {
             Label::set_text(&mut label, format!("Checked: {checked}"));
         });
-        render_root.edit_widget_with_tag(self.checkbox, |mut checkbox| {
+        let _ = render_root.edit_widget_with_tag(self.checkbox, |mut checkbox| {
             Checkbox::set_checked(&mut checkbox, checked);
         });
         Handled::Yes

@@ -9,7 +9,7 @@ use crate::{Pod, ViewCtx};
 /// A view which displays a progress bar.
 ///
 /// This can be for showing progress of a task or a download.
-pub fn progress_bar(progress: Option<f64>) -> ProgressBar {
+pub const fn progress_bar(progress: Option<f64>) -> ProgressBar {
     ProgressBar { progress }
 }
 
@@ -26,7 +26,7 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for ProgressBar {
 
     fn build(&self, ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
         (
-            ctx.with_action_widget(|ctx| ctx.create_pod(widgets::ProgressBar::new(self.progress))),
+            ctx.with_action_widget(Pod::new(widgets::ProgressBar::new(self.progress))),
             (),
         )
     }
@@ -50,7 +50,7 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for ProgressBar {
         ctx: &mut ViewCtx,
         element: Mut<'_, Self::Element>,
     ) {
-        ctx.teardown_action_source(element);
+        ctx.teardown_action_source(element.ctx.widget_id());
     }
 
     fn message(

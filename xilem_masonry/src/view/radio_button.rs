@@ -67,7 +67,7 @@ pub struct RadioButton<F> {
 
 impl<F> RadioButton<F> {
     /// Set the disabled state of the widget.
-    pub fn disabled(mut self, disabled: bool) -> Self {
+    pub const fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
@@ -84,9 +84,8 @@ where
     type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
-        let element = ctx.with_action_widget(|ctx| {
-            let mut pod =
-                ctx.create_pod(widgets::RadioButton::new(self.checked, self.label.clone()));
+        let element = ctx.with_action_widget({
+            let mut pod = Pod::new(widgets::RadioButton::new(self.checked, self.label.clone()));
             pod.new_widget.options.disabled = self.disabled;
             pod
         });
@@ -118,7 +117,7 @@ where
         ctx: &mut ViewCtx,
         element: Mut<'_, Self::Element>,
     ) {
-        ctx.teardown_action_source(element);
+        ctx.teardown_action_source(element.ctx.widget_id());
     }
 
     fn message(
@@ -132,12 +131,11 @@ where
             message.remaining_path().is_empty(),
             "id path should be empty in RadioButton::message"
         );
-        match message.take_message::<RadioButtonSelected>() {
-            Some(_) => MessageResult::Action((self.callback)(app_state)),
-            None => {
-                tracing::error!("Wrong message type in RadioButton::message, got {message:?}.");
-                MessageResult::Stale
-            }
+        if message.take_message::<RadioButtonSelected>().is_some() {
+            MessageResult::Action((self.callback)(app_state))
+        } else {
+            tracing::error!("Wrong message type in RadioButton::message, got {message:?}.");
+            MessageResult::Stale
         }
     }
 }

@@ -12,12 +12,12 @@ use masonry::widgets::{DashFit, Divider, Flex, Image, Label, Placement};
 use crate::demo::{DemoPage, ShellTags, wrap_in_shell};
 use crate::image::make_image_data;
 
-pub(crate) struct DividerDemo {
+pub(super) struct DividerDemo {
     shell: ShellTags,
 }
 
 impl DividerDemo {
-    pub(crate) fn new(shell: ShellTags) -> Self {
+    pub(super) const fn new(shell: ShellTags) -> Self {
         Self { shell }
     }
 }
@@ -53,7 +53,15 @@ impl DemoPage for DividerDemo {
                 .prepare()
         };
 
-        let img = Image::new(make_image_data())
+        let Ok(image_data) = make_image_data() else {
+            return wrap_in_shell(
+                self.shell,
+                Label::new("Failed to decode embedded image")
+                    .prepare()
+                    .erased(),
+            );
+        };
+        let img = Image::new(image_data)
             .prepare()
             .with_props(Dimensions::fixed(30.px(), 30.px()));
 

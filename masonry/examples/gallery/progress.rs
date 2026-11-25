@@ -8,7 +8,7 @@ use masonry::widgets::{Checkbox, CheckboxToggled, Flex, Label, ProgressBar, Slid
 
 use crate::demo::{CONTENT_GAP, DemoPage, ShellTags, wrap_in_shell};
 
-pub(crate) struct ProgressDemo {
+pub(super) struct ProgressDemo {
     shell: ShellTags,
     bar: WidgetTag<ProgressBar>,
     value_label: WidgetTag<Label>,
@@ -19,7 +19,7 @@ pub(crate) struct ProgressDemo {
 }
 
 impl ProgressDemo {
-    pub(crate) fn new(shell: ShellTags) -> Self {
+    pub(super) fn new(shell: ShellTags) -> Self {
         Self {
             shell,
             bar: WidgetTag::unique(),
@@ -31,29 +31,28 @@ impl ProgressDemo {
         }
     }
 
-    fn apply(&mut self, render_root: &mut RenderRoot) {
+    fn apply(&self, render_root: &mut RenderRoot) {
         let progress = if self.is_indeterminate {
             None
         } else {
             Some(self.value)
         };
 
-        render_root.edit_widget_with_tag(self.bar, |mut bar| {
+        let _ = render_root.edit_widget_with_tag(self.bar, |mut bar| {
             ProgressBar::set_progress(&mut bar, progress);
         });
 
-        render_root.edit_widget_with_tag(self.value_label, |mut label| {
+        let _ = render_root.edit_widget_with_tag(self.value_label, |mut label| {
             Label::set_text(
                 &mut label,
-                if let Some(value) = progress {
-                    format!("Value: {:.0}%", value * 100.0)
-                } else {
-                    "Value: indeterminate".to_string()
-                },
+                progress.map_or_else(
+                    || "Value: indeterminate".to_string(),
+                    |value| format!("Value: {:.0}%", value * 100.0),
+                ),
             );
         });
 
-        render_root.edit_widget_with_tag(self.indeterminate, |mut checkbox| {
+        let _ = render_root.edit_widget_with_tag(self.indeterminate, |mut checkbox| {
             Checkbox::set_checked(&mut checkbox, self.is_indeterminate);
         });
     }
@@ -102,9 +101,8 @@ impl DemoPage for ProgressDemo {
         if let Some(toggled) = action.downcast_ref::<CheckboxToggled>() {
             let id = render_root
                 .get_widget_with_tag(self.indeterminate)
-                .unwrap()
-                .id();
-            if widget_id != id {
+                .map(|widget| widget.id());
+            if Some(widget_id) != id {
                 return Handled::No;
             }
             self.is_indeterminate = toggled.0;
@@ -113,8 +111,10 @@ impl DemoPage for ProgressDemo {
         }
 
         if let Some(&value) = action.downcast_ref::<f64>() {
-            let id = render_root.get_widget_with_tag(self.slider).unwrap().id();
-            if widget_id != id {
+            let id = render_root
+                .get_widget_with_tag(self.slider)
+                .map(|widget| widget.id());
+            if Some(widget_id) != id {
                 return Handled::No;
             }
             self.value = value.clamp(0.0, 1.0);

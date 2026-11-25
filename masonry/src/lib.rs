@@ -52,7 +52,7 @@
 //!
 //! const TEXT_INPUT_TAG: WidgetTag<TextInput> = WidgetTag::named("text-input");
 //! const LIST_TAG: WidgetTag<Flex> = WidgetTag::named("list");
-//! const WIDGET_SPACING: Length = Length::const_px(5.0);
+//! const WIDGET_SPACING: Length = masonry::layout::length!(5.0);
 //!
 //! struct Driver {
 //!     next_task: String,
@@ -70,13 +70,13 @@
 //!         debug_assert_eq!(window_id, self.window_id, "unknown window");
 //!
 //!         if action.is::<ButtonPress>() {
-//!             let render_root = ctx.render_root(window_id);
+//!             let Some(render_root) = ctx.render_root(window_id) else { return; };
 //!
-//!             render_root.edit_widget_with_tag(TEXT_INPUT_TAG, |mut text_input| {
-//!                 let mut text_area = TextInput::text_mut(&mut text_input);
+//!             let _ = render_root.edit_widget_with_tag(TEXT_INPUT_TAG, |mut text_input| {
+//!                 let Some(mut text_area) = TextInput::text_mut(&mut text_input) else { return; };
 //!                 TextArea::reset_text(&mut text_area, "");
 //!             });
-//!             render_root.edit_widget_with_tag(LIST_TAG, |mut list| {
+//!             let _ = render_root.edit_widget_with_tag(LIST_TAG, |mut list| {
 //!                 let child = Label::new(self.next_task.clone()).prepare();
 //!                 Flex::add_fixed(&mut list, child);
 //!             });
@@ -188,20 +188,13 @@
 // LINEBENDER LINT SET - lib.rs - v3
 // See https://linebender.org/wiki/canonical-lints/
 // These lints shouldn't apply to examples or tests.
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(not(test), deny(unused_crate_dependencies))]
 // These lints shouldn't apply to examples.
-#![warn(clippy::print_stdout, clippy::print_stderr)]
+#![deny(clippy::print_stdout, clippy::print_stderr)]
 // Targeting e.g. 32-bit means structs containing usize can give false positives for 64-bit.
-#![cfg_attr(target_pointer_width = "64", warn(clippy::trivially_copy_pass_by_ref))]
+#![cfg_attr(target_pointer_width = "64", deny(clippy::trivially_copy_pass_by_ref))]
 // END LINEBENDER LINT SET
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![cfg_attr(
-    test,
-    expect(
-        unused_crate_dependencies,
-        reason = "False-positive with dev-dependencies only used in examples"
-    )
-)]
 // TODO: Remove any items listed as "Deferred"
 #![expect(clippy::cast_possible_truncation, reason = "Deferred: Noisy")]
 #![expect(clippy::single_match, reason = "General policy not decided")]
@@ -211,6 +204,115 @@ pub mod doc;
 
 #[cfg(test)]
 mod tests;
+
+// Containers share the same registered child replacement and access contract.
+macro_rules! child_accessors {
+    ($field:ident, $setter:ident, $getter:ident, erased) => {
+        /// Replaces the child widget with a new one.
+        pub fn $setter(
+            this: &mut $crate::core::WidgetMut<'_, Self>,
+            child: $crate::core::NewWidget<impl $crate::core::Widget + ?Sized>,
+        ) {
+            let old = std::mem::replace(&mut this.widget.$field, child.erased().into_pod());
+            this.ctx.remove_child(old);
+        }
+
+        /// Returns a mutable handle to a registered child of the requested type.
+        pub fn $getter<'t, W: $crate::core::Widget + $crate::core::FromDynWidget + ?Sized>(
+            this: &'t mut $crate::core::WidgetMut<'_, Self>,
+        ) -> Option<$crate::core::WidgetMut<'t, W>> {
+            this.ctx.get_mut(this.widget.$field.id())
+        }
+    };
+    ($field:ident, $setter:ident, $getter:ident, $ty:ty) => {
+        /// Replaces the child widget with a new one.
+        pub fn $setter(
+            this: &mut $crate::core::WidgetMut<'_, Self>,
+            child: $crate::core::NewWidget<$ty>,
+        ) {
+            let old = std::mem::replace(&mut this.widget.$field, child.into_pod());
+            this.ctx.remove_child(old);
+        }
+
+        /// Returns a mutable handle to the child if registered.
+        pub fn $getter<'t>(
+            this: &'t mut $crate::core::WidgetMut<'_, Self>,
+        ) -> Option<$crate::core::WidgetMut<'t, $ty>> {
+            this.ctx.get_mut(this.widget.$field.id())
+        }
+    };
+}
+
+// A collection's slot projection determines which indices contain widgets.
+macro_rules! collection_accessors {
+    ($child:ident => $id:expr) => {
+        fn len(&self) -> usize {
+            self.children.len()
+        }
+
+        fn is_empty(&self) -> bool {
+            self.children.is_empty()
+        }
+
+        fn get_mut<'t, W: $crate::core::Widget + $crate::core::FromDynWidget + ?Sized>(
+            this: &'t mut $crate::core::WidgetMut<'_, Self>,
+            idx: usize,
+        ) -> Option<$crate::core::WidgetMut<'t, W>> {
+            let $child = this.widget.children.get(idx)?;
+            this.ctx.get_mut($id)
+        }
+    };
+}
+
+macro_rules! label_text_accessors {
+    () => {
+        /// Sets the text. The allocation is explicit in the `ArcStr` argument.
+        pub fn set_text(this: &mut WidgetMut<'_, Self>, new_text: ArcStr) {
+            if let Some(mut child) = Self::label_mut(this) {
+                Label::set_text(&mut child, new_text);
+            }
+        }
+
+        /// Returns a mutable handle to the registered label.
+        pub fn label_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, Label>> {
+            this.ctx.get_mut(this.widget.label.id())
+        }
+    };
+}
+
+// Validate before modifying a collection or converting its input.
+const fn check_slot(index: usize, len: usize) -> Result<(), core::CollectionError> {
+    if index < len {
+        Ok(())
+    } else {
+        Err(core::CollectionError::OutOfBounds { index, len })
+    }
+}
+
+const fn check_insert_slot(index: usize, len: usize) -> Result<(), core::CollectionError> {
+    if index <= len {
+        Ok(())
+    } else {
+        Err(core::CollectionError::OutOfBounds { index, len })
+    }
+}
+
+// Both indices must be valid before either slot can change.
+fn swap_slots<T>(slots: &mut [T], a: usize, b: usize) -> Result<(), core::CollectionError> {
+    check_slot(a, slots.len())?;
+    check_slot(b, slots.len())?;
+    slots.swap(a, b);
+    Ok(())
+}
+
+// Layout coordinates are f64 by design; huge child counts may be rounded.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "Layout coordinates use floating-point logical pixels, not exact integer counts."
+)]
+const fn layout_count(count: usize) -> f64 {
+    count as f64
+}
 
 pub mod layers;
 pub mod properties;

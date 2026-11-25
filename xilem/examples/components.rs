@@ -3,7 +3,7 @@
 
 //! Modularizing state can be done with `lens` which allows using modular components.
 
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::core::lens;
 use xilem::view::{MainAxisAlignment, flex_col, flex_row, label, text_button};
 use xilem::{EventLoop, WidgetView, WindowOptions, Xilem};
@@ -36,7 +36,7 @@ fn app_logic(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
     .main_axis_alignment(MainAxisAlignment::Center)
 }
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     let app = Xilem::new_simple(
         AppState::default(),
         app_logic,

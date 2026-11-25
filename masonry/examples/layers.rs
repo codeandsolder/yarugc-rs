@@ -56,7 +56,7 @@ impl OverlayBox {
         overlayer: Box<dyn Fn() -> (NewWidget<dyn Widget>, LayerType)>,
     ) -> Self {
         Self {
-            child: child.erased().to_pod(),
+            child: child.erased().into_pod(),
             overlayer,
             layer_root_id: None,
             last_mouse_move: None,
@@ -106,7 +106,7 @@ impl Widget for OverlayBox {
     }
 
     fn update(&mut self, _ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        if let Update::HoveredChanged(false) = event {
+        if matches!(event, Update::HoveredChanged(false)) {
             self.last_mouse_move = None;
         }
     }
@@ -122,19 +122,13 @@ impl Widget for OverlayBox {
         let auto_length = len_req.into();
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);
 
-        ctx.compute_length(
-            &mut self.child,
-            auto_length,
-            context_size,
-            axis,
-            cross_length,
-        )
+        ctx.compute_length(&self.child, auto_length, context_size, axis, cross_length)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let child_size = ctx.compute_size(&mut self.child, SizeDef::fit(size), size.into());
-        ctx.run_layout(&mut self.child, child_size);
-        ctx.place_child(&mut self.child, Point::ORIGIN);
+        let child_size = ctx.compute_size(&self.child, SizeDef::fit(size), size.into());
+        ctx.run_layout(&self.child, child_size);
+        ctx.place_child(&self.child, Point::ORIGIN);
     }
 
     fn paint(
@@ -166,7 +160,7 @@ impl Widget for OverlayBox {
     }
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let label = Label::new("Hello")
         .with_style(StyleProperty::FontSize(32.0))
         // Ideally there's be an Into in Parley for this
@@ -207,6 +201,6 @@ fn main() {
         )],
         driver,
         default_property_set(),
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }

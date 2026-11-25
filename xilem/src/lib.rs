@@ -9,7 +9,7 @@
 //! minimal updates to a retained UI. Like `SwiftUI`, it is strongly typed.
 //!
 //! The talk *[Xilem: Let's Build High Performance Rust UI](https://www.youtube.com/watch?v=OvfNipIcRiQ)* by Raph Levien
-//! was presented at the RustNL conference in 2024, and gives a video introduction to these ideas.
+//! was presented at the `RustNL` conference in 2024, and gives a video introduction to these ideas.
 //! Xilem is implemented as a reactive layer on top of [Masonry][masonry], a widget toolkit which is developed alongside Xilem.
 //! Masonry itself is built on top of a wide array of foundational Rust UI projects:
 //!
@@ -28,7 +28,7 @@
 //! A simple incrementing counter application looks like:
 //!
 //! ```rust,no_run
-//! use winit::error::EventLoopError;
+//! use xilem::RunError;
 //! use xilem::view::{text_button, flex_col, label};
 //! use xilem::{EventLoop, WindowOptions, WidgetView, Xilem};
 //!
@@ -41,7 +41,7 @@
 //!     ))
 //! }
 //!
-//! fn main() -> Result<(), EventLoopError> {
+//! fn main() -> Result<(), RunError> {
 //!     let app = Xilem::new_simple(Counter(0), app_logic, WindowOptions::new("Counter app"));
 //!     app.run_in(EventLoop::with_user_event())?;
 //!     Ok(())
@@ -129,20 +129,13 @@
 // LINEBENDER LINT SET - lib.rs - v3
 // See https://linebender.org/wiki/canonical-lints/
 // These lints shouldn't apply to examples or tests.
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(not(test), deny(unused_crate_dependencies))]
 // These lints shouldn't apply to examples.
-#![warn(clippy::print_stdout, clippy::print_stderr)]
+#![deny(clippy::print_stdout, clippy::print_stderr)]
 // Targeting e.g. 32-bit means structs containing usize can give false positives for 64-bit.
-#![cfg_attr(target_pointer_width = "64", warn(clippy::trivially_copy_pass_by_ref))]
+#![cfg_attr(target_pointer_width = "64", deny(clippy::trivially_copy_pass_by_ref))]
 // END LINEBENDER LINT SET
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![cfg_attr(
-    test,
-    expect(
-        unused_crate_dependencies,
-        reason = "False-positive with dev-dependencies only used in examples"
-    )
-)]
 // TODO: Remove any items listed as "Deferred"
 #![expect(
     missing_debug_implementations,
@@ -169,12 +162,24 @@ pub use xilem_masonry::{
     AnyWidgetView, InitialRootWidget, MasonryRoot, Pod, ViewCtx, WidgetView, WidgetViewSequence,
 };
 
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Internal cross-module types are not public API."
+)]
 mod app;
 mod driver;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Internal cross-module types are not public API."
+)]
 mod window_options;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Internal cross-module types are not public API."
+)]
 mod window_view;
 
-pub use app::{AppState, ExitOnClose, Xilem};
+pub use app::{AppState, ExitOnClose, RunError, Xilem};
 pub use driver::{MasonryDriver, async_action};
 pub use window_options::WindowOptions;
 pub use window_view::{PodWindow, WindowView, window};

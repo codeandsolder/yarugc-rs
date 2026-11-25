@@ -64,15 +64,21 @@
 mod assert_any;
 mod assert_debug_panics;
 mod debug_name;
+mod error;
 mod harness;
 mod modular_widget;
 mod recorder_widget;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Internal snapshot helpers must not become public API under unreachable_pub."
+)]
 mod screenshots;
 mod wrapper_widget;
 
 pub use assert_any::{assert_all, assert_any, assert_none};
 pub use assert_debug_panics::assert_debug_panics_inner;
 pub use debug_name::DebugName;
+pub use error::HarnessError;
 pub use harness::{PRIMARY_MOUSE, ROBOTO, TestHarness, TestHarnessParams};
 pub use modular_widget::ModularWidget;
 pub use recorder_widget::{Record, Recorder, Recording};

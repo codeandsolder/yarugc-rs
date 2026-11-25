@@ -3,7 +3,6 @@
 
 use std::borrow::Borrow;
 use std::fmt;
-use std::ops::Index;
 use std::vec::Drain;
 
 #[derive(Clone)]
@@ -98,7 +97,7 @@ impl<K, V> VecMap<K, V> {
     /// if let Some(x) = map.get_mut(&1) {
     ///     *x = "b";
     /// }
-    /// assert_eq!(map[&1], "b");
+    /// assert_eq!(map.get(&1).copied().unwrap(), "b");
     /// ```
     // See `get` for implementation notes, this is basically a copy-paste with mut's added
     pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
@@ -201,7 +200,7 @@ impl<K, V> VecMap<K, V> {
     ///
     /// map.insert(37, "b");
     /// assert_eq!(map.insert(37, "c"), Some("b"));
-    /// assert_eq!(map[&37], "c");
+    /// assert_eq!(map.get(&37).copied().unwrap(), "c");
     /// ```
     pub fn insert(&mut self, key: K, value: V) -> Option<V>
     where
@@ -266,7 +265,7 @@ impl<K, V> VecMap<K, V> {
     /// a.insert(1, "a");
     /// assert!(!a.is_empty());
     /// ```
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
@@ -283,7 +282,7 @@ impl<K, V> VecMap<K, V> {
     /// a.insert(1, "a");
     /// assert_eq!(a.len(), 1);
     /// ```
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.0.len()
     }
 
@@ -318,24 +317,6 @@ impl<K, V> VecMap<K, V> {
     /// Panics if the new capacity exceeds `isize::MAX` _bytes_.
     pub fn reserve_exact(&mut self, additional: usize) {
         self.0.reserve_exact(additional);
-    }
-}
-
-impl<K, Q, V> Index<&Q> for VecMap<K, V>
-where
-    K: Borrow<Q> + Ord,
-    Q: Ord + ?Sized,
-{
-    type Output = V;
-
-    /// Returns a reference to the value corresponding to the supplied key.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the key is not present in the `VecMap`.
-    #[inline]
-    fn index(&self, key: &Q) -> &V {
-        self.get(key).expect("no entry found for key")
     }
 }
 
@@ -400,7 +381,7 @@ mod tests {
         if let Some(x) = map.get_mut(&1) {
             *x = "b";
         }
-        assert_eq!(map[&1], "b");
+        assert_eq!(map.get(&1).copied().unwrap(), "b");
     }
 
     #[test]
@@ -448,7 +429,7 @@ mod tests {
 
         map.insert(37, "b");
         assert_eq!(map.insert(37, "c"), Some("b"));
-        assert_eq!(map[&37], "c");
+        assert_eq!(map.get(&37).copied().unwrap(), "c");
     }
 
     #[test]

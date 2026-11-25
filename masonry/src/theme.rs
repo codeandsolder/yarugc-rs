@@ -3,8 +3,6 @@
 
 //! Default values used by various widgets in their paint methods.
 
-#![allow(missing_docs, reason = "Names are self-explanatory.")]
-
 use crate::core::{
     DefaultProperties, PropertySet, PropertyStack, Selector, StyleProperty, StyleSet,
 };
@@ -14,8 +12,16 @@ use crate::parley::{GenericFamily, LineHeight};
 use crate::peniko::Color;
 
 // We use glob imports here to avoid frequent merge conflicts.
-use crate::properties::*;
-use crate::widgets::*;
+use crate::properties::{
+    AnimationDuration, Background, BarColor, BorderColor, BorderWidth, CaretColor, CheckmarkColor,
+    CheckmarkStrokeWidth, ContentColor, CornerRadius, Dimensions, Gap, Padding, PlaceholderColor,
+    SelectionColor, ThumbColor, ThumbRadius, TrackColor, TrackThickness,
+};
+use crate::widgets::Selector as SelectorButton;
+use crate::widgets::{
+    Badge, Button, Checkbox, DisclosureButton, Divider, Flex, Grid, Label, ProgressBar, Prose,
+    RadioButton, SelectorItem, Slider, Spinner, StepInput, Steppable, Switch, TextArea, TextInput,
+};
 
 /// Default color for the app background.
 ///
@@ -23,41 +29,93 @@ use crate::widgets::*;
 /// it should clear with this color by default.
 pub const BACKGROUND_COLOR: Color = Color::from_rgb8(0x1D, 0x1D, 0x1D);
 
-pub const BORDER_WIDTH: Length = Length::const_px(1.);
+/// Default width of a widget border.
+pub const BORDER_WIDTH: Length = crate::layout::length!(1.);
 
 // Zync color variations from https://tailwindcss.com/docs/colors
+/// Darkest zinc shade.
 pub const ZYNC_900: Color = Color::from_rgb8(0x18, 0x18, 0x1b);
+/// Zinc shade for dark surfaces.
 pub const ZYNC_800: Color = Color::from_rgb8(0x27, 0x27, 0x2a);
+/// Zinc shade for raised surfaces.
 pub const ZYNC_700: Color = Color::from_rgb8(0x3f, 0x3f, 0x46);
+/// Mid-dark zinc shade.
 pub const ZYNC_600: Color = Color::from_rgb8(0x52, 0x52, 0x5b);
+/// Mid-tone zinc shade.
 pub const ZYNC_500: Color = Color::from_rgb8(0x71, 0x71, 0x7a);
 
+/// Default accent for highlighted controls.
 pub const ACCENT_COLOR: Color = Color::from_rgb8(0x3b, 0x7e, 0xe4);
+/// Default foreground text color.
 pub const TEXT_COLOR: Color = Color::from_rgb8(0xf2, 0xf2, 0xf2);
+/// Foreground color for disabled controls.
 pub const DISABLED_TEXT_COLOR: Color = Color::from_rgb8(0xa0, 0xa0, 0x9a);
+/// Foreground color for placeholder text.
 pub const PLACEHOLDER_COLOR: Color = Color::from_rgba8(0xFF, 0xFF, 0xFF, 0x8F);
+/// Default background of text fields.
 pub const TEXT_BACKGROUND_COLOR: Color = Color::from_rgb8(0x16, 0x16, 0x16);
+/// Default focus indicator color.
 pub const FOCUS_COLOR: Color = Color::from_rgb8(0xff, 0xff, 0xff);
 
 // TODO: The following constants are not being used in properties
+/// Default text size in logical pixels.
 pub const TEXT_SIZE_NORMAL: f32 = 15.0;
-pub const BASIC_WIDGET_HEIGHT: Length = Length::const_px(18.0);
+/// Default basic control height.
+pub const BASIC_WIDGET_HEIGHT: Length = crate::layout::length!(18.0);
+/// Default bordered control height in logical pixels.
 pub const BORDERED_WIDGET_HEIGHT: f64 = 24.0;
+/// Default scrollbar thumb color.
 pub const SCROLLBAR_COLOR: Color = Color::from_rgb8(0xff, 0xff, 0xff);
+/// Default scrollbar border color.
 pub const SCROLLBAR_BORDER_COLOR: Color = Color::from_rgb8(0x77, 0x77, 0x77);
+/// Default scrollbar width in logical pixels.
 pub const SCROLLBAR_WIDTH: f64 = 8.;
+/// Default scrollbar padding in logical pixels.
 pub const SCROLLBAR_PAD: f64 = 2.;
+/// Minimum scrollbar thumb length in logical pixels.
 pub const SCROLLBAR_MIN_SIZE: f64 = 45.;
+/// Default scrollbar corner radius in logical pixels.
 pub const SCROLLBAR_RADIUS: f64 = 5.;
+/// Default scrollbar edge width in logical pixels.
 pub const SCROLLBAR_EDGE_WIDTH: f64 = 1.;
-pub const DEFAULT_GAP: Length = Length::const_px(10.0);
-pub const DEFAULT_SPACER_LEN: Length = Length::const_px(10.0);
-pub const WIDGET_CONTROL_COMPONENT_PADDING: Length = Length::const_px(4.0);
+/// Default spacing between adjacent controls.
+pub const DEFAULT_GAP: Length = crate::layout::length!(10.0);
+/// Default length of an explicit spacer.
+pub const DEFAULT_SPACER_LEN: Length = crate::layout::length!(10.0);
+/// Default padding for control components.
+pub const WIDGET_CONTROL_COMPONENT_PADDING: Length = crate::layout::length!(4.0);
+/// Default minimum selector width in logical pixels.
 pub const SELECTOR_MIN_WIDTH: f64 = 100.0;
 
+/// Builds the default widget property set.
 pub fn default_property_set() -> DefaultProperties {
     let mut properties = DefaultProperties::new();
 
+    badge_theme(&mut properties);
+    button_theme(&mut properties);
+    switch_theme(&mut properties);
+    selector_theme(&mut properties);
+    text_theme(&mut properties);
+    numeric_theme(&mut properties);
+
+    // StepInput
+    default_step_input_style::<u8>(&mut properties);
+    default_step_input_style::<i8>(&mut properties);
+    default_step_input_style::<u16>(&mut properties);
+    default_step_input_style::<i16>(&mut properties);
+    default_step_input_style::<u32>(&mut properties);
+    default_step_input_style::<i32>(&mut properties);
+    default_step_input_style::<u64>(&mut properties);
+    default_step_input_style::<i64>(&mut properties);
+    default_step_input_style::<usize>(&mut properties);
+    default_step_input_style::<isize>(&mut properties);
+    default_step_input_style::<f32>(&mut properties);
+    default_step_input_style::<f64>(&mut properties);
+
+    properties
+}
+
+fn badge_theme(properties: &mut DefaultProperties) {
     // Badge
     properties.insert::<Badge, _>(Padding::from_vh(3.px(), 5.px()));
     properties.insert::<Badge, _>(CornerRadius { radius: 999.px() });
@@ -72,7 +130,9 @@ pub fn default_property_set() -> DefaultProperties {
         );
         properties.insert_stack::<Badge>(stack);
     }
+}
 
+fn button_theme(properties: &mut DefaultProperties) {
     // Button
     properties.insert::<Button, _>(Padding::from_vh(6.px(), 16.px()));
     properties.insert::<Button, _>(CornerRadius { radius: 6.px() });
@@ -135,12 +195,14 @@ pub fn default_property_set() -> DefaultProperties {
         );
         properties.insert_stack::<Checkbox>(stack);
     }
+}
 
+fn switch_theme(properties: &mut DefaultProperties) {
     // DisclosureButton
     properties.insert::<DisclosureButton, _>(ContentColor::new(DIM_GRAY));
     properties.insert::<DisclosureButton, _>(Dimensions::fixed(
-        Length::const_px(16.),
-        Length::const_px(16.),
+        crate::layout::length!(16.),
+        crate::layout::length!(16.),
     ));
     properties.insert::<DisclosureButton, _>(Padding::all(4.px()));
 
@@ -181,10 +243,9 @@ pub fn default_property_set() -> DefaultProperties {
         );
         properties.insert_stack::<Switch>(stack);
     }
+}
 
-    // FIXME
-    use crate::widgets::Selector as SelectorButton;
-
+fn selector_theme(properties: &mut DefaultProperties) {
     // Selector
     properties.insert::<SelectorButton, _>(Padding::from_vh(6.px(), 16.px()));
     properties.insert::<SelectorButton, _>(CornerRadius { radius: 2.px() });
@@ -236,7 +297,9 @@ pub fn default_property_set() -> DefaultProperties {
 
     // Grid
     properties.insert::<Grid, _>(Gap::ZERO);
+}
 
+fn text_theme(properties: &mut DefaultProperties) {
     // TextInput
     properties.insert::<TextInput, _>(Padding::from_vh(6.px(), 12.px()));
     properties.insert::<TextInput, _>(CornerRadius { radius: 4.px() });
@@ -269,33 +332,8 @@ pub fn default_property_set() -> DefaultProperties {
         properties.insert_stack::<TextInput>(stack);
     }
 
-    // TextArea
-    properties.insert::<TextArea<false>, _>(ContentColor::new(TEXT_COLOR));
-    properties.insert::<TextArea<false>, _>(CaretColor { color: TEXT_COLOR });
-    properties.insert::<TextArea<false>, _>(SelectionColor {
-        color: ACCENT_COLOR,
-    });
-    {
-        let mut stack = PropertyStack::new();
-        stack.push_layer(
-            Selector::new().with_disabled(true),
-            ContentColor::new(DISABLED_TEXT_COLOR),
-        );
-        properties.insert_stack::<TextArea<false>>(stack);
-    }
-    properties.insert::<TextArea<true>, _>(ContentColor::new(TEXT_COLOR));
-    properties.insert::<TextArea<true>, _>(CaretColor { color: TEXT_COLOR });
-    properties.insert::<TextArea<true>, _>(SelectionColor {
-        color: ACCENT_COLOR,
-    });
-    {
-        let mut stack = PropertyStack::new();
-        stack.push_layer(
-            Selector::new().with_disabled(true),
-            ContentColor::new(DISABLED_TEXT_COLOR),
-        );
-        properties.insert_stack::<TextArea<true>>(stack);
-    }
+    text_area_theme::<false>(properties);
+    text_area_theme::<true>(properties);
 
     // Prose
     properties.insert::<Prose, _>(CaretColor { color: TEXT_COLOR });
@@ -324,7 +362,9 @@ pub fn default_property_set() -> DefaultProperties {
         );
         properties.insert_stack::<Label>(stack);
     }
+}
 
+fn numeric_theme(properties: &mut DefaultProperties) {
     // ProgressBar
     properties.insert::<ProgressBar, _>(CornerRadius { radius: 2.px() });
     properties.insert::<ProgressBar, _>(BorderWidth {
@@ -395,22 +435,6 @@ pub fn default_property_set() -> DefaultProperties {
     });
     properties.insert::<Spinner, _>(TrackThickness(8.px()));
     properties.insert::<Spinner, _>(AnimationDuration { seconds: 1.2 });
-
-    // StepInput
-    default_step_input_style::<u8>(&mut properties);
-    default_step_input_style::<i8>(&mut properties);
-    default_step_input_style::<u16>(&mut properties);
-    default_step_input_style::<i16>(&mut properties);
-    default_step_input_style::<u32>(&mut properties);
-    default_step_input_style::<i32>(&mut properties);
-    default_step_input_style::<u64>(&mut properties);
-    default_step_input_style::<i64>(&mut properties);
-    default_step_input_style::<usize>(&mut properties);
-    default_step_input_style::<isize>(&mut properties);
-    default_step_input_style::<f32>(&mut properties);
-    default_step_input_style::<f64>(&mut properties);
-
-    properties
 }
 
 /// Applies the default text styles for Masonry into `styles`.
@@ -458,8 +482,21 @@ fn default_step_input_style<T: Steppable>(properties: &mut DefaultProperties) {
 /// This should still be kept relatively close to `default_property_set()` so that screenshots look like end user apps.
 #[cfg(test)]
 pub(crate) fn test_property_set() -> DefaultProperties {
-    #[allow(unused_mut, reason = "Sometimes we don't have anything to change")]
-    let mut properties = default_property_set();
+    default_property_set()
+}
 
-    properties
+fn text_area_theme<const EDITABLE: bool>(properties: &mut DefaultProperties) {
+    properties.insert::<TextArea<EDITABLE>, _>(ContentColor::new(TEXT_COLOR));
+    properties.insert::<TextArea<EDITABLE>, _>(CaretColor { color: TEXT_COLOR });
+    properties.insert::<TextArea<EDITABLE>, _>(SelectionColor {
+        color: ACCENT_COLOR,
+    });
+    {
+        let mut stack = PropertyStack::new();
+        stack.push_layer(
+            Selector::new().with_disabled(true),
+            ContentColor::new(DISABLED_TEXT_COLOR),
+        );
+        properties.insert_stack::<TextArea<EDITABLE>>(stack);
+    }
 }

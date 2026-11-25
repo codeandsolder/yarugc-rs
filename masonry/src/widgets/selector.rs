@@ -6,14 +6,13 @@ use tracing::{Span, trace_span};
 
 use crate::core::keyboard::{Key, NamedKey};
 use crate::core::{
-    AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayerType, LayoutCtx, MeasureCtx, NewWidget,
-    PaintCtx, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx,
-    TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, AccessEvent, EventCtx, LayerType, NewWidget, PointerButtonEvent, PointerEvent,
+    PropertiesMut, PropertiesRef, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
+    WidgetPod,
 };
-use crate::imaging::Painter;
-use crate::kurbo::{Axis, Size, Vec2};
+use crate::kurbo::Vec2;
 use crate::layers::SelectorMenu;
-use crate::layout::{AsUnit, LayoutSize, LenReq, Length, SizeDef};
+use crate::layout::{AsUnit, UnitPoint};
 use crate::theme;
 use crate::util::debug_panic;
 use crate::widgets::{Label, SelectorItem};
@@ -52,6 +51,7 @@ impl Selector {
     }
 
     /// Builder method to pre-set the widget's initial option.
+    #[must_use = "Use the configured value."]
     pub fn with_selected_option(mut self, mut selected_option: usize) -> Self {
         if selected_option >= self.options.len() {
             debug_panic!("invalid selector option index");
@@ -76,6 +76,10 @@ impl Selector {
             debug_panic!("cannot create selector with no option");
             options = vec![String::new()];
         }
+        // An open menu describes the old list and cannot be reused after replacement.
+        if let Some(id) = this.widget.menu_layer_id.take() {
+            this.ctx.remove_layer(id);
+        }
         this.widget.options = options;
         Self::select_option(this, 0);
     }
@@ -94,17 +98,19 @@ impl Selector {
         this.widget.selected_option = selected_option;
 
         let option = this.widget.options[selected_option].clone();
-        Label::set_text(&mut Self::child_mut(this), option);
+        if let Some(mut child) = Self::child_mut(this) {
+            Label::set_text(&mut child, option);
+        }
     }
 
     /// Returns a mutable reference to the child label.
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, Label> {
-        this.ctx.get_mut(&mut this.widget.child)
+    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, Label>> {
+        this.ctx.get_mut(this.widget.child.id())
     }
 }
 
 /// A [`Selector`]'s option was picked.
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct SelectionChanged {
     /// The content of the picked selection.
     pub selected_content: String,
@@ -131,7 +137,7 @@ impl Selector {
         };
 
         let mut menu = SelectorMenu::new(ctx.widget_id());
-        for option in self.options.iter() {
+        for option in &self.options {
             let item = SelectorItem::new(option.clone());
             menu = menu.with(NewWidget::new(item));
         }
@@ -143,7 +149,7 @@ impl Selector {
         ctx.create_layer(
             layer_type,
             layer_widget,
-            ctx.to_window(border_box.origin()) + Vec2::new(0., border_box.size().height),
+            ctx.local_to_window(border_box.origin()) + Vec2::new(0., border_box.size().height),
         );
     }
 }
@@ -151,6 +157,16 @@ impl Selector {
 // --- MARK: IMPL WIDGET
 impl Widget for Selector {
     type Action = SelectionChanged;
+
+    // The standard control minimum keeps adjacent widgets aligned.
+    masonry_core::single_child_container!(
+        child,
+        UnitPoint::CENTER,
+        min = (
+            theme::SELECTOR_MIN_WIDTH.px(),
+            theme::BORDERED_WIDGET_HEIGHT.px()
+        )
+    );
 
     fn on_pointer_event(
         &mut self,
@@ -209,9 +225,10 @@ impl Widget for Selector {
         match event {
             Update::WidgetAdded => {
                 let option = self.options[self.selected_option].clone();
-                ctx.mutate_self_later(move |mut selector| {
-                    let mut selector = selector.downcast::<Self>();
-                    let mut label = Self::child_mut(&mut selector);
+                ctx.mutate_self_later::<Self>(move |mut selector| {
+                    let Some(mut label) = Self::child_mut(&mut selector) else {
+                        return;
+                    };
                     Label::set_text(&mut label, option);
                 });
             }
@@ -223,59 +240,6 @@ impl Widget for Selector {
             }
             _ => {}
         }
-    }
-
-    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.child);
-    }
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        axis: Axis,
-        len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        let auto_length = len_req.into();
-        let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-
-        let child_length = ctx.compute_length(
-            &mut self.child,
-            auto_length,
-            context_size,
-            axis,
-            cross_length,
-        );
-
-        let length = child_length;
-
-        // TODO - Add MinimumSize property.
-        // HACK: to make sure we look okay at default sizes when beside a text input,
-        // we make sure we will have at least the same height as the default text input.
-        // We also set a minimum width.
-        match axis {
-            Axis::Horizontal => length.max(theme::SELECTOR_MIN_WIDTH.px()),
-            Axis::Vertical => length.max(theme::BORDERED_WIDGET_HEIGHT.px()),
-        }
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let child_size = ctx.compute_size(&mut self.child, SizeDef::fit(size), size.into());
-        ctx.run_layout(&mut self.child, child_size);
-
-        let child_origin = ((size - child_size).to_vec2() * 0.5).to_point();
-        ctx.place_child(&mut self.child, child_origin);
-
-        ctx.derive_baselines(&self.child);
-    }
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
     }
 
     fn accessibility_role(&self) -> Role {
@@ -292,18 +256,9 @@ impl Widget for Selector {
         // TODO - Add accesskit::Action::SetValue
     }
 
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.child.id()])
-    }
-
     fn accepts_focus(&self) -> bool {
         // Selectors can be tab-focused...
         true
-    }
-
-    fn accepts_text_input(&self) -> bool {
-        // But they still aren't text areas.
-        false
     }
 
     fn make_trace_span(&self, id: WidgetId) -> Span {
@@ -328,9 +283,11 @@ mod tests {
             (200_u32, 60_u32),
         );
 
-        harness.edit_root_widget(|mut selector| {
-            let label = Selector::child_mut(&mut selector);
-            assert_eq!(&**label.widget.text(), "White and gold");
-        });
+        harness
+            .edit_root_widget(|mut selector| {
+                let label = Selector::child_mut(&mut selector).unwrap();
+                assert_eq!(&**label.widget.text(), "White and gold");
+            })
+            .unwrap();
     }
 }

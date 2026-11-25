@@ -70,6 +70,7 @@ use crate::layout::MeasurementCache;
 #[derive(Clone, Debug)]
 pub(crate) struct WidgetState {
     pub(crate) id: WidgetId,
+    flags: u64,
 
     // --- LAYOUT ---
     /// The origin (top-left) of the widget's aligned border-box
@@ -151,114 +152,23 @@ pub(crate) struct WidgetState {
     pub(crate) window_transform: Affine,
     /// Translation applied by scrolling, applied after applying `transform` to this widget.
     pub(crate) scroll_translation: Vec2,
-    /// The effective compose transform has changed because `transform`, `scroll_translation`, or
-    /// `origin` has changed.
-    pub(crate) transform_changed: bool,
 
     // --- INTERACTIONS ---
     /// The `TypeId` of the widget's `Widget::Action` type.
     pub(crate) action_type: TypeId,
 
-    /// Tracks whether widget gets pointer events.
-    /// Should be immutable after `WidgetAdded` event.
-    pub(crate) accepts_pointer_interaction: bool,
-    /// Tracks whether children of this widget get pointer events.
-    /// Should be immutable after `WidgetAdded` event.
-    pub(crate) propagates_pointer_interaction: bool,
-    /// Tracks whether widget gets text focus.
-    /// Should be immutable after `WidgetAdded` event.
-    pub(crate) accepts_focus: bool,
-
-    /// Tracks whether widget is eligible for IME events.
-    /// Should be immutable after `WidgetAdded` event.
-    pub(crate) accepts_text_input: bool,
     /// The area of the widget that is being edited by an IME,
     /// in the widget's border-box coordinate space.
     pub(crate) ime_area: Option<Rect>,
 
     // --- PASSES ---
-    /// `WidgetAdded` hasn't been sent to this widget yet.
-    pub(crate) is_new: bool,
-
-    /// A flag used to track and debug missing calls to `place_child`.
-    pub(crate) is_expecting_place_child_call: bool,
-
-    /// This widget explicitly requested layout
-    pub(crate) request_layout: bool,
-    /// This widget or a descendant explicitly requested layout
-    needs_layout: bool,
     /// Cached measurement results.
     pub(crate) measurement_cache: MeasurementCache,
 
-    /// The `compose` method must be called on this widget
-    pub(crate) request_compose: bool,
-    /// The `compose` pass must run on this widget.
-    pub(crate) needs_compose: bool,
-
-    /// The `pre_paint` method must be called on this widget
-    pub(crate) request_pre_paint: bool,
-    /// The `paint` method must be called on this widget
-    pub(crate) request_paint: bool,
-    /// The `post_paint` method must be called on this widget
-    pub(crate) request_post_paint: bool,
-    /// A painting method must be called on this widget or a descendant
-    pub(crate) needs_paint: bool,
-    /// How this widget subtree should be represented in the current paint pass.
-    pub(crate) paint_layer_mode: PaintLayerMode,
-
-    /// The `accessibility` method must be called on this widget
-    pub(crate) request_accessibility: bool,
-    /// The `accessibility` method must be called on this widget or a descendant
-    pub(crate) needs_accessibility: bool,
-
-    /// An animation must run on this widget
-    pub(crate) request_anim: bool,
-    /// An animation must run on this widget or a descendant
-    pub(crate) needs_anim: bool,
-
-    /// This widget or a descendant changed its `is_explicitly_disabled` value
-    pub(crate) needs_update_disabled: bool,
-    /// This widget or a descendant changed its `is_explicitly_stashed` value
-    pub(crate) needs_update_stashed: bool,
-
-    /// This widget or a descendant has `accepts_focus == true`
-    pub(crate) descendant_is_focusable: bool,
-    /// A focusable widget was added, removed, stashed, disabled, etc.
-    pub(crate) needs_update_focusable: bool,
-
-    /// This widget has pending property changes.
-    pub(crate) request_update_props: bool,
-    /// This widget or a descendant has pending property changes.
-    pub(crate) needs_update_props: bool,
-
-    pub(crate) children_changed: bool,
+    /// Layer declarations cached alongside pre-paint, paint, and post-paint.
+    pub(crate) paint_layer_modes: [Option<PaintLayerMode>; 3],
 
     // --- STATUS ---
-    /// This widget has been disabled.
-    pub(crate) is_explicitly_disabled: bool,
-    /// This widget or an ancestor has been disabled.
-    pub(crate) is_disabled: bool,
-
-    /// This widget has been stashed.
-    pub(crate) is_explicitly_stashed: bool,
-    /// This widget or an ancestor has been stashed.
-    pub(crate) is_stashed: bool,
-
-    /// In the hovered path, starting from window and ending at the hovered widget.
-    /// Descendants of the hovered widget are not in the hovered path.
-    pub(crate) has_hovered: bool,
-    /// This specific widget is hovered.
-    pub(crate) is_hovered: bool,
-
-    /// In the active path, starting from window and ending at the active widget.
-    /// Descendants of the active widget are not in the active path.
-    pub(crate) has_active: bool,
-    /// This specific widget is active.
-    pub(crate) is_active: bool,
-
-    /// In the focused path, starting from window and ending at the focused widget.
-    /// Descendants of the focused widget are not in the focused path.
-    pub(crate) has_focus_target: bool,
 
     // --- PROPERTIES ---
     /// The `PropertyStack` assigned to this widget, if any.
@@ -281,7 +191,309 @@ pub(crate) struct WidgetState {
     pub(crate) action_type_name: &'static str,
 }
 
+/// Boolean widget state stored in a single bitset. Only the propagated
+/// invalidation flags merge into ancestor state; local requests and interaction
+/// state must remain local to the widget.
+#[derive(Clone, Copy, Debug)]
+#[repr(u64)]
+enum WidgetFlag {
+    TransformChanged = 1 << 0,
+    AcceptsPointerInteraction = 1 << 1,
+    PropagatesPointerInteraction = 1 << 2,
+    AcceptsFocus = 1 << 3,
+    AcceptsTextInput = 1 << 4,
+    IsNew = 1 << 5,
+    IsExpectingPlaceChildCall = 1 << 6,
+    RequestLayout = 1 << 7,
+    NeedsLayout = 1 << 8,
+    RequestCompose = 1 << 9,
+    NeedsCompose = 1 << 10,
+    RequestPrePaint = 1 << 11,
+    RequestPaint = 1 << 12,
+    RequestPostPaint = 1 << 13,
+    NeedsPaint = 1 << 14,
+    RequestAccessibility = 1 << 15,
+    NeedsAccessibility = 1 << 16,
+    RequestAnim = 1 << 17,
+    NeedsAnim = 1 << 18,
+    NeedsUpdateDisabled = 1 << 19,
+    NeedsUpdateStashed = 1 << 20,
+    DescendantIsFocusable = 1 << 21,
+    NeedsUpdateFocusable = 1 << 22,
+    RequestUpdateProps = 1 << 23,
+    NeedsUpdateProps = 1 << 24,
+    ChildrenChanged = 1 << 25,
+    IsExplicitlyDisabled = 1 << 26,
+    IsDisabled = 1 << 27,
+    IsExplicitlyStashed = 1 << 28,
+    IsStashed = 1 << 29,
+    HasHovered = 1 << 30,
+    IsHovered = 1 << 31,
+    HasActive = 1 << 32,
+    IsActive = 1 << 33,
+    HasFocusTarget = 1 << 34,
+}
+
+const PROPAGATED_FLAGS: u64 = WidgetFlag::NeedsLayout as u64
+    | WidgetFlag::NeedsCompose as u64
+    | WidgetFlag::NeedsPaint as u64
+    | WidgetFlag::NeedsAccessibility as u64
+    | WidgetFlag::NeedsAnim as u64
+    | WidgetFlag::NeedsUpdateDisabled as u64
+    | WidgetFlag::NeedsUpdateStashed as u64
+    | WidgetFlag::NeedsUpdateFocusable as u64
+    | WidgetFlag::NeedsUpdateProps as u64
+    | WidgetFlag::ChildrenChanged as u64;
+const REWRITE_FLAGS: u64 = WidgetFlag::NeedsLayout as u64
+    | WidgetFlag::NeedsCompose as u64
+    | WidgetFlag::NeedsUpdateDisabled as u64
+    | WidgetFlag::NeedsUpdateStashed as u64
+    | WidgetFlag::NeedsUpdateFocusable as u64
+    | WidgetFlag::NeedsUpdateProps as u64
+    | WidgetFlag::ChildrenChanged as u64;
+const INITIAL_FLAGS: u64 = WidgetFlag::AcceptsPointerInteraction as u64
+    | WidgetFlag::PropagatesPointerInteraction as u64
+    | WidgetFlag::IsNew as u64
+    | WidgetFlag::RequestLayout as u64
+    | WidgetFlag::NeedsLayout as u64
+    | WidgetFlag::RequestCompose as u64
+    | WidgetFlag::NeedsCompose as u64
+    | WidgetFlag::RequestPrePaint as u64
+    | WidgetFlag::RequestPaint as u64
+    | WidgetFlag::RequestPostPaint as u64
+    | WidgetFlag::NeedsPaint as u64
+    | WidgetFlag::RequestAccessibility as u64
+    | WidgetFlag::NeedsAccessibility as u64
+    | WidgetFlag::RequestAnim as u64
+    | WidgetFlag::NeedsAnim as u64
+    | WidgetFlag::NeedsUpdateDisabled as u64
+    | WidgetFlag::NeedsUpdateStashed as u64
+    | WidgetFlag::NeedsUpdateFocusable as u64
+    | WidgetFlag::ChildrenChanged as u64;
+
+macro_rules! widget_flag_accessors {
+    ($(#[$meta:meta])* $get:ident, $set:ident, $flag:ident) => {
+        $(#[$meta])*
+        pub(crate) const fn $get(&self) -> bool {
+            self.flags & WidgetFlag::$flag as u64 != 0
+        }
+
+        pub(crate) const fn $set(&mut self, value: bool) {
+            self.flags = (self.flags & !(WidgetFlag::$flag as u64))
+                | ((value as u64) * WidgetFlag::$flag as u64);
+        }
+    };
+}
+
 impl WidgetState {
+    widget_flag_accessors!(
+        /// The effective compose transform has changed because `transform`, `scroll_translation`, or
+        /// `origin` has changed.
+        transform_changed,
+        set_transform_changed,
+        TransformChanged
+    );
+    widget_flag_accessors!(
+        /// Tracks whether widget gets pointer events.
+        /// Should be immutable after `WidgetAdded` event.
+        accepts_pointer_interaction,
+        set_accepts_pointer_interaction,
+        AcceptsPointerInteraction
+    );
+    widget_flag_accessors!(
+        /// Tracks whether children of this widget get pointer events.
+        /// Should be immutable after `WidgetAdded` event.
+        propagates_pointer_interaction,
+        set_propagates_pointer_interaction,
+        PropagatesPointerInteraction
+    );
+    widget_flag_accessors!(
+        /// Tracks whether widget gets text focus.
+        /// Should be immutable after `WidgetAdded` event.
+        accepts_focus,
+        set_accepts_focus,
+        AcceptsFocus
+    );
+    widget_flag_accessors!(
+        /// Tracks whether widget is eligible for IME events.
+        /// Should be immutable after `WidgetAdded` event.
+        accepts_text_input,
+        set_accepts_text_input,
+        AcceptsTextInput
+    );
+    widget_flag_accessors!(
+        /// `WidgetAdded` hasn't been sent to this widget yet.
+        is_new,
+        set_is_new,
+        IsNew
+    );
+    widget_flag_accessors!(
+        /// A flag used to track and debug missing calls to `place_child`.
+        is_expecting_place_child_call,
+        set_is_expecting_place_child_call,
+        IsExpectingPlaceChildCall
+    );
+    widget_flag_accessors!(
+        /// This widget explicitly requested layout
+        request_layout,
+        set_request_layout,
+        RequestLayout
+    );
+    widget_flag_accessors!(
+        /// The `compose` method must be called on this widget
+        request_compose,
+        set_request_compose,
+        RequestCompose
+    );
+    widget_flag_accessors!(
+        /// The `compose` pass must run on this widget.
+        needs_compose,
+        set_needs_compose,
+        NeedsCompose
+    );
+    widget_flag_accessors!(
+        /// The `pre_paint` method must be called on this widget
+        request_pre_paint,
+        set_request_pre_paint,
+        RequestPrePaint
+    );
+    widget_flag_accessors!(
+        /// The `paint` method must be called on this widget
+        request_paint,
+        set_request_paint,
+        RequestPaint
+    );
+    widget_flag_accessors!(
+        /// The `post_paint` method must be called on this widget
+        request_post_paint,
+        set_request_post_paint,
+        RequestPostPaint
+    );
+    widget_flag_accessors!(
+        /// A painting method must be called on this widget or a descendant
+        needs_paint,
+        set_needs_paint,
+        NeedsPaint
+    );
+    widget_flag_accessors!(
+        /// The `accessibility` method must be called on this widget
+        request_accessibility,
+        set_request_accessibility,
+        RequestAccessibility
+    );
+    widget_flag_accessors!(
+        /// The `accessibility` method must be called on this widget or a descendant
+        needs_accessibility,
+        set_needs_accessibility,
+        NeedsAccessibility
+    );
+    widget_flag_accessors!(
+        /// An animation must run on this widget
+        request_anim,
+        set_request_anim,
+        RequestAnim
+    );
+    widget_flag_accessors!(
+        /// An animation must run on this widget or a descendant
+        needs_anim,
+        set_needs_anim,
+        NeedsAnim
+    );
+    widget_flag_accessors!(
+        /// This widget or a descendant changed its `is_explicitly_disabled` value
+        needs_update_disabled,
+        set_needs_update_disabled,
+        NeedsUpdateDisabled
+    );
+    widget_flag_accessors!(
+        /// This widget or a descendant changed its `is_explicitly_stashed` value
+        needs_update_stashed,
+        set_needs_update_stashed,
+        NeedsUpdateStashed
+    );
+    widget_flag_accessors!(
+        /// This widget or a descendant has `accepts_focus == true`
+        descendant_is_focusable,
+        set_descendant_is_focusable,
+        DescendantIsFocusable
+    );
+    widget_flag_accessors!(
+        /// A focusable widget was added, removed, stashed, disabled, etc.
+        needs_update_focusable,
+        set_needs_update_focusable,
+        NeedsUpdateFocusable
+    );
+    widget_flag_accessors!(
+        /// This widget has pending property changes.
+        request_update_props,
+        set_request_update_props,
+        RequestUpdateProps
+    );
+    widget_flag_accessors!(
+        /// This widget or a descendant has pending property changes.
+        needs_update_props,
+        set_needs_update_props,
+        NeedsUpdateProps
+    );
+    widget_flag_accessors!(children_changed, set_children_changed, ChildrenChanged);
+    widget_flag_accessors!(
+        /// This widget has been disabled.
+        is_explicitly_disabled,
+        set_is_explicitly_disabled,
+        IsExplicitlyDisabled
+    );
+    widget_flag_accessors!(
+        /// This widget or an ancestor has been disabled.
+        is_disabled,
+        set_is_disabled,
+        IsDisabled
+    );
+    widget_flag_accessors!(
+        /// This widget has been stashed.
+        is_explicitly_stashed,
+        set_is_explicitly_stashed,
+        IsExplicitlyStashed
+    );
+    widget_flag_accessors!(
+        /// This widget or an ancestor has been stashed.
+        is_stashed,
+        set_is_stashed,
+        IsStashed
+    );
+    widget_flag_accessors!(
+        /// In the hovered path, starting from window and ending at the hovered widget.
+        /// Descendants of the hovered widget are not in the hovered path.
+        has_hovered,
+        set_has_hovered,
+        HasHovered
+    );
+    widget_flag_accessors!(
+        /// This specific widget is hovered.
+        is_hovered,
+        set_is_hovered,
+        IsHovered
+    );
+    widget_flag_accessors!(
+        /// In the active path, starting from window and ending at the active widget.
+        /// Descendants of the active widget are not in the active path.
+        has_active,
+        set_has_active,
+        HasActive
+    );
+    widget_flag_accessors!(
+        /// This specific widget is active.
+        is_active,
+        set_is_active,
+        IsActive
+    );
+    widget_flag_accessors!(
+        /// In the focused path, starting from window and ending at the focused widget.
+        /// Descendants of the focused widget are not in the focused path.
+        has_focus_target,
+        set_has_focus_target,
+        HasFocusTarget
+    );
+
     pub(crate) fn new(
         id: WidgetId,
         widget_name: &'static str,
@@ -292,6 +504,8 @@ impl WidgetState {
     ) -> Self {
         Self {
             id,
+            flags: INITIAL_FLAGS
+                | (u64::from(options.disabled) * WidgetFlag::IsExplicitlyDisabled as u64),
 
             origin: Point::ORIGIN,
             end_point: Point::ORIGIN,
@@ -305,48 +519,12 @@ impl WidgetState {
             transform: options.transform,
             window_transform: Affine::IDENTITY,
             scroll_translation: Vec2::ZERO,
-            transform_changed: false,
 
             action_type,
-            accepts_pointer_interaction: true,
-            propagates_pointer_interaction: true,
-            accepts_focus: false,
-            accepts_text_input: false,
             ime_area: None,
 
-            is_new: true,
-            is_expecting_place_child_call: false,
-            request_layout: true,
-            needs_layout: true,
             measurement_cache: MeasurementCache::new(),
-            request_compose: true,
-            needs_compose: true,
-            request_pre_paint: true,
-            request_paint: true,
-            request_post_paint: true,
-            needs_paint: true,
-            paint_layer_mode: PaintLayerMode::Inline,
-            request_accessibility: true,
-            needs_accessibility: true,
-            request_anim: true,
-            needs_anim: true,
-            needs_update_disabled: true,
-            needs_update_stashed: true,
-            descendant_is_focusable: false,
-            needs_update_focusable: true,
-            request_update_props: false,
-            needs_update_props: false,
-            children_changed: true,
-
-            is_explicitly_disabled: options.disabled,
-            is_disabled: false,
-            is_explicitly_stashed: false,
-            is_stashed: false,
-            has_hovered: false,
-            is_hovered: false,
-            has_active: false,
-            is_active: false,
-            has_focus_target: false,
+            paint_layer_modes: [None; 3],
 
             property_stack_id,
             class_diff: ClassSetDiff::default(),
@@ -360,34 +538,28 @@ impl WidgetState {
         }
     }
 
+    /// Consumes the pending property update request.
+    pub(crate) const fn take_request_update_props(&mut self) -> bool {
+        let requested = self.request_update_props();
+        self.set_request_update_props(false);
+        requested
+    }
+
     /// Updates state to incorporate state changes from a child.
     ///
     /// This method is idempotent and can be called multiple times.
-    //
-    // TODO: though this method takes child state mutably, child state currently isn't actually
-    // mutated anymore. This method may start doing so again in the future, so keep taking &mut for
-    // now.
-    pub(crate) fn merge_up(&mut self, child_state: &mut Self) {
-        if child_state.needs_layout {
+    pub(crate) fn merge_up(&mut self, child_state: &Self) {
+        if child_state.needs_layout() {
             self.measurement_cache.clear();
         }
-        self.needs_layout |= child_state.needs_layout;
-        self.needs_compose |= child_state.needs_compose;
-        self.needs_paint |= child_state.needs_paint;
-        self.needs_anim |= child_state.needs_anim;
-        self.needs_accessibility |= child_state.needs_accessibility;
-        self.needs_update_disabled |= child_state.needs_update_disabled;
-        self.children_changed |= child_state.children_changed;
-        self.needs_update_focusable |= child_state.needs_update_focusable;
-        self.needs_update_stashed |= child_state.needs_update_stashed;
-        self.needs_update_props |= child_state.needs_update_props;
+        self.flags |= child_state.flags & PROPAGATED_FLAGS;
     }
 
     // TODO: Add WidgetState::add_diff method that merges a ClassSetDiff into the WidgetState's class_diff.
 
     /// Returns `true` if this widget or a descendant explicitly requested layout.
-    pub(crate) fn needs_layout(&self) -> bool {
-        self.needs_layout
+    pub(crate) const fn needs_layout(&self) -> bool {
+        self.flags & WidgetFlag::NeedsLayout as u64 != 0
     }
 
     /// Sets the flag for whether this widget or a descendant explicitly requested layout.
@@ -397,7 +569,8 @@ impl WidgetState {
         if needs_layout {
             self.measurement_cache.clear();
         }
-        self.needs_layout = needs_layout;
+        self.flags = (self.flags & !(WidgetFlag::NeedsLayout as u64))
+            | (u64::from(needs_layout) * WidgetFlag::NeedsLayout as u64);
     }
 
     /// Returns the widget's aligned content-box in the widget's border-box coordinate space.
@@ -425,7 +598,7 @@ impl WidgetState {
     ///
     /// Add this [`Vec2`] to translate from content-box to border-box,
     /// and subtract this [`Vec2`] to translate from border-box to content-box.
-    pub(crate) fn border_box_translation(&self) -> Vec2 {
+    pub(crate) const fn border_box_translation(&self) -> Vec2 {
         Vec2::new(self.border_box_insets.x0, self.border_box_insets.y0)
     }
 
@@ -442,7 +615,7 @@ impl WidgetState {
     }
 
     /// Returns the first baseline relative to the top of the widget's layout border-box.
-    pub(crate) fn layout_first_baseline(&self) -> f64 {
+    pub(crate) const fn layout_first_baseline(&self) -> f64 {
         if self.first_baseline.is_nan() {
             self.layout_border_box_size.height
         } else {
@@ -451,7 +624,7 @@ impl WidgetState {
     }
 
     /// Returns the last baseline relative to the top of the widget's layout border-box.
-    pub(crate) fn layout_last_baseline(&self) -> f64 {
+    pub(crate) const fn layout_last_baseline(&self) -> f64 {
         if self.last_baseline.is_nan() {
             self.layout_border_box_size.height
         } else {
@@ -484,7 +657,7 @@ impl WidgetState {
         // Note: this returns sensible values for a widget that is translated and/or rescaled.
         // Other transformations like rotation may produce weird IME areas.
         self.window_transform
-            .transform_rect_bbox(self.ime_area.unwrap_or(self.border_box()))
+            .transform_rect_bbox(self.ime_area.unwrap_or_else(|| self.border_box()))
     }
 
     /// Returns the result of intersecting the widget's clip path (if any) with the given rect.
@@ -493,25 +666,17 @@ impl WidgetState {
     ///
     /// Returns `None` if the given rect is clipped out.
     pub(crate) fn clip_child(&self, child_rect: Rect) -> Option<Rect> {
-        if let Some(clip_path) = self.clip_path {
+        self.clip_path.map_or(Some(child_rect), |clip_path| {
             let clip_path_global = self.window_transform.transform_rect_bbox(clip_path);
             if clip_path_global.overlaps(child_rect) {
                 Some(clip_path_global.intersect(child_rect))
             } else {
                 None
             }
-        } else {
-            Some(child_rect)
-        }
+        })
     }
 
-    pub(crate) fn needs_rewrite_passes(&self) -> bool {
-        self.needs_layout
-            || self.needs_compose
-            || self.needs_update_disabled
-            || self.needs_update_stashed
-            || self.needs_update_focusable
-            || self.children_changed
-            || self.needs_update_props
+    pub(crate) const fn needs_rewrite_passes(&self) -> bool {
+        self.flags & REWRITE_FLAGS != 0
     }
 }

@@ -5,6 +5,7 @@ use crate::layout::{LenDef, Length};
 
 /// Specifies how a widget dimension's length is derived.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[must_use = "Use the widget dimension."]
 pub enum Dim {
     /// Automatically determine a reasonable length with a strategy chosen by the container widget.
     ///
@@ -70,17 +71,13 @@ impl From<Length> for Dim {
 impl Dim {
     /// Resolves, if possible, into a [`LenDef`].
     ///
-    /// # Panics
-    ///
-    /// Panics if ratio resolves to a non-finite or negative value and debug assertions are enabled.
-    /// This can happen if the numbers are huge, e.g. a logical size of `f64::MAX` scaled by `1.5`.
-    pub fn resolve(&self, context_length: Option<Length>) -> Option<LenDef> {
+    /// An unavailable context length returns None for context-dependent dimensions.
+    /// A ratio that produces a non-finite or negative length falls back to `MaxContent`.
+    pub fn resolve(self, context_length: Option<Length>) -> Option<LenDef> {
         match self {
-            Self::Fixed(length) => Some(LenDef::Fixed(*length)),
-            Self::Ratio(mul) => context_length.map(|cl| match Length::try_px(cl.get() * *mul) {
-                Some(length) => LenDef::Fixed(length),
-                None => LenDef::MaxContent,
-            }),
+            Self::Fixed(length) => Some(LenDef::Fixed(length)),
+            Self::Ratio(mul) => context_length
+                .map(|cl| Length::try_px(cl.get() * mul).map_or(LenDef::MaxContent, LenDef::Fixed)),
             Self::Stretch => context_length.map(LenDef::Fixed),
             Self::MinContent => Some(LenDef::MinContent),
             Self::MaxContent => Some(LenDef::MaxContent),

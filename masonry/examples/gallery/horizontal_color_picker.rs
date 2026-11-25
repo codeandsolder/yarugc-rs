@@ -25,7 +25,7 @@ enum Component {
 impl Component {
     const ALL: [Self; 4] = [Self::R, Self::G, Self::B, Self::A];
 
-    fn update(self, color: &mut Color, value: f32) {
+    const fn update(self, color: &mut Color, value: f32) {
         color.components[match self {
             Self::R => 0,
             Self::G => 1,
@@ -34,7 +34,7 @@ impl Component {
         }] = value;
     }
 
-    fn get(self, color: &Color) -> f32 {
+    const fn get(self, color: &Color) -> f32 {
         color.components[match self {
             Self::R => 0,
             Self::G => 1,
@@ -43,7 +43,7 @@ impl Component {
         }]
     }
 
-    fn visual_color(self) -> Color {
+    const fn visual_color(self) -> Color {
         match self {
             Self::R => Color::from_rgb8(0xff, 0x00, 0x00),
             Self::G => Color::from_rgb8(0x00, 0xff, 0x00),
@@ -54,11 +54,11 @@ impl Component {
 }
 
 #[derive(PartialEq, Debug)]
-pub(crate) struct ColorSelected {
+pub(super) struct ColorSelected {
     pub color: Color,
 }
 
-pub(crate) struct HorizontalColorPicker {
+pub(super) struct HorizontalColorPicker {
     color: Color,
     widget: WidgetPod<Flex>,
     sliders: [(Component, WidgetId); 4],
@@ -66,11 +66,11 @@ pub(crate) struct HorizontalColorPicker {
 }
 
 impl HorizontalColorPicker {
-    pub(crate) fn new(color: Color) -> Self {
+    pub(super) fn new(color: Color) -> Self {
         let mut body = Flex::row().cross_axis_alignment(CrossAxisAlignment::Stretch);
 
         let sliders: [(Component, WidgetId); 4] = Component::ALL.map(|component| {
-            let widget = Slider::new(0., 1., component.get(&color) as f64)
+            let widget = Slider::new(0., 1., f64::from(component.get(&color)))
                 .prepare()
                 .with_props(TrackColor {
                     active: component.visual_color(),
@@ -84,7 +84,7 @@ impl HorizontalColorPicker {
         });
 
         let preview = SizedBox::empty()
-            .width(Length::const_px(20.0))
+            .width(masonry::layout::length!(20.0))
             .prepare()
             .with_props(Background::Color(color));
         let preview_id = preview.id();
@@ -92,24 +92,23 @@ impl HorizontalColorPicker {
 
         Self {
             color,
-            widget: body.prepare().to_pod(),
+            widget: body.prepare().into_pod(),
             sliders,
             preview_id,
         }
     }
 
     #[expect(dead_code, reason = "Currently unused, available for future use.")]
-    pub(crate) fn set_color(this: &mut WidgetMut<'_, Self>, color: Color) {
-        for (component, wid) in this.widget.sliders.iter() {
+    pub(super) fn set_color(this: &mut WidgetMut<'_, Self>, color: Color) {
+        for (component, wid) in &this.widget.sliders {
             let value = component.get(&color);
-            this.ctx.mutate_later(*wid, move |mut widget| {
-                if let Some(mut slider_widget) = widget.try_downcast::<Slider>() {
-                    Slider::set_value(&mut slider_widget, value as f64);
-                }
-            });
+            this.ctx
+                .mutate_later::<Slider>(*wid, move |mut slider_widget| {
+                    Slider::set_value(&mut slider_widget, f64::from(value));
+                });
         }
         this.ctx
-            .mutate_later(this.widget.preview_id, move |mut widget| {
+            .mutate_later::<dyn Widget>(this.widget.preview_id, move |mut widget| {
                 widget.insert_prop(Background::Color(color));
             });
     }
@@ -132,13 +131,7 @@ impl Widget for HorizontalColorPicker {
     ) -> Length {
         let auto_length = len_req.into();
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-        ctx.compute_length(
-            &mut self.widget,
-            auto_length,
-            context_size,
-            axis,
-            cross_length,
-        )
+        ctx.compute_length(&self.widget, auto_length, context_size, axis, cross_length)
     }
 
     fn on_action(
@@ -155,14 +148,14 @@ impl Widget for HorizontalColorPicker {
                 .find(|(_, wid)| source == *wid)
                 .map(|(comp, _)| *comp)
         {
-            #[allow(
+            #[expect(
                 clippy::cast_possible_truncation,
                 reason = "Value is in range of [0.0, 1.0]"
             )]
             component.update(&mut self.color, *value as f32);
             ctx.submit_action::<Self::Action>(ColorSelected { color: self.color });
             let color = self.color;
-            ctx.mutate_later(self.preview_id, move |mut widget| {
+            ctx.mutate_later::<dyn Widget>(self.preview_id, move |mut widget| {
                 widget.insert_prop(Background::Color(color));
             });
             ctx.set_handled();
@@ -170,9 +163,9 @@ impl Widget for HorizontalColorPicker {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let content_size = ctx.compute_size(&mut self.widget, SizeDef::fit(size), size.into());
-        ctx.run_layout(&mut self.widget, content_size);
-        ctx.place_child(&mut self.widget, Point::ORIGIN);
+        let content_size = ctx.compute_size(&self.widget, SizeDef::fit(size), size.into());
+        ctx.run_layout(&self.widget, content_size);
+        ctx.place_child(&self.widget, Point::ORIGIN);
         ctx.derive_baselines(&self.widget);
     }
 

@@ -35,6 +35,8 @@ pub enum Refresh {
 pub enum RefreshError {
     /// Texture extent is not supported.
     InvalidExtent,
+    /// The compositor and rendering target use different devices.
+    DifferentDevice,
     /// This flattened window cannot contain external placeholders.
     ExternalLayer,
     /// Failed to rasterize the scene.
@@ -45,6 +47,7 @@ impl std::fmt::Display for RefreshError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidExtent => f.write_str("invalid window texture extent"),
+            Self::DifferentDevice => f.write_str("window compositor uses a different device"),
             Self::ExternalLayer => f.write_str("external layers require host composition"),
             Self::Render(err) => err.fmt(f),
         }
@@ -99,7 +102,7 @@ impl CachedWindow {
     }
 
     /// Widget state and input API. Host events must use window-local coordinates.
-    pub fn root(&mut self) -> &mut RenderRoot {
+    pub const fn root(&mut self) -> &mut RenderRoot {
         &mut self.root
     }
 
@@ -109,7 +112,7 @@ impl CachedWindow {
     }
 
     /// Most recent successfully rendered surface, if any.
-    pub fn surface(&self) -> Option<&Surface> {
+    pub const fn surface(&self) -> Option<&Surface> {
         self.surface.as_ref()
     }
 
@@ -117,6 +120,9 @@ impl CachedWindow {
     ///
     /// The renderer and all GPU objects must belong to the compositor's host device.
     /// The host should deliver animation events separately.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid extent, mismatched device, external layer, or rendering failure.
     pub fn refresh(
         &mut self,
         compositor: &Compositor,
@@ -125,6 +131,9 @@ impl CachedWindow {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Result<Refresh, RefreshError> {
+        if compositor.device() != device {
+            return Err(RefreshError::DifferentDevice);
+        }
         let size = self.root.size();
         let extent = [size.width, size.height];
         if extent.contains(&0) {
@@ -132,7 +141,10 @@ impl CachedWindow {
             self.dirty.set(true);
             return Ok(Refresh::Hidden);
         }
-        let reallocated = self.surface.as_ref().is_none_or(|s| s.size() != extent);
+        let reallocated = self
+            .surface
+            .as_ref()
+            .is_none_or(|s| s.size() != extent || !s.belongs_to(device));
         if !self.dirty.get() && !reallocated {
             return Ok(Refresh::Unchanged);
         }
@@ -148,7 +160,9 @@ impl CachedWindow {
         let target = replacement
             .as_ref()
             .or(self.surface.as_ref())
-            .expect("surface allocated");
+            .ok_or(RefreshError::InvalidExtent)?;
+        // A failed redraw/render must remain retryable.
+        self.dirty.set(true);
         let (plan, accessibility) = self.root.redraw();
         if plan
             .layers

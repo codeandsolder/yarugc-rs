@@ -5,13 +5,6 @@
 
 // On Windows platform, don't show a console when opening the app.
 #![cfg_attr(not(test), windows_subsystem = "windows")]
-#![allow(
-    variant_size_differences,
-    clippy::single_match,
-    reason = "Don't matter for example code"
-)]
-
-use std::str::FromStr;
 
 use masonry::app::RenderRoot;
 use masonry::core::{
@@ -177,12 +170,13 @@ impl CalcState {
             CalcAction::None => (),
         }
 
-        render_root.edit_base_layer(|mut root| {
-            let mut grid = root.downcast();
-            let mut flex = Grid::get_mut(&mut grid, 0);
-            let mut flex = flex.downcast();
-            let mut label = Flex::get_mut(&mut flex, 1);
-            let mut label = label.downcast::<Label>();
+        let _ = render_root.edit_base_layer(|mut grid: masonry::core::WidgetMut<'_, Grid>| {
+            let Some(mut flex) = Grid::get_mut::<Flex>(&mut grid, 0) else {
+                return;
+            };
+            let Some(mut label) = Flex::get_mut::<Label>(&mut flex, 1) else {
+                return;
+            };
             Label::set_text(&mut label, &*self.value);
         });
     }
@@ -198,7 +192,9 @@ impl AppDriver for CalcState {
     ) {
         debug_assert_eq!(window_id, self.window_id, "unknown window");
 
-        self.ui_update(ctx.render_root(window_id), widget_id, action);
+        if let Some(render_root) = ctx.render_root(window_id) {
+            self.ui_update(render_root, widget_id, action);
+        }
     }
 }
 
@@ -239,6 +235,7 @@ const BTN_PLUS: WidgetTag<Button> = WidgetTag::named("btn-plus");
 const BTN_EQUALS: WidgetTag<Button> = WidgetTag::named("btn-equals");
 
 /// Build the widget tree
+/// Builds the calculator widget hierarchy.
 pub fn build_calc() -> NewWidget<impl Widget> {
     let display = Label::new(String::new()).with_style(StyleProperty::FontSize(32.));
     let display = Flex::column()
@@ -275,7 +272,7 @@ pub fn build_calc() -> NewWidget<impl Widget> {
 
     NewWidget::new(root_widget).with_props(
         PropertySet::new()
-            .with(Background::Color(AlphaColor::from_str("#794869").unwrap()))
+            .with(Background::Color(AlphaColor::from_rgb8(0x79, 0x48, 0x69)))
             .with(Padding::all(2.px()))
             .with(Gap::new(1.px())),
     )
@@ -321,7 +318,7 @@ fn custom_property_set() -> DefaultProperties {
     default_properties
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window_size = LogicalSize::new(223., 300.);
 
     let window_attributes = Window::default_attributes()
@@ -331,9 +328,7 @@ fn main() {
 
     let calc_state = CalcState::new();
 
-    let event_loop = masonry_winit::app::EventLoop::with_user_event()
-        .build()
-        .unwrap();
+    let event_loop = masonry_winit::app::EventLoop::with_user_event().build()?;
     masonry_winit::app::run_with(
         event_loop,
         vec![NewWindow::new_with_id(
@@ -343,8 +338,8 @@ fn main() {
         )],
         calc_state,
         custom_property_set(),
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }
 
 // --- MARK: TESTS
@@ -366,9 +361,11 @@ mod tests {
         assert_render_snapshot!(harness, "example_calc_masonry_initial");
 
         let mut click_and_assert = |harness: &mut TestHarness<_>, tag: WidgetTag<Button>| {
-            let button = harness.get_widget(tag);
+            let button = harness.get_widget(tag).unwrap();
             let id = button.id();
-            harness.mouse_click_on(id, Some(PointerButton::Primary));
+            harness
+                .mouse_click_on(id, Some(PointerButton::Primary))
+                .unwrap();
             state.ui_update(
                 harness.render_root(),
                 id,
@@ -377,7 +374,7 @@ mod tests {
                 }),
             );
             assert_eq!(
-                harness.pop_action::<ButtonPress>(),
+                harness.pop_action::<ButtonPress>().unwrap(),
                 Some((
                     ButtonPress {
                         button: Some(PointerButton::Primary),

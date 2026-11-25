@@ -10,12 +10,12 @@ use masonry::widgets::{Align, ChildAlignment, Flex, Grid, GridParams, Label, Siz
 
 use crate::demo::{CONTENT_GAP, DemoPage, ShellTags, wrap_in_shell};
 
-pub(crate) struct KitchenSinkDemo {
+pub(super) struct KitchenSinkDemo {
     shell: ShellTags,
 }
 
 impl KitchenSinkDemo {
-    pub(crate) fn new(shell: ShellTags) -> Self {
+    pub(super) const fn new(shell: ShellTags) -> Self {
         Self { shell }
     }
 }

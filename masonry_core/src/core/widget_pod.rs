@@ -12,6 +12,7 @@ use crate::core::{PropertySet, PropertyStackId, Widget, WidgetId, WidgetTag, Wid
 /// Generally, container widgets don't contain other widgets directly,
 /// but rather contain a `WidgetPod`, which has additional state needed
 /// for layout and for the widget to participate in event flow.
+#[must_use = "Register the widget pod in its parent."]
 pub struct WidgetPod<W: Widget + ?Sized> {
     id: WidgetId,
     inner: WidgetPodInner<W>,
@@ -26,6 +27,7 @@ pub struct WidgetPod<W: Widget + ?Sized> {
 /// `NewWidget` holds both the widget itself and additional metadata which will be stored
 /// alongside it once it's added to the tree.
 #[non_exhaustive]
+#[must_use = "Insert the configured widget into the tree."]
 pub struct NewWidget<W: ?Sized> {
     /// The widget we're going to add.
     pub widget: Box<W>,
@@ -78,7 +80,7 @@ impl<W: Widget + ?Sized> std::fmt::Debug for NewWidget<W> {
 
 // TODO - Remove this and merge it into NewWidget?
 /// The options a new widget will be created with.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone, Copy)]
 pub struct WidgetOptions {
     /// Local transform used during the mapping of this widget's border-box coordinate space
     /// to the parent's border-box coordinate space.
@@ -104,7 +106,6 @@ impl<W: Widget> NewWidget<W> {
     /// Creates a new widget.
     ///
     /// You can also get the same result with [`Widget::prepare()`].
-    #[inline(always)]
     pub fn new(inner: W) -> Self {
         Self {
             widget: Box::new(inner),
@@ -143,13 +144,13 @@ impl<W: Widget + ?Sized> NewWidget<W> {
     ///
     /// You can only add one widget with a given tag to the entire widget tree.
     /// Trying to add another widget with the same tag will debug-panic or fail silently.
-    pub fn with_tag(mut self, tag: WidgetTag<W>) -> Self {
+    pub const fn with_tag(mut self, tag: WidgetTag<W>) -> Self {
         self.tag = Some(tag.inner);
         self
     }
 
     /// Assigns the given erased [`WidgetTag`] to this widget.
-    pub fn with_erased_tag(mut self, tag: WidgetTag<dyn Widget>) -> Self {
+    pub const fn with_erased_tag(mut self, tag: WidgetTag<dyn Widget>) -> Self {
         self.tag = Some(tag.inner);
         self
     }
@@ -173,13 +174,13 @@ impl<W: Widget + ?Sized> NewWidget<W> {
     }
 
     /// Sets the [`Affine`] transform for this widget.
-    pub fn with_transform(mut self, transform: Affine) -> Self {
+    pub const fn with_transform(mut self, transform: Affine) -> Self {
         self.options.transform = transform;
         self
     }
 
     /// Assigns a [`PropertyStack`](crate::core::PropertyStack) to this widget.
-    pub fn with_property_stack(mut self, id: PropertyStackId) -> Self {
+    pub const fn with_property_stack(mut self, id: PropertyStackId) -> Self {
         self.property_stack_id = Some(id);
         self
     }
@@ -203,13 +204,13 @@ impl<W: Widget + ?Sized> NewWidget<W> {
     /// Set whether the widget will be created in a [disabled] state.
     ///
     /// [disabled]: crate::doc::masonry_concepts#disabled
-    pub fn disabled(mut self, disabled: bool) -> Self {
+    pub const fn disabled(mut self, disabled: bool) -> Self {
         self.options.disabled = disabled;
         self
     }
 
     /// Creates a `WidgetPod` which will be added to the widget tree.
-    pub fn to_pod(self) -> WidgetPod<W> {
+    pub fn into_pod(self) -> WidgetPod<W> {
         WidgetPod {
             id: self.id,
             inner: WidgetPodInner::Create(Box::new(self)),
@@ -217,7 +218,8 @@ impl<W: Widget + ?Sized> NewWidget<W> {
     }
 
     /// Returns the id of the widget.
-    pub fn id(&self) -> WidgetId {
+    #[must_use = "Use the widget identifier."]
+    pub const fn id(&self) -> WidgetId {
         self.id
     }
 }
@@ -226,12 +228,12 @@ impl<W: Widget> WidgetPod<W> {
     // FIXME - Remove
     /// Creates a new widget pod.
     pub fn new(inner: W) -> Self {
-        NewWidget::new(inner).to_pod()
+        NewWidget::new(inner).into_pod()
     }
 }
 
 impl<W: Widget + ?Sized> WidgetPod<W> {
-    pub(crate) fn incomplete(&self) -> bool {
+    pub(crate) const fn incomplete(&self) -> bool {
         matches!(self.inner, WidgetPodInner::Create(_))
     }
 
@@ -243,7 +245,8 @@ impl<W: Widget + ?Sized> WidgetPod<W> {
     }
 
     /// Returns the id of the widget.
-    pub fn id(&self) -> WidgetId {
+    #[must_use = "Use the widget identifier."]
+    pub const fn id(&self) -> WidgetId {
         self.id
     }
 }

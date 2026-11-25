@@ -26,7 +26,7 @@ use crate::widgets::Label;
 ///
 /// 3 logical pixels is great for mouse and trackpad,
 /// but a larger value should be used for touch.
-const SLIDE_INACTIVE_LENGTH: Length = Length::const_px(3.);
+const SLIDE_INACTIVE_LENGTH: Length = crate::layout::length!(3.);
 
 // We have three gears with increasing ratios.
 const GEAR_1_RATIO: f64 = 1.;
@@ -40,7 +40,7 @@ const GEAR_2_END: f64 = 200.; // 100px .. 200px
 
 // Calculate total steps at the end of the lower gears
 const GEAR_1_END_STEPS: f64 = GEAR_1_RATIO * GEAR_1_END;
-const GEAR_2_END_STEPS: f64 = GEAR_2_RATIO * (GEAR_2_END - GEAR_1_END) + GEAR_1_END_STEPS;
+const GEAR_2_END_STEPS: f64 = GEAR_2_RATIO.mul_add(GEAR_2_END - GEAR_1_END, GEAR_1_END_STEPS);
 
 /// Defines how many ticks there are per a single step.
 ///
@@ -126,9 +126,7 @@ pub struct StepInput<T> {
     /// The pointer position where ticks were last updated.
     slide_last: Option<Point>,
     /// Whether slower slide mode is enabled.
-    slide_slower: bool,
-    /// Whether faster slide mode is enabled.
-    slide_faster: bool,
+    gearing: SlideGearing,
 
     /// When hovered, `true` means the backward side and `false` the forward side.
     hover_backward: bool,
@@ -139,8 +137,60 @@ pub struct StepInput<T> {
     label_x_end: f64,
 }
 
+#[derive(Default)]
+struct SlideGearing {
+    slower: bool,
+    faster: bool,
+}
+
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "Floating-point step and pointer math necessarily rounds large tick counts"
+)]
+const fn ticks_as_float(ticks: i64) -> f64 {
+    ticks as f64
+}
+
+#[expect(
+    clippy::cast_sign_loss,
+    reason = "The saturating conversion follows a positive count check"
+)]
+fn nonnegative_steps(value: f64) -> u64 {
+    if value.is_nan() || value <= 0. {
+        0
+    } else {
+        value.ceil() as u64
+    }
+}
+
+#[expect(
+    clippy::cast_sign_loss,
+    reason = "Decimal precision is bounded to a nonnegative finite range"
+)]
+fn decimal_precision(step: f64) -> usize {
+    if step.is_finite() && step > 0. && step < 1. {
+        (-step.log10().floor()).clamp(0., 324.) as usize
+    } else {
+        0
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SpeedLineGeometry {
+    size: Size,
+    speed: f64,
+    arrow_width: f64,
+    arrow_height: f64,
+    arrow_edge_pad: f64,
+    arrow_offset_active: f64,
+    arrow_base_x: f64,
+    extra_y_pad: f64,
+    backward: bool,
+    color: crate::peniko::Color,
+}
+
 /// The [`StepInput`] context.
-#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd)]
 pub struct StepState<T> {
     /// The currently active value.
     pub value: T,
@@ -169,6 +219,7 @@ pub trait Steppable: Debug + Copy + Clone + PartialEq + PartialOrd + Send + Sync
     /// If `snap` is present then the returned value should be snapped to it.
     /// Which is to say, `result % snap` should be zero. With the exception
     /// of min/max boundaries of the data type being reached.
+    #[must_use = "Use the configured value."]
     fn add_steps(&self, step: Self, count: i64, snap: Option<Self>) -> Self;
 
     /// Returns the number of steps required to reach `target` from `self`.
@@ -225,6 +276,15 @@ macro_rules! saturating_sub_unsigned {
     };
 }
 
+macro_rules! unsigned_step {
+    ($step:expr, i) => {
+        $step.cast_unsigned()
+    };
+    ($step:expr, u) => {
+        $step
+    };
+}
+
 /// Implement `Steppable` for integer types.
 ///
 /// * `$t` == type on which to implement `Steppable` for
@@ -234,21 +294,19 @@ macro_rules! impl_steppable_int {
     ($(($t:ty, $u:ty, $s:tt)),+) => {
         $(
             impl Steppable for $t {
-                #[allow(trivial_numeric_casts, reason = "it's not always trivial")]
                 fn add_steps(&self, step: Self, count: i64, snap: Option<Self>) -> Self {
                     // Add the steps
                     // * Use unsigned delta so we can go from signed::MIN -> signed::MAX
                     // * Clamp count to the maximum unsigned value to avoid incorrect truncation
-                    const MAX: u64 = <$u>::MAX as u64;
+                    let magnitude = <$u>::try_from(count.unsigned_abs()).unwrap_or(<$u>::MAX);
+                    let delta = unsigned_step!(step, $s).checked_mul(magnitude);
                     let mut value = if count < 0 {
-                        let count = count.unsigned_abs().min(MAX) as $u;
-                        match (step as $u).checked_mul(count) {
+                        match delta {
                             Some(delta) => saturating_sub_unsigned!(self, delta, $s),
                             None => Self::MIN,
                         }
                     } else {
-                        let count = (count as u64).min(MAX) as $u;
-                        match (step as $u).checked_mul(count) {
+                        match delta {
                             Some(delta) => saturating_add_unsigned!(self, delta, $s),
                             None => Self::MAX,
                         }
@@ -275,13 +333,10 @@ macro_rules! impl_steppable_int {
                     value
                 }
 
-                #[allow(trivial_numeric_casts, reason = "it's not always trivial")]
                 fn steps_to(&self, target: Self, step: Self) -> u64 {
-                    let step = step as $u;
                     let delta = self.abs_diff(target);
-                    let steps = delta / step;
-                    let steps = if delta % step > 0 { steps + 1 } else { steps };
-                    steps as u64
+                    let steps = delta.div_ceil(unsigned_step!(step, $s));
+                    u64::try_from(steps).unwrap_or(u64::MAX)
                 }
 
                 fn min_step() -> Self {
@@ -309,19 +364,29 @@ impl_steppable_int!(
     (usize, usize, u)
 );
 
+// Keep the separately rounded step displacement: it preserves exact cancellation
+// for UI steps such as 1_000_000 * 0.0001 added to -100. A fused operation exposes
+// the binary representation error at the zero crossing.
+#[expect(
+    clippy::suboptimal_flops,
+    reason = "The step displacement is intentionally rounded before adding to the base"
+)]
+fn add_float_steps(base: f64, step: f64, count: i64) -> f64 {
+    base + step * ticks_as_float(count)
+}
+
 /// Implement `Steppable` for float types.
 ///
 /// * `$t` == type on which to implement `Steppable` for
 macro_rules! impl_steppable_float {
-    ($($t:ty),+) => {
+    ($(($t:ty, $widen:path, $narrow:path)),+) => {
         $(
             impl Steppable for $t {
-                #[allow(trivial_numeric_casts, reason = "it's not always trivial")]
                 fn add_steps(&self, step: Self, count: i64, snap: Option<Self>) -> Self {
                     // Add the steps
                     // * Do the math in f64 for more precision in case numbers are bit-heavy
                     // * Casting to small float is ok, overflow won't truncate and will be infinite.
-                    let mut value = (*self as f64 + step as f64 * count as f64) as $t;
+                    let mut value = $narrow(add_float_steps($widen(*self), $widen(step), count));
                     // Potential snapping
                     if let Some(snap) = snap {
                         value = (value / snap).round() * snap;
@@ -330,11 +395,10 @@ macro_rules! impl_steppable_float {
                     value
                 }
 
-                #[allow(trivial_numeric_casts, reason = "it's not always trivial")]
                 fn steps_to(&self, target: Self, step: Self) -> u64 {
-                    let delta = target as f64 - *self as f64;
-                    let steps = delta / step as f64;
-                    steps.ceil() as u64
+                    let delta = $widen(target) - $widen(*self);
+                    let steps = delta / $widen(step);
+                    nonnegative_steps(steps)
                 }
 
                 fn min_step() -> Self {
@@ -342,14 +406,7 @@ macro_rules! impl_steppable_float {
                 }
 
                 fn display(&self, step: Self, _min: Self, _max: Self) -> String {
-                    let precision = if step < 1. {
-                        // 0.XXX => 1
-                        // 0.0XX => 2
-                        // 0.00X => 3
-                        (-step.log10().floor()) as usize
-                    } else {
-                        0
-                    };
+                    let precision = decimal_precision($widen(step));
                     format!("{self:.0$}", precision)
                 }
             }
@@ -357,7 +414,14 @@ macro_rules! impl_steppable_float {
     };
 }
 
-impl_steppable_float!(f32, f64);
+const fn narrow_step_float(value: f64) -> f32 {
+    value as f32
+}
+
+impl_steppable_float!(
+    (f32, f64::from, narrow_step_float),
+    (f64, std::convert::identity, std::convert::identity)
+);
 
 // --- MARK: BUILDERS
 impl<T: Steppable> StepInput<T> {
@@ -415,8 +479,7 @@ impl<T: Steppable> StepInput<T> {
             display: None,
             drag_start: None,
             slide_last: None,
-            slide_slower: false,
-            slide_faster: false,
+            gearing: SlideGearing::default(),
             hover_backward: false,
             label_x_start: 0.,
             label_x_end: 0.,
@@ -437,6 +500,7 @@ impl<T: Steppable> StepInput<T> {
     /// # Panics
     ///
     /// Panics if `snap` is zero or less and debug assertions are enabled.
+    #[must_use = "Use the configured value."]
     pub fn with_snap(mut self, snap: T) -> Self {
         if snap >= T::min_step() {
             self.snap = Some(snap);
@@ -451,7 +515,8 @@ impl<T: Steppable> StepInput<T> {
     /// Wrap determines whether the values should form an infinite circle,
     /// where increasing above `max` results in `min` and
     /// decreasing below `min` results in `max`.
-    pub fn with_wrap(mut self, wrap: bool) -> Self {
+    #[must_use = "Use the configured value."]
+    pub const fn with_wrap(mut self, wrap: bool) -> Self {
         self.wrap = wrap;
         self
     }
@@ -464,6 +529,7 @@ impl<T: Steppable> StepInput<T> {
     /// This is useful for showing units (1 ft, 2 GB) or for doing visual-only rounding, etc.
     ///
     /// [`StepState`]: StepState
+    #[must_use = "Use the configured value."]
     pub fn with_display<F>(mut self, display: F) -> Self
     where
         F: Fn(StepState<T>) -> String + 'static,
@@ -566,7 +632,7 @@ impl<T: Steppable> StepInput<T> {
     /// Wrap determines whether the values should form an infinite circle,
     /// where increasing above `max` results in `min` and
     /// decreasing below `min` results in `max`.
-    pub fn set_wrap(this: &mut WidgetMut<'_, Self>, wrap: bool) {
+    pub const fn set_wrap(this: &mut WidgetMut<'_, Self>, wrap: bool) {
         this.widget.wrap = wrap;
     }
 
@@ -596,19 +662,118 @@ impl<T: Steppable> StepInput<T> {
 
 // --- MARK: METHODS
 impl<T: Steppable> StepInput<T> {
+    fn handle_pointer_move(&mut self, ctx: &mut EventCtx<'_>, pu: &crate::core::PointerUpdate) {
+        // If we're hovered, highlight the correct side's button.
+        if ctx.is_hovered() {
+            let content_box_center_x = ctx.content_box().center().x;
+            let local_x = ctx.local_position(pu.current.position).x;
+            let hover_backward = local_x <= content_box_center_x;
+            if hover_backward != self.hover_backward {
+                self.hover_backward = hover_backward;
+                ctx.request_paint_only();
+            }
+        }
+
+        // Unless a drag is in progress we can return early.
+        let Some(drag_start) = self.drag_start else {
+            return;
+        };
+
+        // We do slide math in logical pixels, because we don't want
+        // the scale factor (i.e. high DPI screens) to affect the speed.
+        let pos = pu.current.logical_point();
+        let distance = (pos - drag_start).x;
+
+        // Determine the movement delta since the last slide update.
+        let distance_last = if let Some(slide_last) = self.slide_last {
+            (slide_last - drag_start).x
+        } else {
+            // We don't start the slide with just any pointer drag,
+            // as shaky hands or trackpad use will cause minor inadvertent drag.
+            if distance.abs() - SLIDE_INACTIVE_LENGTH.get() <= 0. {
+                // Not enough drag to start a slide
+                return;
+            }
+            // We're starting the slide now with a slight jump.
+            0.
+        };
+
+        // Calculate the steps delta that this latest movement results in.
+        let (steps, drift) = Self::steps(distance);
+        let (steps_last, _) = Self::steps(distance_last);
+        let steps_delta = steps.saturating_sub(steps_last);
+
+        let mut ticks_per_step = TICKS_PER_STEP;
+
+        // Modifier based gearing adjusts the ticks per step.
+        self.gearing.faster = pu.current.modifiers.shift();
+        self.gearing.slower = pu.current.modifiers.alt();
+        if self.gearing.faster {
+            ticks_per_step *= 10;
+        }
+        if self.gearing.slower {
+            ticks_per_step /= 10;
+        }
+
+        // Calculate the final ticks delta.
+        let ticks_delta = steps_delta.saturating_mul(ticks_per_step);
+
+        // Pointer move delta can be very granular and we don't want to lose any of it.
+        // We also do rounding in steps calculation and need to account for that.
+        // So we save the last update position precisely based on what we actually used.
+        self.slide_last = Some(Point::new(pos.x - drift, pos.y));
+
+        // Snap based on modifier
+        let snap = if cfg!(target_os = "macos") {
+            pu.current.modifiers.meta()
+        } else {
+            pu.current.modifiers.ctrl()
+        };
+
+        // Update the ticks based on the calculated ticks delta.
+        let (ticks_unused, value_changed, hit_bounds) = self.update_ticks(ticks_delta, snap);
+
+        // We calculate unused steps with f64 because unused ticks may not divide nicely.
+        let steps_unused = ticks_as_float(ticks_unused) / ticks_as_float(ticks_per_step);
+        // Used distance here means accounted for, i.e. split between steps and drift.
+        let distance_used = Self::distance(ticks_as_float(steps) - steps_unused) + drift;
+        let distance_unused = distance - distance_used;
+
+        if hit_bounds {
+            // Once we reach a min/max edge and there is no wrap,
+            // we need to start shifting the drag_start position towards the pointer.
+            // So that when changing direction we won't be stuck in high gear.
+            self.drag_start = Some(Point::new(drag_start.x + distance_unused, drag_start.y));
+        } else {
+            // Otherwise account for the unused distance in the slide.
+            if let Some(slide_last) = self.slide_last.as_mut() {
+                slide_last.x -= distance_unused;
+            }
+        }
+
+        // If the value was changed, we need to handle it
+        if value_changed {
+            self.handle_updated_value::<Step<T>>(ctx);
+        }
+
+        // Always request paint during slide to update the visual speed indicator.
+        ctx.request_paint_only();
+    }
+
     /// Returns the string representation of the given `value`.
     fn display_value(&self, value: T) -> String {
-        if let Some(display) = self.display.as_deref() {
-            let state = StepState {
-                value,
-                step: self.step,
-                min: self.min,
-                max: self.max,
-            };
-            display(state)
-        } else {
-            value.display(self.step, self.min, self.max)
-        }
+        self.display.as_deref().map_or_else(
+            || value.display(self.step, self.min, self.max),
+            |display| {
+                let state = StepState {
+                    value,
+                    step: self.step,
+                    min: self.min,
+                    max: self.max,
+                };
+                display(state)
+            },
+        )
     }
 
     /// Updates the label with the new value and emits a [`Step`] action.
@@ -649,8 +814,8 @@ impl<T: Steppable> StepInput<T> {
     /// Returns the `steps` as positive ticks.
     fn steps_to_positive_ticks(steps: u64) -> i64 {
         steps
-            .saturating_mul(TICKS_PER_STEP as u64)
-            .min(i64::MAX as u64)
+            .saturating_mul(TICKS_PER_STEP.cast_unsigned())
+            .min(i64::MAX.cast_unsigned())
             .cast_signed()
     }
 
@@ -658,14 +823,13 @@ impl<T: Steppable> StepInput<T> {
     fn steps_to_negative_ticks(steps: u64) -> i64 {
         steps
             .checked_mul(TICKS_PER_STEP as u64)
-            .map(|t| {
-                if t >= i64::MIN as u64 {
+            .map_or(i64::MIN, |t| {
+                if t >= i64::MIN.cast_unsigned() {
                     i64::MIN
                 } else {
                     t.wrapping_neg().cast_signed()
                 }
             })
-            .unwrap_or(i64::MIN)
     }
 
     /// Calculates `min_ticks`/`max_ticks` for reaching `min`/`max` from `base` with `step`.
@@ -776,12 +940,10 @@ impl<T: Steppable> StepInput<T> {
     /// Otherwise the value will be rebased at the wrapping boundary
     /// and ticks will be relative to that new base.
     fn update_ticks(&mut self, delta: i64, snap: bool) -> (i64, bool, bool) {
+        const WRAP_COST: u64 = TICKS_PER_STEP.cast_unsigned();
         if delta == 0 {
             return (0, false, false);
         }
-
-        // Wrapping costs a full step
-        const WRAP_COST: u64 = TICKS_PER_STEP as u64;
 
         let dpos = delta.is_positive();
 
@@ -791,16 +953,16 @@ impl<T: Steppable> StepInput<T> {
         loop {
             // Calculate free space before tick bounds
             let space = if dpos {
-                (self.max_ticks as u64).wrapping_sub(new_ticks as u64)
+                (self.max_ticks.cast_unsigned()).wrapping_sub(new_ticks.cast_unsigned())
             } else {
-                (new_ticks as u64).wrapping_sub(self.min_ticks as u64)
+                (new_ticks.cast_unsigned()).wrapping_sub(self.min_ticks.cast_unsigned())
             };
             // If unused delta fits in the space, just use it all
             if unused_delta <= space {
                 new_ticks = if dpos {
-                    (new_ticks as u64).wrapping_add(unused_delta)
+                    (new_ticks.cast_unsigned()).wrapping_add(unused_delta)
                 } else {
-                    (new_ticks as u64).wrapping_sub(unused_delta)
+                    (new_ticks.cast_unsigned()).wrapping_sub(unused_delta)
                 }
                 .cast_signed();
                 unused_delta = 0;
@@ -815,6 +977,16 @@ impl<T: Steppable> StepInput<T> {
                 self.calculate_tick_bounds();
                 new_ticks = 0;
                 unused_delta -= WRAP_COST;
+                // After rebasing, every complete cycle returns to this same base.
+                // Skip whole cycles instead of iterating once per wrap.
+                let span = if dpos {
+                    self.max_ticks.unsigned_abs()
+                } else {
+                    self.min_ticks.unsigned_abs()
+                };
+                if let Some(cycle) = span.checked_add(WRAP_COST) {
+                    unused_delta %= cycle;
+                }
             } else {
                 break;
             }
@@ -841,7 +1013,7 @@ impl<T: Steppable> StepInput<T> {
         // Keep the ticks at the actual snapped value
         if snap {
             self.sync_ticks_to_value();
-            unused_delta += new_ticks - self.ticks;
+            unused_delta = unused_delta.saturating_add(new_ticks.saturating_sub(self.ticks));
         }
 
         (unused_delta, changed_value, hit_bounds)
@@ -850,7 +1022,7 @@ impl<T: Steppable> StepInput<T> {
     /// Increments ticks by one step's worth.
     ///
     /// Returns `true` if the active value changed.
-    #[inline(always)]
+    #[inline]
     fn next_step(&mut self) -> bool {
         self.update_ticks(TICKS_PER_STEP, false).1
     }
@@ -858,7 +1030,7 @@ impl<T: Steppable> StepInput<T> {
     /// Decrements ticks by one step's worth.
     ///
     /// Returns `true` if the active value changed.
-    #[inline(always)]
+    #[inline]
     fn prev_step(&mut self) -> bool {
         self.update_ticks(TICKS_PER_STEP.wrapping_neg(), false).1
     }
@@ -889,10 +1061,10 @@ impl<T: Steppable> StepInput<T> {
         }
 
         let mut speed = (distance / GEAR_2_END).clamp(0., 1.) * 0.8;
-        if !self.slide_slower {
+        if !self.gearing.slower {
             speed += 0.1;
         }
-        if self.slide_faster {
+        if self.gearing.faster {
             speed += 0.1;
         }
         (speed, direction > 0., direction < 0.)
@@ -924,7 +1096,7 @@ impl<T: Steppable> StepInput<T> {
             (GEAR_2_END, GEAR_2_END_STEPS, GEAR_3_RATIO)
         };
 
-        let steps_raw = base_steps + (distance - start_distance) * ratio;
+        let steps_raw = (distance - start_distance).mul_add(ratio, base_steps);
         let steps = steps_raw.round();
         let drift = (steps_raw - steps) * ratio.recip();
 
@@ -956,7 +1128,7 @@ impl<T: Steppable> StepInput<T> {
 }
 
 /// The latest active value of [`StepInput`].
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Step<T> {
     /// Currently active value.
     pub value: T,
@@ -1013,20 +1185,20 @@ impl<T: Steppable> Widget for StepInput<T> {
                     // Update slide modifier so the visuals can change without pointer movement.
                     Key::Named(NamedKey::Shift) => {
                         let slide_faster = ke.state.is_down();
-                        if slide_faster != self.slide_faster {
-                            self.slide_faster = slide_faster;
+                        if slide_faster != self.gearing.faster {
+                            self.gearing.faster = slide_faster;
                             ctx.request_paint_only();
                         }
                     }
                     // Update slide modifier so the visuals can change without pointer movement.
                     Key::Named(NamedKey::Alt) => {
                         let slide_slower = ke.state.is_down();
-                        if slide_slower != self.slide_slower {
-                            self.slide_slower = slide_slower;
+                        if slide_slower != self.gearing.slower {
+                            self.gearing.slower = slide_slower;
                             ctx.request_paint_only();
                         }
                     }
-                    Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::ArrowDown) => {
+                    Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowDown) => {
                         if ke.state.is_down() {
                             value_changed = if snap {
                                 self.prev_snap()
@@ -1035,7 +1207,7 @@ impl<T: Steppable> Widget for StepInput<T> {
                             }
                         }
                     }
-                    Key::Named(NamedKey::ArrowRight) | Key::Named(NamedKey::ArrowUp) => {
+                    Key::Named(NamedKey::ArrowRight | NamedKey::ArrowUp) => {
                         if ke.state.is_down() {
                             value_changed = if snap {
                                 self.next_snap()
@@ -1104,103 +1276,7 @@ impl<T: Steppable> Widget for StepInput<T> {
                 //       https://github.com/linebender/xilem/issues/850
             }
             PointerEvent::Move(pu) => {
-                // If we're hovered, highlight the correct side's button.
-                if ctx.is_hovered() {
-                    let content_box_center_x = ctx.content_box().center().x;
-                    let local_x = ctx.local_position(pu.current.position).x;
-                    let hover_backward = local_x <= content_box_center_x;
-                    if hover_backward != self.hover_backward {
-                        self.hover_backward = hover_backward;
-                        ctx.request_paint_only();
-                    }
-                }
-
-                // Unless a drag is in progress we can return early.
-                let Some(drag_start) = self.drag_start else {
-                    return;
-                };
-
-                // We do slide math in logical pixels, because we don't want
-                // the scale factor (i.e. high DPI screens) to affect the speed.
-                let pos = pu.current.logical_point();
-                let distance = (pos - drag_start).x;
-
-                // Determine the movement delta since the last slide update.
-                let distance_last = if let Some(slide_last) = self.slide_last {
-                    (slide_last - drag_start).x
-                } else {
-                    // We don't start the slide with just any pointer drag,
-                    // as shaky hands or trackpad use will cause minor inadvertent drag.
-                    if distance.abs() - SLIDE_INACTIVE_LENGTH.get() <= 0. {
-                        // Not enough drag to start a slide
-                        return;
-                    }
-                    // We're starting the slide now with a slight jump.
-                    0.
-                };
-
-                // Calculate the steps delta that this latest movement results in.
-                let (steps, drift) = Self::steps(distance);
-                let (steps_last, _) = Self::steps(distance_last);
-                let steps_delta = steps - steps_last;
-
-                let mut ticks_per_step = TICKS_PER_STEP;
-
-                // Modifier based gearing adjusts the ticks per step.
-                self.slide_faster = pu.current.modifiers.shift();
-                self.slide_slower = pu.current.modifiers.alt();
-                if self.slide_faster {
-                    ticks_per_step *= 10;
-                }
-                if self.slide_slower {
-                    ticks_per_step /= 10;
-                }
-
-                // Calculate the final ticks delta.
-                let ticks_delta = steps_delta * ticks_per_step;
-
-                // Pointer move delta can be very granular and we don't want to lose any of it.
-                // We also do rounding in steps calculation and need to account for that.
-                // So we save the last update position precisely based on what we actually used.
-                self.slide_last = Some(Point::new(pos.x - drift, pos.y));
-
-                // Snap based on modifier
-                let snap = if cfg!(target_os = "macos") {
-                    pu.current.modifiers.meta()
-                } else {
-                    pu.current.modifiers.ctrl()
-                };
-
-                // Update the ticks based on the calculated ticks delta.
-                let (ticks_unused, value_changed, hit_bounds) =
-                    self.update_ticks(ticks_delta, snap);
-
-                // We calculate unused steps with f64 because unused ticks may not divide nicely.
-                let steps_unused = ticks_unused as f64 / ticks_per_step as f64;
-                // Used distance here means accounted for, i.e. split between steps and drift.
-                let distance_used = Self::distance(steps as f64 - steps_unused) + drift;
-                let distance_unused = distance - distance_used;
-
-                if hit_bounds {
-                    // Once we reach a min/max edge and there is no wrap,
-                    // we need to start shifting the drag_start position towards the pointer.
-                    // So that when changing direction we won't be stuck in high gear.
-                    self.drag_start =
-                        Some(Point::new(drag_start.x + distance_unused, drag_start.y));
-                } else {
-                    // Otherwise account for the unused distance in the slide.
-                    if let Some(slide_last) = self.slide_last.as_mut() {
-                        slide_last.x -= distance_unused;
-                    }
-                }
-
-                // If the value was changed, we need to handle it
-                if value_changed {
-                    self.handle_updated_value::<Self::Action>(ctx);
-                }
-
-                // Always request paint during slide to update the visual speed indicator.
-                ctx.request_paint_only();
+                self.handle_pointer_move(ctx, pu);
             }
             PointerEvent::Cancel(_pi) => {
                 self.slide_last = None;
@@ -1269,13 +1345,14 @@ impl<T: Steppable> Widget for StepInput<T> {
 
         // TODO: Find more elegant way to propagate property to child.
         if ContentColor::matches(property_type) {
-            ctx.mutate_self_later(|mut this| {
-                let mut this = this.downcast::<Self>();
+            ctx.mutate_self_later::<Self>(|mut this| {
                 let prop = *this.get_prop::<ContentColor>();
                 let Some(label) = this.widget.label.as_mut() else {
                     return;
                 };
-                let mut label = this.ctx.get_mut(label);
+                let Some(mut label) = this.ctx.get_mut::<Label>(label.id()) else {
+                    return;
+                };
                 label.insert_prop(prop);
             });
         }
@@ -1292,7 +1369,7 @@ impl<T: Steppable> Widget for StepInput<T> {
                     Label::new(display_value)
                         .prepare()
                         .with_props(*color)
-                        .to_pod(),
+                        .into_pod(),
                 );
                 ctx.children_changed();
             }
@@ -1324,10 +1401,10 @@ impl<T: Steppable> Widget for StepInput<T> {
         let style = props.get::<StepInputStyle>(cache);
 
         let (len_req, min_result) = match len_req {
-            LenReq::MinContent | LenReq::MaxContent => (len_req, Length::ZERO),
+            LenReq::Min | LenReq::Max => (len_req, Length::ZERO),
             // We always want to use up all offered space but may need even more,
             // so we implement FitContent as space.max(MinContent).
-            LenReq::FitContent(space) => (LenReq::MinContent, space),
+            LenReq::Fit(space) => (LenReq::Min, space),
         };
 
         let calc_button_length = |axis| match axis {
@@ -1337,9 +1414,9 @@ impl<T: Steppable> Widget for StepInput<T> {
                     let (btn_length, btn_edge_pad) =
                         Self::basic_button_length(vertical_space.get(), None);
                     match len_req {
-                        LenReq::MinContent => 2. * (btn_length + 2. * btn_edge_pad),
-                        LenReq::MaxContent => 2. * (btn_length * 3.),
-                        LenReq::FitContent(_) => unreachable!(),
+                        LenReq::Min => 2. * 2.0_f64.mul_add(btn_edge_pad, btn_length),
+                        LenReq::Max => 2. * (btn_length * 3.),
+                        LenReq::Fit(_) => unreachable!(),
                     }
                 }
                 StepInputStyle::Flow => {
@@ -1347,9 +1424,9 @@ impl<T: Steppable> Widget for StepInput<T> {
                     let (arrow_width, _, arrow_edge_pad) =
                         Self::flow_button_length(vertical_space.get(), None);
                     match len_req {
-                        LenReq::MinContent => 2. * (2. * arrow_width + arrow_edge_pad),
-                        LenReq::MaxContent => 2. * (4. * arrow_width + arrow_edge_pad),
-                        LenReq::FitContent(_) => unreachable!(),
+                        LenReq::Min => 2. * 2.0_f64.mul_add(arrow_width, arrow_edge_pad),
+                        LenReq::Max => 2. * 4.0_f64.mul_add(arrow_width, arrow_edge_pad),
+                        LenReq::Fit(_) => unreachable!(),
                     }
                 }
             }
@@ -1370,11 +1447,9 @@ impl<T: Steppable> Widget for StepInput<T> {
                 .map(|cross_length| cross_length.saturating_sub(calc_button_length(cross))),
             Axis::Vertical => cross_length,
         };
-        let label_length = if let Some(label) = self.label.as_mut() {
+        let label_length = self.label.as_mut().map_or(Length::ZERO, |label| {
             ctx.compute_length(label, auto_length, context_size, axis, label_cross_length)
-        } else {
-            Length::ZERO
-        };
+        });
 
         let length = match axis {
             Axis::Horizontal => label_length.saturating_add(button_length),
@@ -1398,12 +1473,12 @@ impl<T: Steppable> Widget for StepInput<T> {
             StepInputStyle::Basic => {
                 let (btn_length, btn_edge_pad) =
                     Self::basic_button_length(size.height, Some(size.width));
-                2. * (btn_length + 2. * btn_edge_pad)
+                2. * 2.0_f64.mul_add(btn_edge_pad, btn_length)
             }
             StepInputStyle::Flow => {
                 let (arrow_width, _, arrow_edge_pad) =
                     Self::flow_button_length(size.height, Some(size.width));
-                2. * (2. * arrow_width + arrow_edge_pad)
+                2. * 2.0_f64.mul_add(arrow_width, arrow_edge_pad)
             }
         };
 
@@ -1459,7 +1534,7 @@ impl<T: Steppable> Widget for StepInput<T> {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_iter(self.label.as_ref().map(|label| label.id()))
+        ChildrenIds::from_iter(self.label.as_ref().map(WidgetPod::id))
     }
 
     fn accepts_focus(&self) -> bool {
@@ -1487,14 +1562,14 @@ impl<T: Steppable> StepInput<T> {
         // so it won't touch the border even when there is no extra padding in the widget.
         // We base both the padding and the button size itself on the available content-box height.
         let mut edge_pad = pad * vertical_space;
-        let mut length = vertical_space - 2. * edge_pad;
+        let mut length = 2.0_f64.mul_add(-edge_pad, vertical_space);
         // If we know the total horizontal space, make sure the button length is not over 20% of it.
         // This helps prevent overflow and other awkward results given narrow but tall constraints.
         if let Some(horizontal_space) = horizontal_space {
             let max_length = 0.2 * horizontal_space;
             if length > max_length {
                 length = max_length;
-                edge_pad = length / (1. - 2. * pad) * pad;
+                edge_pad = length / 2.0_f64.mul_add(-pad, 1.) * pad;
             }
         }
         (length, edge_pad)
@@ -1503,7 +1578,7 @@ impl<T: Steppable> StepInput<T> {
     /// Returns `(length, edge_pad)` of a basic button given the `vertical_space`.
     ///
     /// If total horizontal space is know it will help prevent awkwardly large results.
-    #[inline(always)]
+    #[inline]
     fn basic_button_length(vertical_space: f64, horizontal_space: Option<f64>) -> (f64, f64) {
         Self::button_length(vertical_space, horizontal_space, 0.15)
     }
@@ -1511,7 +1586,7 @@ impl<T: Steppable> StepInput<T> {
     /// Returns `(width, height, edge_pad)` of a flow arrow given the `vertical_space`.
     ///
     /// If total horizontal space is know it will help prevent awkwardly large results.
-    #[inline(always)]
+    #[inline]
     fn flow_button_length(vertical_space: f64, horizontal_space: Option<f64>) -> (f64, f64, f64) {
         let (height, edge_pad) = Self::button_length(vertical_space, horizontal_space, 0.1);
         // The arrow is slightly taller than it is wider for artistic reasons.
@@ -1521,7 +1596,7 @@ impl<T: Steppable> StepInput<T> {
 
     // Paint controls in the basic style.
     fn paint_basic(
-        &mut self,
+        &self,
         ctx: &mut PaintCtx<'_>,
         props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
@@ -1557,12 +1632,12 @@ impl<T: Steppable> StepInput<T> {
         );
         let plus_v = Line::new(
             Point::new(
-                size.width - btn_length * 0.5 - btn_x_pad,
+                f64::mul_add(btn_length, -0.5, size.width) - btn_x_pad,
                 (size.height - btn_length) * 0.5,
             ),
             Point::new(
-                size.width - btn_length * 0.5 - btn_x_pad,
-                size.height - (size.height - btn_length) * 0.5,
+                f64::mul_add(btn_length, -0.5, size.width) - btn_x_pad,
+                (size.height - btn_length).mul_add(-0.5, size.height),
             ),
         );
 
@@ -1591,9 +1666,148 @@ impl<T: Steppable> StepInput<T> {
         painter.stroke(plus_v, &style, *plus_color).draw();
     }
 
+    fn paint_speed_lines(&self, painter: &mut Painter<'_>, geometry: SpeedLineGeometry) {
+        let SpeedLineGeometry {
+            size,
+            speed,
+            arrow_width,
+            arrow_height,
+            arrow_edge_pad,
+            arrow_offset_active,
+            arrow_base_x,
+            extra_y_pad,
+            backward,
+            color,
+        } = geometry;
+        // The outer lines are thinner and shorter.
+        let style1 = Stroke {
+            width: 0.075 * arrow_height,
+            start_cap: Cap::Butt,
+            end_cap: Cap::Butt,
+            ..Default::default()
+        };
+        // The inner lines are thicker and longer.
+        let style2 = Stroke {
+            width: 0.15 * arrow_height,
+            start_cap: Cap::Butt,
+            end_cap: Cap::Butt,
+            ..Default::default()
+        };
+
+        // End the outer lines exactly underneath the arrow shoulder tip.
+        let style1_x_end = f64::mul_add(arrow_width, 0.11, size.width - arrow_offset_active);
+        // Keep the outer line length at 80% of the inner lines.
+        let style1_x_start = (style1_x_end - self.label_x_end).mul_add(0.2, self.label_x_end);
+        // Keep the outer line just barely following the arrow at the outer edge.
+        let style1_y_offset = f64::mul_add(arrow_height, 0.05, style1.width * 0.5);
+
+        // End the inner lines underneath the arrow base.
+        let style2_x_end = size.width - arrow_offset_active + arrow_base_x;
+        // Start from the content.
+        let style2_x_start = self.label_x_end;
+        // Keep the inner lines following the base of the arrow, with a slight center gap.
+        let style2_y_offset = f64::mul_add(arrow_height, 0.06, style2.width * 0.5);
+
+        // Top outer line.
+        let line1_y = extra_y_pad + arrow_edge_pad + style1_y_offset;
+        let line1 = Line::new(
+            Point::new(style1_x_start, line1_y),
+            Point::new(style1_x_end, line1_y),
+        );
+
+        // Top inner line.
+        let line2_y = 0.5_f64.mul_add(size.height, -style2_y_offset);
+        let line2 = Line::new(
+            Point::new(style2_x_start, line2_y),
+            Point::new(style2_x_end, line2_y),
+        );
+
+        // Bottom inner line.
+        let line3_y = 0.5_f64.mul_add(size.height, style2_y_offset);
+        let line3 = Line::new(
+            Point::new(style2_x_start, line3_y),
+            Point::new(style2_x_end, line3_y),
+        );
+
+        // Bottom outer line.
+        let line4_y = size.height - extra_y_pad - arrow_edge_pad - style1_y_offset;
+        let line4 = Line::new(
+            Point::new(style1_x_start, line4_y),
+            Point::new(style1_x_end, line4_y),
+        );
+
+        // Outer lines only go up to 80% opacity based on speed.
+        let style1_gradient_max = speed as f32 * 0.8;
+        let style1_gradient = Gradient::new_linear((style1_x_start, 0.), (style1_x_end, 0.));
+        // Inner lines go up to 100% opacity based on speed.
+        let style2_gradient_max = speed as f32;
+        let style2_gradient = Gradient::new_linear((style2_x_start, 0.), (style2_x_end, 0.));
+
+        // Create the gradients.
+        let style1_gradient = style1_gradient.with_stops([
+            (0., color.with_alpha(0.)),
+            (1., color.with_alpha(style1_gradient_max)),
+        ]);
+        let style2_gradient = style2_gradient.with_stops([
+            (0., color.with_alpha(0.)),
+            (1., color.with_alpha(style2_gradient_max)),
+        ]);
+        // The backwards lines need to be reflected and shifted to the other side.
+        let lines_affine = if backward {
+            Affine::reflect((0., 0.), (0., 1.))
+                .then_translate((self.label_x_end + self.label_x_start, 0.).into())
+        } else {
+            Affine::IDENTITY
+        };
+
+        // Actually paint the lines.
+        painter
+            .stroke(line1, &style1, &style1_gradient)
+            .transform(lines_affine)
+            .draw();
+        painter
+            .stroke(line2, &style2, &style2_gradient)
+            .transform(lines_affine)
+            .draw();
+        painter
+            .stroke(line3, &style2, &style2_gradient)
+            .transform(lines_affine)
+            .draw();
+        painter
+            .stroke(line4, &style1, &style1_gradient)
+            .transform(lines_affine)
+            .draw();
+    }
+
+    fn flow_arrow(
+        size: Size,
+        arrow_width: f64,
+        arrow_height: f64,
+        arrow_edge_pad: f64,
+        extra_y_pad: f64,
+    ) -> (BezPath, Point, f64) {
+        // Define the various points that form a hollow-base arrow facing right.
+        let arrow_y_center = 0.5_f64.mul_add(arrow_height, extra_y_pad + arrow_edge_pad);
+        let arrow_tip = Point::new(arrow_width, arrow_y_center);
+        let arrow_base_x = 0.575 * arrow_width;
+        let arrow_base = Point::new(arrow_base_x, arrow_y_center);
+        let arrow_top_shoulder = Point::new(0., extra_y_pad + arrow_edge_pad);
+        let arrow_bot_shoulder = Point::new(0., size.height - extra_y_pad - arrow_edge_pad);
+
+        // Construct the arrow shape.
+        let mut arrow = BezPath::new();
+        arrow.move_to(arrow_top_shoulder);
+        arrow.line_to(arrow_tip);
+        arrow.line_to(arrow_bot_shoulder);
+        arrow.line_to(arrow_base);
+        arrow.line_to(arrow_top_shoulder);
+
+        (arrow, arrow_tip, arrow_base_x)
+    }
+
     // Paint controls in the flow style.
     fn paint_flow(
-        &mut self,
+        &self,
         ctx: &mut PaintCtx<'_>,
         props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
@@ -1610,36 +1824,25 @@ impl<T: Steppable> StepInput<T> {
 
         let (arrow_width, arrow_height, arrow_edge_pad) =
             Self::flow_button_length(size.height, Some(size.width));
-        let extra_y_pad = (size.height - arrow_height - 2. * arrow_edge_pad) * 0.5;
+        let extra_y_pad = 2.0_f64.mul_add(-arrow_edge_pad, size.height - arrow_height) * 0.5;
 
-        // Define the various points that form a hollow-base arrow facing right.
-        let arrow_y_center = extra_y_pad + arrow_edge_pad + 0.5 * arrow_height;
-        let arrow_tip = Point::new(arrow_width, arrow_y_center);
-        let arrow_base_x = 0.575 * arrow_width;
-        let arrow_base = Point::new(arrow_base_x, arrow_y_center);
-        let arrow_top_shoulder = Point::new(0., extra_y_pad + arrow_edge_pad);
-        let arrow_bot_shoulder = Point::new(0., size.height - extra_y_pad - arrow_edge_pad);
-
-        // Construct the arrow shape.
-        let mut arrow = BezPath::new();
-        arrow.move_to(arrow_top_shoulder);
-        arrow.line_to(arrow_tip);
-        arrow.line_to(arrow_bot_shoulder);
-        arrow.line_to(arrow_base);
-        arrow.line_to(arrow_top_shoulder);
+        let (arrow, arrow_tip, arrow_base_x) =
+            Self::flow_arrow(size, arrow_width, arrow_height, arrow_edge_pad, extra_y_pad);
 
         // We want the arrow to move within three full widths of itself,
         // i.e. [AWW] -> [WWA] where A is the arrow and W is empty sapce of the same width.
         let arrow_move_range = 3.;
         // Actual available space for arrow movement depends on the label and our total size.
         let label_width = self.label_x_end - self.label_x_start;
-        let arrow_space = ((size.width - label_width) * 0.5 - arrow_edge_pad).max(0.);
+        let arrow_space = (size.width - label_width)
+            .mul_add(0.5, -arrow_edge_pad)
+            .max(0.);
         // Base offset is the stationary arrow location,
         // measured from the outer edge of the widget's content-box.
-        let arrow_offset_base = arrow_edge_pad + arrow_width * arrow_move_range;
+        let arrow_offset_base = f64::mul_add(arrow_width, arrow_move_range, arrow_edge_pad);
         // Active offset is closer to the edge based on the visual speed factor.
-        let arrow_move_active = arrow_move_range - (arrow_move_range - 1.) * speed;
-        let arrow_offset_active = arrow_edge_pad + arrow_width * arrow_move_active;
+        let arrow_move_active = f64::mul_add(arrow_move_range - 1., -speed, arrow_move_range);
+        let arrow_offset_active = f64::mul_add(arrow_width, arrow_move_active, arrow_edge_pad);
         // Keep the offset within available space bounds if possible,
         // and favor overflowing towards the middle content not the widget bounds.
         // Note that arrow_width > arrow_space is possible, so this can't be f64::clamp.
@@ -1669,126 +1872,30 @@ impl<T: Steppable> StepInput<T> {
             }
         });
 
-        // Paint speed lines connecting the label with the arrow.
         if sliding && speed > 0. {
-            // The outer lines are thinner and shorter.
-            let style1 = Stroke {
-                width: 0.075 * arrow_height,
-                start_cap: Cap::Butt,
-                end_cap: Cap::Butt,
-                ..Default::default()
-            };
-            // The inner lines are thicker and longer.
-            let style2 = Stroke {
-                width: 0.15 * arrow_height,
-                start_cap: Cap::Butt,
-                end_cap: Cap::Butt,
-                ..Default::default()
-            };
-
-            // End the outer lines exactly underneath the arrow shoulder tip.
-            let style1_x_end = size.width - arrow_offset_active + arrow_width * 0.11;
-            // Keep the outer line length at 80% of the inner lines.
-            let style1_x_start = self.label_x_end + (style1_x_end - self.label_x_end) * 0.2;
-            // Keep the outer line just barely following the arrow at the outer edge.
-            let style1_y_offset = style1.width * 0.5 + arrow_height * 0.05;
-
-            // End the inner lines underneath the arrow base.
-            let style2_x_end = size.width - arrow_offset_active + arrow_base_x;
-            // Start from the content.
-            let style2_x_start = self.label_x_end;
-            // Keep the inner lines following the base of the arrow, with a slight center gap.
-            let style2_y_offset = style2.width * 0.5 + arrow_height * 0.06;
-
-            // Top outer line.
-            let line1_y = extra_y_pad + arrow_edge_pad + style1_y_offset;
-            let line1 = Line::new(
-                Point::new(style1_x_start, line1_y),
-                Point::new(style1_x_end, line1_y),
+            self.paint_speed_lines(
+                painter,
+                SpeedLineGeometry {
+                    size,
+                    speed,
+                    arrow_width,
+                    arrow_height,
+                    arrow_edge_pad,
+                    arrow_offset_active,
+                    arrow_base_x,
+                    extra_y_pad,
+                    backward,
+                    color: if forward {
+                        color_forward.0
+                    } else {
+                        color_backward.0
+                    },
+                },
             );
-
-            // Top inner line.
-            let line2_y = 0.5 * size.height - style2_y_offset;
-            let line2 = Line::new(
-                Point::new(style2_x_start, line2_y),
-                Point::new(style2_x_end, line2_y),
-            );
-
-            // Bottom inner line.
-            let line3_y = 0.5 * size.height + style2_y_offset;
-            let line3 = Line::new(
-                Point::new(style2_x_start, line3_y),
-                Point::new(style2_x_end, line3_y),
-            );
-
-            // Bottom outer line.
-            let line4_y = size.height - extra_y_pad - arrow_edge_pad - style1_y_offset;
-            let line4 = Line::new(
-                Point::new(style1_x_start, line4_y),
-                Point::new(style1_x_end, line4_y),
-            );
-
-            // Outer lines only go up to 80% opacity based on speed.
-            let style1_gradient_max = speed as f32 * 0.8;
-            let style1_gradient = Gradient::new_linear((style1_x_start, 0.), (style1_x_end, 0.));
-            // Inner lines go up to 100% opacity based on speed.
-            let style2_gradient_max = speed as f32;
-            let style2_gradient = Gradient::new_linear((style2_x_start, 0.), (style2_x_end, 0.));
-
-            // Create the gradients.
-            let style1_gradient = if forward {
-                style1_gradient.with_stops([
-                    (0., color_forward.0.with_alpha(0.)),
-                    (1., color_forward.0.with_alpha(style1_gradient_max)),
-                ])
-            } else {
-                style1_gradient.with_stops([
-                    (0., color_backward.0.with_alpha(0.)),
-                    (1., color_backward.0.with_alpha(style1_gradient_max)),
-                ])
-            };
-            let style2_gradient = if forward {
-                style2_gradient.with_stops([
-                    (0., color_forward.0.with_alpha(0.)),
-                    (1., color_forward.0.with_alpha(style2_gradient_max)),
-                ])
-            } else {
-                style2_gradient.with_stops([
-                    (0., color_backward.0.with_alpha(0.)),
-                    (1., color_backward.0.with_alpha(style2_gradient_max)),
-                ])
-            };
-            // The backwards lines need to be reflected and shifted to the other side.
-            let lines_affine = if backward {
-                Affine::reflect((0., 0.), (0., 1.))
-                    .then_translate((self.label_x_end + self.label_x_start, 0.).into())
-            } else {
-                Affine::IDENTITY
-            };
-
-            // Actually paint the lines.
-            painter
-                .stroke(line1, &style1, &style1_gradient)
-                .transform(lines_affine)
-                .draw();
-            painter
-                .stroke(line2, &style2, &style2_gradient)
-                .transform(lines_affine)
-                .draw();
-            painter
-                .stroke(line3, &style2, &style2_gradient)
-                .transform(lines_affine)
-                .draw();
-            painter
-                .stroke(line4, &style1, &style1_gradient)
-                .transform(lines_affine)
-                .draw();
         }
 
         // Paint the backward facing arrow
-        if backward {
-            // With a gradient if a slide is in progress
-            let gradient = gradient.as_ref().unwrap();
+        if let Some(gradient) = gradient.as_ref().filter(|_| backward) {
             painter
                 .fill(&arrow, gradient)
                 .transform(arrow_affine_backward)
@@ -1807,9 +1914,7 @@ impl<T: Steppable> StepInput<T> {
         }
 
         // Paint the forward facing arrow
-        if forward {
-            // With a gradient if a slide is in progress
-            let gradient = gradient.as_ref().unwrap();
+        if let Some(gradient) = gradient.as_ref().filter(|_| forward) {
             painter
                 .fill(&arrow, gradient)
                 .transform(arrow_affine_forward)
@@ -2125,6 +2230,17 @@ mod tests {
     }
 
     #[test]
+    fn wrapping_large_deltas_are_constant_time() {
+        let mut widget = StepInput::new(0_u32, 1, 0, 2).with_wrap(true);
+        let cycle = 3 * TICKS_PER_STEP;
+        let delta = i64::MAX - (i64::MAX % cycle);
+        assert_eq!(widget.update_ticks(delta, false), (0, false, false));
+        assert_eq!(widget.value, 0);
+        assert_eq!(widget.update_ticks(-delta, false), (0, false, false));
+        assert_eq!(widget.value, 0);
+    }
+
+    #[test]
     fn update_ticks() {
         #[derive(Debug, Copy, Clone)]
         struct InitialState {
@@ -2405,17 +2521,21 @@ mod tests {
 
         let mut harness = TestHarness::create_with_size(test_property_set(), root, (270, 200));
 
-        harness.edit_widget(tag_backward, |mut widget| {
-            widget.widget.drag_start = Some(Point::new(10000., 0.));
-            widget.widget.slide_last = Some(Point::ORIGIN);
-            widget.ctx.request_paint_only();
-        });
+        harness
+            .edit_widget(tag_backward, |mut widget| {
+                widget.widget.drag_start = Some(Point::new(10000., 0.));
+                widget.widget.slide_last = Some(Point::ORIGIN);
+                widget.ctx.request_paint_only();
+            })
+            .unwrap();
 
-        harness.edit_widget(tag_forward, |mut widget| {
-            widget.widget.drag_start = Some(Point::new(10000., 0.));
-            widget.widget.slide_last = Some(Point::new(20000., 0.));
-            widget.ctx.request_paint_only();
-        });
+        harness
+            .edit_widget(tag_forward, |mut widget| {
+                widget.widget.drag_start = Some(Point::new(10000., 0.));
+                widget.widget.slide_last = Some(Point::new(20000., 0.));
+                widget.ctx.request_paint_only();
+            })
+            .unwrap();
 
         assert_render_snapshot!(harness, "step_input_speed_lines");
     }

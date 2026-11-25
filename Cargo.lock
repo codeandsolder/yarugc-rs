@@ -2746,14 +2746,10 @@ dependencies = [
  "console_error_panic_hook",
  "cursor-icon",
  "dpi",
- "float-cmp 0.10.0",
- "image",
  "imaging",
- "insta",
  "kurbo",
  "parley",
  "peniko",
- "profiling",
  "smallvec",
  "time",
  "tracing",
@@ -2792,6 +2788,8 @@ dependencies = [
  "masonry_core",
  "oxipng",
  "profiling",
+ "tempfile",
+ "thiserror 2.0.18",
  "tracing",
 ]
 
@@ -3411,7 +3409,6 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 name = "open_and_save_file"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "console_error_panic_hook",
  "console_log",
  "gloo-file",

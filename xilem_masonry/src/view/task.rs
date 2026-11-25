@@ -15,6 +15,7 @@ use crate::core::{
 };
 
 /// Launch a task which will run until the view is no longer in the tree.
+///
 /// `init_future` is given a [`MessageProxy`], which it will store in the future it returns.
 /// This `MessageProxy` can be used to send a message to `on_event`, which can then update
 /// the app's state.
@@ -118,7 +119,7 @@ where
         &self,
         join_handle: &mut Self::ViewState,
         _: &mut ViewCtx,
-        _: Mut<'_, Self::Element>,
+        (): Mut<'_, Self::Element>,
     ) {
         join_handle.abort();
     }
@@ -130,11 +131,9 @@ where
         _element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        debug_assert!(
-            message.remaining_path().is_empty(),
-            "id path should be empty in Task::message"
-        );
-        let message = message.take_message::<M>().unwrap();
+        let Some(message) = message.take_message::<M>() else {
+            return MessageResult::Stale;
+        };
         MessageResult::Action((self.on_event)(app_state, *message))
     }
 }

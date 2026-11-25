@@ -101,34 +101,30 @@ where
         mut element: DynamicElement::Mut<'_>,
         app_state: &mut State,
     ) {
-        if let Some(prev) = prev.as_any().downcast_ref() {
-            // If we were previously of this type, then do a normal rebuild
-            DynamicElement::with_downcast(element, |element| {
-                let state = dyn_state
-                    .inner_state
-                    .downcast_mut()
-                    .expect("build or rebuild always set the correct corresponding state type");
-
-                ctx.with_id(ViewId::new(dyn_state.generation), move |ctx| {
-                    self.rebuild(prev, state, ctx, element, app_state);
+        if let Some((previous_view, state)) = prev
+            .as_any()
+            .downcast_ref()
+            .zip(dyn_state.inner_state.downcast_mut())
+        {
+            let (original, matched) = DynamicElement::with_downcast(element, |element| {
+                ctx.with_id(ViewId::new(dyn_state.generation), |ctx| {
+                    self.rebuild(previous_view, state, ctx, element, app_state);
                 });
             });
-        } else {
-            // Otherwise, teardown the old element, then replace the value
-            // Note that we need to use `dyn_teardown` here, because `prev`
-            // is of a different type.
-            element = prev.dyn_teardown(dyn_state, ctx, element);
-
-            // Increase the generation, because the underlying widget has been swapped out.
-            // Overflow condition: Impossible to overflow, as u64 only ever incremented by 1
-            // and starting at 0.
-            dyn_state.generation = dyn_state.generation.wrapping_add(1);
-            let (new_element, view_state) = ctx.with_id(ViewId::new(dyn_state.generation), |ctx| {
-                self.build(ctx, app_state)
-            });
-            dyn_state.inner_state = Box::new(view_state);
-            DynamicElement::replace_inner(element, new_element);
+            element = original;
+            if matched {
+                return;
+            }
         }
+
+        // Replace the retained element after a variant or element-type change.
+        element = prev.dyn_teardown(dyn_state, ctx, element);
+        dyn_state.generation = dyn_state.generation.wrapping_add(1);
+        let (new_element, state) = ctx.with_id(ViewId::new(dyn_state.generation), |ctx| {
+            self.build(ctx, app_state)
+        });
+        dyn_state.inner_state = Box::new(state);
+        DynamicElement::replace_inner(element, new_element);
     }
     fn dyn_teardown<'el>(
         &self,
@@ -136,17 +132,21 @@ where
         ctx: &mut Context,
         element: DynamicElement::Mut<'el>,
     ) -> DynamicElement::Mut<'el> {
-        let state = dyn_state
-            .inner_state
-            .downcast_mut()
-            .expect("build or rebuild always set the correct corresponding state type");
+        let Some(state) = dyn_state.inner_state.downcast_mut() else {
+            tracing::error!("Type-erased view state does not match its teardown view");
+            return element;
+        };
 
         // We only need to teardown the inner value - there's no other state to cleanup in this widget
-        DynamicElement::with_downcast(element, |element| {
+        let (element, matched) = DynamicElement::with_downcast(element, |element| {
             ctx.with_id(ViewId::new(dyn_state.generation), |ctx| {
                 self.teardown(state, ctx, element);
             });
-        })
+        });
+        if !matched {
+            tracing::error!("Type-erased element does not match its teardown view");
+        }
+        element
     }
 
     fn dyn_message(
@@ -156,13 +156,11 @@ where
         element: DynamicElement::Mut<'_>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let state = dyn_state
-            .inner_state
-            .downcast_mut()
-            .expect("build or rebuild always set the correct corresponding state type");
+        let Some(state) = dyn_state.inner_state.downcast_mut() else {
+            return MessageResult::Stale;
+        };
         let Some(first) = message.take_first() else {
-            // TODO: More info here (i.e. debug print message).
-            unreachable!("Parent view of `AnyView` sent outdated and/or incorrect empty view path");
+            return MessageResult::Stale;
         };
         if first.routing_id() != dyn_state.generation {
             // Do we want to log something here?
@@ -172,6 +170,7 @@ where
             self.message(state, message, element, app_state)
         })
         .1
+        .unwrap_or(MessageResult::Stale)
     }
 }
 

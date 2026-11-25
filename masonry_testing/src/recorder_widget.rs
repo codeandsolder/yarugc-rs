@@ -49,6 +49,7 @@ use masonry_core::layout::{LenReq, Length};
 /// assert_matches!(recording.next().unwrap(), Record::RC);
 /// assert_matches!(recording.next().unwrap(), Record::U(Update::WidgetAdded));
 /// ```
+#[must_use = "Use the recording widget."]
 pub struct Recorder<W: Widget> {
     recording: Recording,
     child: W,
@@ -101,11 +102,13 @@ pub enum Record {
 
 impl Recording {
     /// True if no events have been recorded.
+    #[must_use = "Inspect the recorded events."]
     pub fn is_empty(&self) -> bool {
         self.0.borrow().is_empty()
     }
 
     /// The number of events in the recording.
+    #[must_use = "Inspect the recorded events."]
     pub fn len(&self) -> usize {
         self.0.borrow().len()
     }
@@ -118,11 +121,13 @@ impl Recording {
     /// Returns the next event in the recording, if one exists.
     ///
     /// This consumes the event.
+    #[must_use = "Inspect the recorded events."]
     pub fn next(&self) -> Option<Record> {
         self.0.borrow_mut().pop_front()
     }
 
     /// Returns a vec of events drained from the recording.
+    #[must_use = "Inspect the recorded events."]
     pub fn drain(&self) -> Vec<Record> {
         self.0.borrow_mut().drain(..).collect::<Vec<_>>()
     }
@@ -142,22 +147,22 @@ impl<W: Widget> Recorder<W> {
     }
 
     /// Returns the events this widget recorded.
-    pub fn recording(&self) -> &Recording {
+    pub const fn recording(&self) -> &Recording {
         &self.recording
     }
 
     /// Returns a reference to the child that's being recorded.
-    pub fn inner(&self) -> &W {
+    pub const fn inner(&self) -> &W {
         &self.child
     }
 
     /// Returns an exclusive reference to the child that's being recorded.
-    pub fn inner_mut(&mut self) -> &mut W {
+    pub const fn inner_mut(&mut self) -> &mut W {
         &mut self.child
     }
 }
 
-#[warn(clippy::missing_trait_methods)]
+#[deny(clippy::missing_trait_methods)]
 impl<W: Widget> Widget for Recorder<W> {
     type Action = W::Action;
 

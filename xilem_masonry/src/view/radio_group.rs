@@ -37,7 +37,7 @@ use masonry::widgets;
 ///    }),
 /// )))
 /// ```
-pub fn radio_group<State, Action, V>(child: V) -> RadioGroup<V>
+pub const fn radio_group<State, Action, V>(child: V) -> RadioGroup<V>
 where
     State: 'static,
     Action: 'static,
@@ -68,41 +68,8 @@ where
         let (child, child_state) = self.child.build(ctx, app_state);
         let widget = widgets::RadioGroup::new(child.new_widget);
 
-        (ctx.create_pod(widget), child_state)
+        (Pod::new(widget), child_state)
     }
 
-    fn rebuild(
-        &self,
-        prev: &Self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) {
-        let mut child = widgets::RadioGroup::child_mut(&mut element);
-        self.child
-            .rebuild(&prev.child, view_state, ctx, child.downcast(), app_state);
-    }
-
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-    ) {
-        let mut child = widgets::RadioGroup::child_mut(&mut element);
-        self.child.teardown(view_state, ctx, child.downcast());
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        mut element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        let mut child = widgets::RadioGroup::child_mut(&mut element);
-        self.child
-            .message(view_state, message, child.downcast(), app_state)
-    }
+    single_child_view_lifecycle!(RadioGroup, child, rebuild);
 }

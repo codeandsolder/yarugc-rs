@@ -35,7 +35,7 @@ pub trait Property: Default + Clone + Send + Sync + 'static {
     fn static_default() -> &'static Self;
 
     /// Returns `true` if the given `property_type` matches this property.
-    #[inline(always)]
+    #[must_use = "Check whether the property type matches."]
     fn matches(property_type: TypeId) -> bool {
         property_type == TypeId::of::<Self>()
     }

@@ -106,7 +106,7 @@ impl AppDriver for Driver {
         if action.is::<ButtonPress>() {
             ctx.render_root(window_id).edit_root_widget(|mut root| {
                 let mut portal = root.downcast::<Portal<Flex>>();
-                let mut flex = Portal::child_mut(&mut portal);
+                let Some(mut flex) = Portal::child_mut(&mut portal) else { return; };
                 Flex::add_child(&mut flex, Label::new(self.next_task.clone()));
             });
         } else if action.is::<TextAction>() {
@@ -217,7 +217,7 @@ fn main() {
             if action.is::<ButtonPress>() {
                 ctx.render_root(window_id).edit_root_widget(|mut root| {
                     let mut portal = root.downcast::<Portal<Flex>>();
-                    let mut flex = Portal::child_mut(&mut portal);
+                    let Some(mut flex) = Portal::child_mut(&mut portal) else { return; };
                     Flex::add_fixed(&mut flex, Label::new(self.next_task.clone()));
                 });
             } else if action.is::<TextAction>() {

@@ -81,16 +81,15 @@ pub struct ResizeObserver<V, F, State, Action = ()> {
 
 // Use a distinctive number here, to be able to catch bugs.
 /// This is a randomly generated 32 bit number - 2850384319 in decimal.
-const RESIZE_OBSERVER_CONTENT_VIEW_ID: ViewId = ViewId::new(0xa9e569bf);
+const RESIZE_OBSERVER_CONTENT_VIEW_ID: ViewId = ViewId::new(0xa9e5_69bf);
 
 impl<V, F, State, Action> ViewMarker for ResizeObserver<V, F, State, Action> {}
 impl<V, F, State, Action> View<State, Action, ViewCtx> for ResizeObserver<V, F, State, Action>
 where
     State: 'static,
     Action: 'static,
-    F: 'static,
     V: WidgetView<State, Action>,
-    F: Fn(&mut State, Size) -> Action,
+    F: Fn(&mut State, Size) -> Action + 'static,
 {
     type Element = Pod<widgets::ResizeObserver>;
     type ViewState = V::ViewState;
@@ -100,7 +99,7 @@ where
             self.inner.build(ctx, app_state)
         });
         (
-            ctx.with_action_widget(|_| {
+            ctx.with_action_widget({
                 let widget = widgets::ResizeObserver::new(child.new_widget);
                 Pod::new_with_props(widget, Dimensions::MAX)
             }),
@@ -117,33 +116,21 @@ where
         app_state: &mut State,
     ) {
         ctx.with_id(RESIZE_OBSERVER_CONTENT_VIEW_ID, |ctx| {
+            let Some(child_element) = widgets::ResizeObserver::child_mut(&mut element) else {
+                return;
+            };
             View::<State, Action, _>::rebuild(
                 &self.inner,
                 &prev.inner,
                 view_state,
                 ctx,
-                widgets::ResizeObserver::child_mut(&mut element).downcast(),
+                child_element,
                 app_state,
             );
         });
     }
 
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-    ) {
-        ctx.with_id(RESIZE_OBSERVER_CONTENT_VIEW_ID, |ctx| {
-            View::<State, Action, _>::teardown(
-                &self.inner,
-                view_state,
-                ctx,
-                widgets::ResizeObserver::child_mut(&mut element).downcast(),
-            );
-        });
-        ctx.teardown_action_source(element);
-    }
+    action_child_teardown!(ResizeObserver, inner, RESIZE_OBSERVER_CONTENT_VIEW_ID);
 
     fn message(
         &self,
@@ -153,18 +140,20 @@ where
         app_state: &mut State,
     ) -> MessageResult<Action> {
         match message.take_first() {
-            Some(RESIZE_OBSERVER_CONTENT_VIEW_ID) => self.inner.message(
-                view_state,
-                message,
-                widgets::ResizeObserver::child_mut(&mut element).downcast(),
-                app_state,
-            ),
-            None => match message.take_message::<LayoutChanged>() {
-                Some(_) => MessageResult::Action((self.on_resize)(
-                    app_state,
-                    element.ctx.content_box().size(),
-                )),
-                None => {
+            Some(RESIZE_OBSERVER_CONTENT_VIEW_ID) => {
+                let Some(child_element) = widgets::ResizeObserver::child_mut(&mut element) else {
+                    return MessageResult::Stale;
+                };
+                self.inner
+                    .message(view_state, message, child_element, app_state)
+            }
+            None => {
+                if message.take_message::<LayoutChanged>().is_some() {
+                    MessageResult::Action((self.on_resize)(
+                        app_state,
+                        element.ctx.content_box().size(),
+                    ))
+                } else {
                     // TODO: Panic?
                     tracing::error!(
                         "Wrong message type in ResizeObserver::message: {message:?} expected {}",
@@ -172,7 +161,7 @@ where
                     );
                     MessageResult::Stale
                 }
-            },
+            }
             _ => {
                 tracing::warn!(
                     ?message,

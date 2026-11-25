@@ -58,8 +58,9 @@ impl std::fmt::Display for ReadoutError {
 
 impl std::error::Error for ReadoutError {}
 
-/// Shared glyph atlas and GPU pipeline for fixed-width readouts. This is a
-/// purpose-built scalar telemetry renderer, not a general Unicode shaping engine.
+/// Shared glyph atlas and GPU pipeline for fixed-width readouts.
+///
+/// This is a scalar telemetry renderer, not a general Unicode shaping engine.
 /// Ordinary rich, bidi and editable text should use Masonry/Parley.
 #[derive(Debug)]
 pub struct ReadoutRenderer {
@@ -90,9 +91,85 @@ pub struct ReadoutBatch {
     binding: wgpu::BindGroup,
 }
 
+fn create_pipeline(device: &wgpu::Device) -> (wgpu::BindGroupLayout, wgpu::RenderPipeline) {
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("yarugc readout layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2Array,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("yarugc readout shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("readout.wgsl").into()),
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("yarugc readout pipeline layout"),
+        bind_group_layouts: &[Some(&layout)],
+        immediate_size: 0,
+    });
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("yarugc readout pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: 36,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Uint32, 3 => Float32x4],
+                })],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+    (layout, pipeline)
+}
+
 impl ReadoutRenderer {
     /// Rasterize a caller-selected font and alphabet once into a texture array.
     /// Space and empty cells are transparent; other characters must be in the font.
+    ///
+    /// # Errors
+    /// Returns an error for invalid fonts, missing glyphs or unsupported atlas extents.
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -136,75 +213,7 @@ impl ReadoutRenderer {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("yarugc readout layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("yarugc readout shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("readout.wgsl").into()),
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("yarugc readout pipeline layout"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("yarugc readout pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: 36,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Uint32, 3 => Float32x4],
-                })],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: Default::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let (layout, pipeline) = create_pipeline(device);
         Ok(Self {
             device: device.clone(),
             glyphs: Arc::new(GlyphMap::new(atlas.glyphs)),
@@ -218,12 +227,16 @@ impl ReadoutRenderer {
     }
 
     /// Glyph cell dimensions in pixels.
-    pub fn cell_size(&self) -> [u32; 2] {
+    #[must_use = "Use the glyph cell dimensions."]
+    pub const fn cell_size(&self) -> [u32; 2] {
         self.cell_size
     }
 
     /// Prepare fixed readout geometry. Repeat only after layout/DPI changes.
     /// All cells of all slots are rendered in a single draw call.
+    ///
+    /// # Errors
+    /// Returns an error for mismatched devices, invalid extents or resource limits.
     pub fn prepare(
         &self,
         compositor: &Compositor,
@@ -237,54 +250,58 @@ impl ReadoutRenderer {
         if extent.contains(&0) || extent.iter().any(|&v| v > limits.max_texture_dimension_2d) {
             return Err(ReadoutError::InvalidExtent);
         }
-        let mut ranges = Vec::with_capacity(slots.len());
+        let mut ranges = Vec::new();
+        ranges
+            .try_reserve_exact(slots.len())
+            .map_err(|_| ReadoutError::InvalidExtent)?;
         let mut count = 0_usize;
-        let mut vertices = Vec::new();
+        let mut vertices = Vec::<[u32; 9]>::new();
         for slot in slots {
             let end = count
                 .checked_add(slot.cells)
                 .ok_or(ReadoutError::InvalidExtent)?;
             let start_u32 = u32::try_from(count).map_err(|_| ReadoutError::InvalidExtent)?;
             let end_u32 = u32::try_from(end).map_err(|_| ReadoutError::InvalidExtent)?;
-            if u64::from(end_u32) * 4 > u64::from(limits.max_storage_buffer_binding_size) {
+            if u64::from(end_u32.max(1)) * 4
+                > limits
+                    .max_storage_buffer_binding_size
+                    .min(limits.max_buffer_size)
+            {
                 return Err(ReadoutError::InvalidExtent);
             }
-            let [w, h] = slot.geometry.logical_size();
-            let [cell_w, cell_h] = self.cell_size.map(f64::from);
-            let scale = slot.geometry.scale_factor();
-            let dx = cell_w / (w * scale);
-            let dy = cell_h / (h * scale);
-            let top = (1.0 - dy) * 0.5;
-            let mut left = 1.0 - f64::from(end_u32 - start_u32) * dx;
-            for cell in start_u32..end_u32 {
-                let placement =
-                    slot.geometry
-                        .placement()
-                        .subrect(Rect::new(left, top, left + dx, top + dy));
-                for vertex in placement.vertices(extent) {
-                    vertices.extend_from_slice(bytemuck::cast_slice(&vertex));
-                    vertices.extend_from_slice(&cell.to_ne_bytes());
-                    vertices.extend_from_slice(bytemuck::cast_slice(&slot.color));
-                }
-                left += dx;
-            }
+            append_slot_vertices(
+                &mut vertices,
+                slot,
+                self.cell_size,
+                extent,
+                start_u32..end_u32,
+                limits.max_buffer_size,
+            )?;
             ranges.push(count..end);
             count = end;
         }
         let vertex_count =
-            u32::try_from(vertices.len() / 36).map_err(|_| ReadoutError::InvalidExtent)?;
-        if u64::try_from(vertices.len()).unwrap_or(u64::MAX) > limits.max_buffer_size {
-            return Err(ReadoutError::InvalidExtent);
-        }
+            u32::try_from(vertices.len()).map_err(|_| ReadoutError::InvalidExtent)?;
         let vertex_buffer = (!vertices.is_empty()).then(|| {
             self.device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("yarugc readout geometry"),
-                    contents: &vertices,
+                    contents: bytemuck::cast_slice(&vertices),
                     usage: wgpu::BufferUsages::VERTEX,
                 })
         });
-        let values = vec![0_u32; count.max(1)];
+        if (count.max(1) as u64) * 4
+            > limits
+                .max_storage_buffer_binding_size
+                .min(limits.max_buffer_size)
+        {
+            return Err(ReadoutError::InvalidExtent);
+        }
+        let mut values = Vec::new();
+        values
+            .try_reserve_exact(count.max(1))
+            .map_err(|_| ReadoutError::InvalidExtent)?;
+        values.resize(count.max(1), 0_u32);
         let glyph_buffer = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -328,49 +345,81 @@ impl ReadoutRenderer {
     }
 }
 
+fn append_slot_vertices(
+    vertices: &mut Vec<[u32; 9]>,
+    slot: &ReadoutSlot,
+    cell_size: [u32; 2],
+    extent: [u32; 2],
+    cells: Range<u32>,
+    max_buffer_size: u64,
+) -> Result<(), ReadoutError> {
+    let [width, height] = slot.geometry.logical_size();
+    let [cell_w, cell_h] = cell_size.map(f64::from);
+    let scale = slot.geometry.scale_factor();
+    let dx = cell_w / (width * scale);
+    let dy = cell_h / (height * scale);
+    let top = (1.0 - dy) * 0.5;
+    let mut left = f64::from(cells.end - cells.start).mul_add(-dx, 1.0);
+    for cell in cells {
+        let placement =
+            slot.geometry
+                .placement()
+                .subrect(Rect::new(left, top, left + dx, top + dy));
+        let quad = placement.vertices(extent);
+        let next_len = vertices
+            .len()
+            .checked_add(quad.len())
+            .ok_or(ReadoutError::InvalidExtent)?;
+        let count = u32::try_from(next_len).map_err(|_| ReadoutError::InvalidExtent)?;
+        if u64::from(count) * 36 > max_buffer_size {
+            return Err(ReadoutError::InvalidExtent);
+        }
+        vertices
+            .try_reserve(quad.len())
+            .map_err(|_| ReadoutError::InvalidExtent)?;
+        let [r, g, b, a] = slot.color.map(f32::to_bits);
+        vertices.extend(quad.into_iter().map(|[x, y, u, v]| {
+            [
+                x.to_bits(),
+                y.to_bits(),
+                u.to_bits(),
+                v.to_bits(),
+                cell,
+                r,
+                g,
+                b,
+                a,
+            ]
+        }));
+        left += dx;
+    }
+    Ok(())
+}
+
 impl ReadoutBatch {
     /// Cached dynamic surface; compose it after the static window content.
-    pub fn surface(&self) -> &Surface {
+    #[must_use = "Use the dynamic surface."]
+    pub const fn surface(&self) -> &Surface {
         &self.surface
     }
 
     /// Change a slot's text without allocation, layout, or geometry generation.
     /// Invalid input leaves the previous value intact.
+    ///
+    /// # Errors
+    /// Returns an error for unknown slots, unknown characters or text exceeding slot capacity.
     pub fn set_text(&mut self, slot: usize, text: &str) -> Result<bool, ReadoutError> {
         let range = self
             .ranges
             .get(slot)
             .ok_or(ReadoutError::UnknownSlot)?
             .clone();
-        let len = text.chars().count();
-        if len > range.len() {
-            return Err(ReadoutError::TextTooLong);
-        }
-        for ch in text.chars() {
-            if self.glyphs.get(ch).is_none() {
-                return Err(ReadoutError::UnknownCharacter(ch));
-            }
-        }
-        let glyphs = std::iter::repeat_n(0, range.len() - len).chain(
-            text.chars()
-                .map(|ch| self.glyphs.get(ch).expect("validated glyph")),
-        );
-        let mut changed: Option<Range<usize>> = None;
-        for (index, glyph) in range.zip(glyphs) {
-            if self.values[index] != glyph {
-                self.values[index] = glyph;
-                changed = Some(match changed {
-                    Some(range) => range.start..index + 1,
-                    None => index..index + 1,
-                });
-            }
-        }
-        if let Some(range) = changed {
-            self.mark_dirty(range);
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        let Some(changed) = replace_glyphs(&self.glyphs, &mut self.values[range.clone()], text)?
+        else {
+            return Ok(false);
+        };
+        self.mark_dirty((range.start + changed.start)..(range.start + changed.end));
+        Ok(true)
     }
 
     /// Upload changed glyph IDs and redraw the dynamic layer in one draw call.
@@ -384,7 +433,7 @@ impl ReadoutBatch {
         if !dirty.is_empty() {
             self.queue.write_buffer(
                 &self.glyph_buffer,
-                u64::try_from(dirty.start).unwrap() * 4,
+                (dirty.start as u64) * 4,
                 bytemuck::cast_slice(&self.values[dirty]),
             );
         }
@@ -412,7 +461,7 @@ impl ReadoutBatch {
 
     /// Request another raster pass without changing glyph IDs. Use after discarding
     /// an encoded frame; queued buffer uploads are retained by the queue.
-    pub fn invalidate_surface(&mut self) {
+    pub const fn invalidate_surface(&mut self) {
         if self.dirty.is_none() {
             self.dirty = Some(0..0);
         }
@@ -428,9 +477,42 @@ impl ReadoutBatch {
     }
 
     /// Number of glyph cells allocated for this layer.
+    #[must_use = "Use the allocated cell count."]
     pub fn cell_count(&self) -> usize {
         self.ranges.last().map_or(0, |r| r.end)
     }
+}
+
+// Validate before writing to keep updates transactional. The immutable glyph map
+// is then read again so the hot path requires no scratch allocation.
+fn replace_glyphs(
+    map: &GlyphMap,
+    values: &mut [u32],
+    text: &str,
+) -> Result<Option<Range<usize>>, ReadoutError> {
+    let len = text.chars().count();
+    let padding = values
+        .len()
+        .checked_sub(len)
+        .ok_or(ReadoutError::TextTooLong)?;
+    for ch in text.chars() {
+        if map.get(ch).is_none() {
+            return Err(ReadoutError::UnknownCharacter(ch));
+        }
+    }
+    let glyphs = std::iter::repeat_n(Ok(0), padding).chain(
+        text.chars()
+            .map(|ch| map.get(ch).ok_or(ReadoutError::UnknownCharacter(ch))),
+    );
+    let mut changed: Option<Range<usize>> = None;
+    for (index, (value, glyph)) in values.iter_mut().zip(glyphs).enumerate() {
+        let glyph = glyph?;
+        if *value != glyph {
+            *value = glyph;
+            changed = Some(changed.map_or(index..index + 1, |range| range.start..index + 1));
+        }
+    }
+    Ok(changed)
 }
 
 #[derive(Debug)]
@@ -444,8 +526,10 @@ impl GlyphMap {
         let mut ascii = [u32::MAX; 128];
         let mut unicode = BTreeMap::new();
         for (ch, glyph) in glyphs {
-            if ch.is_ascii() {
-                ascii[usize::try_from(u32::from(ch)).expect("ASCII index")] = glyph;
+            if let Ok(index) = u8::try_from(u32::from(ch))
+                && ch.is_ascii()
+            {
+                ascii[usize::from(index)] = glyph;
             } else {
                 unicode.insert(ch, glyph);
             }
@@ -454,8 +538,10 @@ impl GlyphMap {
     }
 
     fn get(&self, ch: char) -> Option<u32> {
-        if ch.is_ascii() {
-            let glyph = self.ascii[usize::try_from(u32::from(ch)).expect("ASCII index")];
+        if let Ok(index) = u8::try_from(u32::from(ch))
+            && ch.is_ascii()
+        {
+            let glyph = self.ascii[usize::from(index)];
             (glyph != u32::MAX).then_some(glyph)
         } else {
             self.unicode.get(&ch).copied()
@@ -474,8 +560,11 @@ struct RasterAtlas {
 // The font rasterizer supplies integral pixel bounds and [0, 1] coverage.
 #[expect(
     clippy::cast_possible_truncation,
+    reason = "Validated integral glyph bounds and normalized coverage"
+)]
+#[expect(
     clippy::cast_sign_loss,
-    reason = "validated integral glyph bounds and normalized coverage"
+    reason = "Validated glyph bounds and coverage are nonnegative"
 )]
 fn rasterize(
     font: &[u8],
@@ -536,7 +625,7 @@ fn rasterize(
     let area = usize::try_from(u64::from(cell_size[0]) * u64::from(cell_size[1]))
         .map_err(|_| ReadoutError::InvalidExtent)?;
     let total = area
-        .checked_mul(usize::try_from(layers).unwrap())
+        .checked_mul(usize::try_from(layers).map_err(|_| ReadoutError::InvalidExtent)?)
         .ok_or(ReadoutError::InvalidExtent)?;
     let mut pixels = Vec::new();
     pixels
@@ -550,9 +639,17 @@ fn rasterize(
             let y0 = (1.0 + bounds.min.y - top) as u32;
             let layer = (index + 1) * area;
             outline.draw(|x, y, coverage| {
-                let pixel = usize::try_from((y0 + y) * cell_size[0] + x0 + x).unwrap();
-                if pixel < area {
-                    pixels[layer + pixel] = (coverage.clamp(0.0, 1.0) * 255.0).round() as u8;
+                let (Some(x), Some(y)) = (x0.checked_add(x), y0.checked_add(y)) else {
+                    return;
+                };
+                if x >= cell_size[0] || y >= cell_size[1] {
+                    return;
+                }
+                let offset = u64::from(y) * u64::from(cell_size[0]) + u64::from(x);
+                if let Ok(pixel) = usize::try_from(offset)
+                    && let Some(dst) = pixels.get_mut(layer + pixel)
+                {
+                    *dst = (coverage.clamp(0.0, 1.0) * 255.0).round() as u8;
                 }
             });
         }
@@ -563,4 +660,29 @@ fn rasterize(
         layers,
         pixels,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn glyph_updates_are_transactional_and_report_exact_changed_range() {
+        let map = GlyphMap::new(BTreeMap::from([(' ', 0), ('a', 1), ('b', 2), ('Ω', 3)]));
+        let mut values = [0; 4];
+        assert_eq!(replace_glyphs(&map, &mut values, "abΩ"), Ok(Some(1..4)));
+        assert_eq!(values, [0, 1, 2, 3]);
+        assert_eq!(replace_glyphs(&map, &mut values, "abΩ"), Ok(None));
+        assert_eq!(
+            replace_glyphs(&map, &mut values, "a?"),
+            Err(ReadoutError::UnknownCharacter('?'))
+        );
+        assert_eq!(
+            replace_glyphs(&map, &mut values, "abΩab"),
+            Err(ReadoutError::TextTooLong)
+        );
+        assert_eq!(values, [0, 1, 2, 3]);
+        assert_eq!(replace_glyphs(&map, &mut values, "Ω"), Ok(Some(1..3)));
+        assert_eq!(values, [0, 0, 0, 3]);
+    }
 }

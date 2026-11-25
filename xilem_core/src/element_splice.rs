@@ -41,7 +41,7 @@ pub struct AppendVec<T> {
 
 impl<T> AppendVec<T> {
     /// Convert `self` into the underlying `Vec`
-    #[must_use]
+    #[must_use = "Retain the accumulated elements."]
     pub fn into_inner(self) -> Vec<T> {
         self.inner
     }
@@ -54,7 +54,8 @@ impl<T> AppendVec<T> {
         self.inner.drain(..)
     }
     /// Equivalent to [`ElementSplice::index`].
-    pub fn index(&self) -> usize {
+    #[must_use = "The index identifies the next append position."]
+    pub const fn index(&self) -> usize {
         // If there are no items, to get here we need to skip 0
         // if there is one, we need to skip 1
         self.inner.len()
@@ -62,7 +63,8 @@ impl<T> AppendVec<T> {
     /// Returns `true` if the vector contains no elements.
     ///
     /// See [`Vec::is_empty`] for more details
-    pub fn is_empty(&self) -> bool {
+    #[must_use = "Reports whether any elements have been appended."]
+    pub const fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
 }
@@ -78,5 +80,35 @@ impl<T> Default for AppendVec<T> {
         Self {
             inner: Vec::default(),
         }
+    }
+}
+
+/// A stub `ElementSplice` implementation for `crate::NoElement`.
+///
+/// It is technically possible for someone to create an implementation of `ViewSequence`
+/// which uses a (different) `crate::NoElement` `ElementSplice`. But we don't think that sequence could be meaningful.
+#[derive(Debug, Default)]
+pub struct NoElements;
+
+impl ElementSplice<crate::NoElement> for NoElements {
+    fn with_scratch<R>(&mut self, f: impl FnOnce(&mut AppendVec<crate::NoElement>) -> R) -> R {
+        let mut append_vec = AppendVec::default();
+        f(&mut append_vec)
+    }
+
+    fn insert(&mut self, _: crate::NoElement) {}
+
+    fn mutate<R>(&mut self, f: impl FnOnce(<crate::NoElement as ViewElement>::Mut<'_>) -> R) -> R {
+        f(())
+    }
+
+    fn skip(&mut self, _: usize) {}
+
+    fn index(&self) -> usize {
+        0
+    }
+
+    fn delete<R>(&mut self, f: impl FnOnce(<crate::NoElement as ViewElement>::Mut<'_>) -> R) -> R {
+        f(())
     }
 }

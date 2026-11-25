@@ -8,17 +8,13 @@ use accesskit::{Node, Role};
 use include_doc_path::include_doc_path;
 use tracing::{Span, trace, trace_span};
 
-use crate::core::MeasureCtx;
 use crate::core::keyboard::{Key, NamedKey};
 use crate::core::pointer::PointerButton;
 use crate::core::{
-    AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, NewWidget, PaintCtx,
-    PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update,
-    UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, AccessEvent, EventCtx, NewWidget, PointerButtonEvent, PointerEvent, PropertiesMut,
+    PropertiesRef, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetPod,
 };
-use crate::imaging::Painter;
-use crate::kurbo::{Axis, Size};
-use crate::layout::{LayoutSize, LenReq, Length, SizeDef};
+use crate::layout::{Length, UnitPoint};
 use crate::theme;
 use crate::widgets::Label;
 
@@ -50,9 +46,10 @@ impl Button {
     ///
     /// let button = Button::new(Label::new("Increment").prepare());
     /// ```
+    #[must_use = "Use the returned value."]
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
-            child: child.erased().to_pod(),
+            child: child.erased().into_pod(),
         }
     }
 
@@ -73,22 +70,11 @@ impl Button {
 
 // --- MARK: WIDGETMUT
 impl Button {
-    /// Replaces the child widget with a new one.
-    pub fn set_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<impl Widget + ?Sized>) {
-        this.ctx.remove_child(std::mem::replace(
-            &mut this.widget.child,
-            child.erased().to_pod(),
-        ));
-    }
-
-    /// Returns a mutable reference to the child.
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
-        this.ctx.get_mut(&mut this.widget.child)
-    }
+    child_accessors!(child, set_child, child_mut, erased);
 }
 
 /// A button was pressed.
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct ButtonPress {
     /// The pointer button that has been pressed.
     ///
@@ -99,6 +85,13 @@ pub struct ButtonPress {
 // --- MARK: IMPL WIDGET
 impl Widget for Button {
     type Action = ButtonPress;
+
+    // The standard control minimum keeps adjacent widgets aligned.
+    masonry_core::single_child_container!(
+        child,
+        UnitPoint::CENTER,
+        min = (Length::ZERO, theme::BASIC_WIDGET_HEIGHT)
+    );
 
     fn on_pointer_event(
         &mut self,
@@ -166,59 +159,7 @@ impl Widget for Button {
     ) {
     }
 
-    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.child);
-    }
-
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: TypeId) {}
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        axis: Axis,
-        len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        let auto_length = len_req.into();
-        let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-
-        let child_length = ctx.compute_length(
-            &mut self.child,
-            auto_length,
-            context_size,
-            axis,
-            cross_length,
-        );
-
-        let length = child_length;
-
-        // TODO - Add MinimumSize property.
-        // HACK: to make sure we look okay at default sizes when beside a text input,
-        // we make sure we will have at least the same height as the default text input.
-        match axis {
-            Axis::Horizontal => length,
-            Axis::Vertical => length.max(theme::BASIC_WIDGET_HEIGHT),
-        }
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let child_size = ctx.compute_size(&mut self.child, SizeDef::fit(size), size.into());
-        ctx.run_layout(&mut self.child, child_size);
-
-        let child_origin = ((size - child_size).to_vec2() * 0.5).to_point();
-        ctx.place_child(&mut self.child, child_origin);
-
-        ctx.derive_baselines(&self.child);
-    }
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-    }
 
     fn accessibility_role(&self) -> Role {
         Role::Button
@@ -233,10 +174,6 @@ impl Widget for Button {
         node.add_action(accesskit::Action::Click);
     }
 
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.child.id()])
-    }
-
     fn propagates_pointer_interaction(&self) -> bool {
         false
     }
@@ -244,11 +181,6 @@ impl Widget for Button {
     fn accepts_focus(&self) -> bool {
         // Buttons can be tab-focused...
         true
-    }
-
-    fn accepts_text_input(&self) -> bool {
-        // But they still aren't text areas.
-        false
     }
 
     fn make_trace_span(&self, id: WidgetId) -> Span {
@@ -286,9 +218,11 @@ mod tests {
 
         assert!(harness.pop_action_erased().is_none());
 
-        harness.mouse_click_on(button_id, Some(PointerButton::Primary));
+        harness
+            .mouse_click_on(button_id, Some(PointerButton::Primary))
+            .unwrap();
         assert_eq!(
-            harness.pop_action::<ButtonPress>(),
+            harness.pop_action::<ButtonPress>().unwrap(),
             Some((
                 ButtonPress {
                     button: Some(PointerButton::Primary)
@@ -302,10 +236,10 @@ mod tests {
         harness.press_tab_key(false);
         assert_eq!(harness.focused_widget().map(|w| w.id()), Some(button_id));
 
-        harness.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
-        harness.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        harness.process_text_event(&TextEvent::key_down(Key::Character(" ".into())));
+        harness.process_text_event(&TextEvent::key_up(Key::Character(" ".into())));
         assert_eq!(
-            harness.pop_action(),
+            harness.pop_action().unwrap(),
             Some((ButtonPress { button: None }, button_id))
         );
     }
@@ -317,7 +251,7 @@ mod tests {
         let button_id = harness.root_id();
 
         harness.focus_on(None);
-        harness.mouse_move_to(button_id);
+        harness.mouse_move_to(button_id).unwrap();
         harness.mouse_button_press(None);
 
         assert_eq!(harness.focused_widget_id(), Some(button_id));
@@ -335,7 +269,7 @@ mod tests {
 
             let mut harness = TestHarness::create_with_size(test_property_set(), button, (50, 50));
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         let image_2 = {
@@ -343,17 +277,18 @@ mod tests {
 
             let mut harness = TestHarness::create_with_size(test_property_set(), button, (50, 50));
 
-            harness.edit_root_widget(|mut button| {
-                let mut label = Button::child_mut(&mut button);
-                let mut label = label.downcast();
+            harness
+                .edit_root_widget(|mut button| {
+                    let mut label = Button::child_mut::<Label>(&mut button).unwrap();
 
-                Label::set_text(&mut label, "The quick brown fox jumps over the lazy dog");
+                    Label::set_text(&mut label, "The quick brown fox jumps over the lazy dog");
 
-                label.insert_prop(ContentColor::new(ACCENT_COLOR));
-                Label::insert_style(&mut label, StyleProperty::FontSize(20.0));
-            });
+                    label.insert_prop(ContentColor::new(ACCENT_COLOR));
+                    Label::insert_style(&mut label, StyleProperty::FontSize(20.0));
+                })
+                .unwrap();
 
-            harness.render()
+            harness.render().unwrap()
         };
 
         // We don't use assert_eq because we don't want rich assert
@@ -367,15 +302,17 @@ mod tests {
 
         let mut harness = TestHarness::create_with_size(test_property_set(), button, (200, 80));
 
-        harness.edit_root_widget(|mut button| {
-            button.insert_prop(BorderColor { color: red });
-            button.insert_prop(BorderWidth { width: 5.px() });
-            button.insert_prop(CornerRadius { radius: 20.px() });
-            button.insert_prop(Padding::from_vh(3.px(), 8.px()));
+        harness
+            .edit_root_widget(|mut button| {
+                button.insert_prop(BorderColor { color: red });
+                button.insert_prop(BorderWidth { width: 5.px() });
+                button.insert_prop(CornerRadius { radius: 20.px() });
+                button.insert_prop(Padding::from_vh(3.px(), 8.px()));
 
-            let mut label = Button::child_mut(&mut button);
-            label.insert_prop(ContentColor::new(red));
-        });
+                let mut label = Button::child_mut::<Label>(&mut button).unwrap();
+                label.insert_prop(ContentColor::new(red));
+            })
+            .unwrap();
 
         assert_render_snapshot!(harness, "button_set_properties");
     }
@@ -398,43 +335,42 @@ mod tests {
         let test_params = TestHarnessParams::default().with_size((300, 300));
         let mut harness = TestHarness::create_with(test_property_set(), root_widget, test_params);
 
-        harness.edit_root_widget(|mut grid| {
-            {
-                let mut button = Grid::get_mut(&mut grid, 0);
-                let mut button = button.downcast::<Button>();
-                button.insert_prop(BoxShadow::new(ORANGE, (10., 10.)));
-            }
+        harness
+            .edit_root_widget(|mut grid| {
+                {
+                    let mut button = Grid::get_mut::<Button>(&mut grid, 0).unwrap();
+                    button.insert_prop(BoxShadow::new(ORANGE, (10., 10.)));
+                }
 
-            {
-                let mut button = Grid::get_mut(&mut grid, 1);
-                let mut button = button.downcast::<Button>();
-                button.insert_prop(BoxShadow::new(ORANGE, (-10., 10.)).blur(5.px()));
-            }
+                {
+                    let mut button = Grid::get_mut::<Button>(&mut grid, 1).unwrap();
+                    button.insert_prop(BoxShadow::new(ORANGE, (-10., 10.)).blur(5.px()));
+                }
 
-            {
-                let mut button = Grid::get_mut(&mut grid, 2);
-                let mut button = button.downcast::<Button>();
-                button.insert_prop(BoxShadow::new(ORANGE, (-10., -10.)).blur(0.px()));
-            }
+                {
+                    let mut button = Grid::get_mut::<Button>(&mut grid, 2).unwrap();
+                    button.insert_prop(BoxShadow::new(ORANGE, (-10., -10.)).blur(0.px()));
+                }
 
-            {
-                let mut button = Grid::get_mut(&mut grid, 3);
-                let mut button = button.downcast::<Button>();
-                button.insert_prop(BoxShadow::new(ORANGE, (0., 0.)).blur(5.px()));
-            }
-        });
+                {
+                    let mut button = Grid::get_mut::<Button>(&mut grid, 3).unwrap();
+                    button.insert_prop(BoxShadow::new(ORANGE, (0., 0.)).blur(5.px()));
+                }
+            })
+            .unwrap();
 
         assert_render_snapshot!(harness, "button_shadows");
 
         // Check that slightly changing the blur radius makes the screenshot test fail.
-        harness.edit_root_widget(|mut grid| {
-            // Copy-pasted from second case above.
-            {
-                let mut button = Grid::get_mut(&mut grid, 1);
-                let mut button = button.downcast::<Button>();
-                button.insert_prop(BoxShadow::new(ORANGE, (-10., 10.)).blur(2.5.px()));
-            }
-        });
+        harness
+            .edit_root_widget(|mut grid| {
+                // Copy-pasted from second case above.
+                {
+                    let mut button = Grid::get_mut::<Button>(&mut grid, 1).unwrap();
+                    button.insert_prop(BoxShadow::new(ORANGE, (-10., 10.)).blur(2.5.px()));
+                }
+            })
+            .unwrap();
         assert_failing_render_snapshot!(harness, "button_shadows");
     }
 
@@ -448,14 +384,14 @@ mod tests {
         let button_id = button.id();
         let mut harness = TestHarness::create(test_property_set(), button);
 
-        harness.mouse_move_to_unchecked(child_id);
-        let button = harness.get_widget_with_id(button_id);
+        harness.mouse_move_to_unchecked(child_id).unwrap();
+        let button = harness.get_widget_with_id(button_id).unwrap();
         assert!(
             button.ctx().is_hovered(),
             "The child shouldn't prevent hover."
         );
         harness.mouse_button_press(None);
-        let button = harness.get_widget_with_id(button_id);
+        let button = harness.get_widget_with_id(button_id).unwrap();
         assert!(
             button.ctx().is_pointer_capture_target(),
             "A non-interactive child shouldn't prevent pointer capture."
@@ -463,6 +399,7 @@ mod tests {
         harness.mouse_button_release(None);
         let (_, event_id) = harness
             .pop_action::<<Button as Widget>::Action>()
+            .unwrap()
             .expect("There should be an action.");
         assert_eq!(
             event_id, button_id,
@@ -501,13 +438,15 @@ mod tests {
         let params =
             TestHarnessParams::size_and_padding((100, 40), TestHarnessParams::ROOT_PADDING);
         let mut harness = TestHarness::create_with(test_property_set(), parent, params);
-        let button_id = harness.get_widget(tag).id();
+        let button_id = harness.get_widget(tag).unwrap().id();
 
         assert_render_snapshot!(harness, "button_no_text");
 
-        harness.mouse_click_on(button_id, Some(PointerButton::Primary));
+        harness
+            .mouse_click_on(button_id, Some(PointerButton::Primary))
+            .unwrap();
         assert_matches!(
-            harness.pop_action::<ButtonPress>(),
+            harness.pop_action::<ButtonPress>().unwrap(),
             Some((ButtonPress { .. }, ..))
         );
     }

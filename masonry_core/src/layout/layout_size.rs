@@ -9,6 +9,7 @@ use crate::layout::Length;
 ///
 /// A length may be missing if it has not been computed yet, i.e. it depends on the child.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[must_use = "Use the calculated layout size."]
 pub struct LayoutSize {
     width: Option<Length>,
     height: Option<Length>,
@@ -32,7 +33,7 @@ impl LayoutSize {
     };
 
     /// Creates a new [`LayoutSize`] with the given lengths.
-    pub fn new(width: Length, height: Length) -> Self {
+    pub const fn new(width: Length, height: Length) -> Self {
         Self {
             width: Some(width),
             height: Some(height),
@@ -40,7 +41,7 @@ impl LayoutSize {
     }
 
     /// Creates a new [`LayoutSize`] with only the given `axis` set to `length`.
-    pub fn one(axis: Axis, length: Length) -> Self {
+    pub const fn one(axis: Axis, length: Length) -> Self {
         match axis {
             Axis::Horizontal => Self {
                 width: Some(length),
@@ -54,17 +55,15 @@ impl LayoutSize {
     }
 
     /// Creates a new [`LayoutSize`] with only the given `axis` set to `length`.
-    pub fn maybe(axis: Axis, length: Option<Length>) -> Self {
+    pub const fn maybe(axis: Axis, length: Option<Length>) -> Self {
         let Some(length) = length else {
-            return Self {
-                width: None,
-                height: None,
-            };
+            return Self::NONE;
         };
         Self::one(axis, length)
     }
 
     /// Returns the [`Length`] of the provided `axis`.
+    #[must_use = "Use the length of the requested axis."]
     pub const fn length(&self, axis: Axis) -> Option<Length> {
         match axis {
             Axis::Horizontal => self.width,

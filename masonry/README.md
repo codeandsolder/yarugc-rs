@@ -82,7 +82,7 @@ use masonry_winit::winit::window::Window;
 
 const TEXT_INPUT_TAG: WidgetTag<TextInput> = WidgetTag::named("text-input");
 const LIST_TAG: WidgetTag<Flex> = WidgetTag::named("list");
-const WIDGET_SPACING: Length = Length::const_px(5.0);
+const WIDGET_SPACING: Length = masonry::layout::length!(5.0);
 
 struct Driver {
     next_task: String,
@@ -100,13 +100,13 @@ impl AppDriver for Driver {
         debug_assert_eq!(window_id, self.window_id, "unknown window");
 
         if action.is::<ButtonPress>() {
-            let render_root = ctx.render_root(window_id);
+            let Some(render_root) = ctx.render_root(window_id) else { return; };
 
-            render_root.edit_widget_with_tag(TEXT_INPUT_TAG, |mut text_input| {
-                let mut text_area = TextInput::text_mut(&mut text_input);
+            let _ = render_root.edit_widget_with_tag(TEXT_INPUT_TAG, |mut text_input| {
+                let Some(mut text_area) = TextInput::text_mut(&mut text_input) else { return; };
                 TextArea::reset_text(&mut text_area, "");
             });
-            render_root.edit_widget_with_tag(LIST_TAG, |mut list| {
+            let _ = render_root.edit_widget_with_tag(LIST_TAG, |mut list| {
                 let child = Label::new(self.next_task.clone()).prepare();
                 Flex::add_fixed(&mut list, child);
             });

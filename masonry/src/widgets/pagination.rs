@@ -45,7 +45,8 @@ struct PageButton {
 /// --- MARK: BUILDERS
 impl Pagination {
     /// Creates a new [`Pagination`] with the given `page_count`.
-    pub fn new(page_count: usize) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn new(page_count: usize) -> Self {
         Self {
             page_count,
             active_page: 0,
@@ -61,6 +62,7 @@ impl Pagination {
     /// This is a 0-based index and defaults to `0`.
     ///
     /// It is clamped to the total page count.
+    #[must_use = "Use the returned value."]
     pub fn active_page(mut self, active_page: usize) -> Self {
         self.active_page = if self.page_count == 0 {
             0
@@ -73,7 +75,8 @@ impl Pagination {
     /// Sets the maximum number of buttons to always show for the first pages.
     ///
     /// This defaults to `1`.
-    pub fn buttons_start(mut self, buttons_start: u8) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn buttons_start(mut self, buttons_start: u8) -> Self {
         self.buttons_start = buttons_start;
         self
     }
@@ -81,7 +84,8 @@ impl Pagination {
     /// Sets the maximum number of buttons to always show for the last pages.
     ///
     /// This defaults to `1`.
-    pub fn buttons_end(mut self, buttons_end: u8) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn buttons_end(mut self, buttons_end: u8) -> Self {
         self.buttons_end = buttons_end;
         self
     }
@@ -91,7 +95,8 @@ impl Pagination {
     /// The effective button limit also depends on the total page count.
     ///
     /// This defaults to `9`.
-    pub fn buttons_total(mut self, buttons_total: u8) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn buttons_total(mut self, buttons_total: u8) -> Self {
         self.buttons_total = buttons_total;
         self
     }
@@ -195,7 +200,7 @@ impl Pagination {
         }
 
         // Make sure the chosen page indices are in ascending order.
-        button_pages.sort();
+        button_pages.sort_unstable();
 
         button_pages
     }
@@ -206,8 +211,10 @@ impl Pagination {
         let button_pages = self.derive_button_pages();
 
         // Remove any excess buttons that were created before the total limit was reduced.
-        while self.buttons.len() > self.buttons_total as usize {
-            let button = self.buttons.pop().unwrap();
+        for button in self
+            .buttons
+            .drain(usize::from(self.buttons_total).min(self.buttons.len())..)
+        {
             ctx.remove_child(button.widget);
         }
         // Stash all buttons that are within the limit but not in use.
@@ -218,29 +225,30 @@ impl Pagination {
             .filter(|button| !button.stashed)
         {
             button.stashed = true;
-            ctx.set_stashed(&mut button.widget, true);
+            ctx.set_stashed(&button.widget, true);
         }
         // Make sure all the existing buttons have the correct info.
         for (button, &page_idx) in self.buttons.iter_mut().zip(button_pages.iter()) {
             if button.page_idx != page_idx {
                 button.page_idx = page_idx;
                 let new_text = format!("{}", page_idx + 1);
-                ctx.mutate_child_later(&mut button.widget, move |mut button| {
-                    let mut btn_child = Button::child_mut(&mut button);
-                    let mut btn_label = btn_child.downcast::<Label>();
+                ctx.mutate_child_later(&button.widget, move |mut button| {
+                    let Some(mut btn_label) = Button::child_mut::<Label>(&mut button) else {
+                        return;
+                    };
                     Label::set_text(&mut btn_label, new_text);
                 });
             }
             let disabled = button.page_idx == self.active_page;
             if button.disabled != disabled {
                 button.disabled = disabled;
-                ctx.mutate_child_later(&mut button.widget, move |mut button| {
+                ctx.mutate_child_later(&button.widget, move |mut button| {
                     button.ctx.set_disabled(disabled);
                 });
             }
             if button.stashed {
                 button.stashed = false;
-                ctx.set_stashed(&mut button.widget, false);
+                ctx.set_stashed(&button.widget, false);
             }
         }
         // Create any missing buttons.
@@ -249,7 +257,7 @@ impl Pagination {
             let text = format!("{}", page_idx + 1);
             let disabled = page_idx == self.active_page;
             let button = Button::with_text(text);
-            let button = NewWidget::new(button).disabled(disabled).to_pod();
+            let button = NewWidget::new(button).disabled(disabled).into_pod();
             self.buttons.push(PageButton {
                 widget: button,
                 disabled,
@@ -324,7 +332,7 @@ impl Widget for Pagination {
         for button in self.buttons.iter_mut().filter(|button| !button.stashed) {
             let auto_length = len_req.reduce(length).into();
             let button_length = ctx.compute_length(
-                &mut button.widget,
+                &button.widget,
                 auto_length,
                 context_size,
                 axis,
@@ -343,13 +351,12 @@ impl Widget for Pagination {
         let mut used_width = 0.;
         for button in self.buttons.iter_mut().filter(|button| !button.stashed) {
             let space = Size::new((size.width - used_width).max(0.), size.height);
-            let button_size =
-                ctx.compute_size(&mut button.widget, SizeDef::fit(space), size.into());
+            let button_size = ctx.compute_size(&button.widget, SizeDef::fit(space), size.into());
 
-            ctx.run_layout(&mut button.widget, button_size);
+            ctx.run_layout(&button.widget, button_size);
 
             let button_origin = Point::new(used_width, 0.);
-            ctx.place_child(&mut button.widget, button_origin);
+            ctx.place_child(&button.widget, button_origin);
 
             used_width += button_size.width;
         }
@@ -395,11 +402,11 @@ impl Widget for Pagination {
 /// Collections of context methods required to sync buttons.
 trait SyncCtx {
     fn children_changed(&mut self);
-    fn set_stashed(&mut self, child: &mut WidgetPod<impl Widget + ?Sized>, stashed: bool);
+    fn set_stashed(&mut self, child: &WidgetPod<impl Widget + ?Sized>, stashed: bool);
     fn remove_child(&mut self, child: WidgetPod<impl Widget + ?Sized>);
     fn mutate_child_later<W: Widget + FromDynWidget + ?Sized>(
         &mut self,
-        child: &mut WidgetPod<W>,
+        child: &WidgetPod<W>,
         f: impl FnOnce(WidgetMut<'_, W>) + Send + 'static,
     );
 }
@@ -409,7 +416,7 @@ impl SyncCtx for MutateCtx<'_> {
         self.children_changed();
     }
 
-    fn set_stashed(&mut self, child: &mut WidgetPod<impl Widget + ?Sized>, stashed: bool) {
+    fn set_stashed(&mut self, child: &WidgetPod<impl Widget + ?Sized>, stashed: bool) {
         self.set_stashed(child, stashed);
     }
 
@@ -419,7 +426,7 @@ impl SyncCtx for MutateCtx<'_> {
 
     fn mutate_child_later<W: Widget + FromDynWidget + ?Sized>(
         &mut self,
-        child: &mut WidgetPod<W>,
+        child: &WidgetPod<W>,
         f: impl FnOnce(WidgetMut<'_, W>) + Send + 'static,
     ) {
         self.mutate_child_later(child, f);
@@ -431,7 +438,7 @@ impl SyncCtx for ActionCtx<'_> {
         self.children_changed();
     }
 
-    fn set_stashed(&mut self, child: &mut WidgetPod<impl Widget + ?Sized>, stashed: bool) {
+    fn set_stashed(&mut self, child: &WidgetPod<impl Widget + ?Sized>, stashed: bool) {
         self.set_stashed(child, stashed);
     }
 
@@ -441,7 +448,7 @@ impl SyncCtx for ActionCtx<'_> {
 
     fn mutate_child_later<W: Widget + FromDynWidget + ?Sized>(
         &mut self,
-        child: &mut WidgetPod<W>,
+        child: &WidgetPod<W>,
         f: impl FnOnce(WidgetMut<'_, W>) + Send + 'static,
     ) {
         self.mutate_child_later(child, f);
@@ -453,7 +460,7 @@ impl SyncCtx for UpdateCtx<'_> {
         self.children_changed();
     }
 
-    fn set_stashed(&mut self, child: &mut WidgetPod<impl Widget + ?Sized>, stashed: bool) {
+    fn set_stashed(&mut self, child: &WidgetPod<impl Widget + ?Sized>, stashed: bool) {
         self.set_stashed(child, stashed);
     }
 
@@ -463,7 +470,7 @@ impl SyncCtx for UpdateCtx<'_> {
 
     fn mutate_child_later<W: Widget + FromDynWidget + ?Sized>(
         &mut self,
-        child: &mut WidgetPod<W>,
+        child: &WidgetPod<W>,
         f: impl FnOnce(WidgetMut<'_, W>) + Send + 'static,
     ) {
         self.mutate_child_later(child, f);

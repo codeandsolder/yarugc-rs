@@ -67,6 +67,7 @@ pub enum GradientShape {
 /// "The gradient goes from point A to point B", we declare things like
 /// "The gradient has angle X", and A and B and computed dynamically from widget layout.
 #[derive(Clone, Debug, PartialEq)]
+#[must_use = "Use the configured gradient as a brush."]
 pub struct Gradient {
     /// Shape and coordinates of the gradient.
     pub shape: GradientShape,
@@ -114,7 +115,7 @@ pub enum RadialGradientShape {
 /// Matches the `radial-extent` parameter of the [`radial-gradient()`] syntax.
 ///
 /// [`radial-gradient()`]: https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/radial-gradient#size
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RadialGradientExtent {
     /// Interpreted like CSS `closest-corner` size.
     ClosestCorner,
@@ -218,6 +219,7 @@ impl Gradient {
     /// Returns gradient brush covering the given Rect.
     ///
     /// This matches the CSS spec for [`linear-gradient()`](https://drafts.csswg.org/css-images-3/#linear-gradient-syntax).
+    #[must_use = "Use the gradient brush."]
     pub fn get_peniko_gradient_for_rect(&self, rect: Rect) -> peniko::Gradient {
         peniko::Gradient {
             kind: self.shape.get_peniko_kind_for_rect(rect),
@@ -230,14 +232,11 @@ impl Gradient {
     }
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "no other way to go from f64 to f32"
-)]
 impl GradientShape {
     /// Returns gradient coordinates for a gradient covering the given Rect.
     ///
     /// This matches the CSS spec for [`linear-gradient()`](https://drafts.csswg.org/css-images-3/#linear-gradient-syntax).
+    #[must_use = "Use the resolved gradient geometry."]
     pub fn get_peniko_kind_for_rect(&self, rect: Rect) -> peniko::GradientKind {
         match self {
             Self::Linear { angle } => Self::get_peniko_linear_for_rect(*angle, rect),
@@ -272,6 +271,10 @@ impl GradientShape {
         LinearGradientPosition { start, end }.into()
     }
 
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "Peniko uses f32 radii; input is saturated to its finite range"
+    )]
     fn get_peniko_radial_for_rect(
         center: UnitPoint,
         shape: RadialGradientShape,
@@ -284,44 +287,41 @@ impl GradientShape {
             start_center: center,
             start_radius: 0.,
             end_center: center,
-            end_radius: radius as f32,
+            end_radius: radius.max(0.0).min(f64::from(f32::MAX)) as f32,
         }
         .into()
     }
 
     fn get_gradient_radius(rect: Rect, center: Point, shape: RadialGradientShape) -> f64 {
-        let center_offset = center - rect.origin();
+        let extent = match shape {
+            RadialGradientShape::CircleTo(extent) => extent,
+            RadialGradientShape::FixedCircle(radius) => return radius.get(),
+        };
 
-        let dist_to_sides = [
-            f64::abs(center_offset.x),
-            f64::abs(center_offset.y),
-            f64::abs(rect.size().width - center_offset.x),
-            f64::abs(rect.size().height - center_offset.y),
-        ];
-        let dist_to_corners = [
-            center.distance(Point::new(rect.x0, rect.y0)),
-            center.distance(Point::new(rect.x1, rect.y0)),
-            center.distance(Point::new(rect.x0, rect.y1)),
-            center.distance(Point::new(rect.x1, rect.y1)),
-        ];
+        // Corners are the Cartesian product of the two x and y edge
+        // coordinates. The nearest/farthest corner therefore uses the
+        // nearest/farthest edge independently on each axis.
+        let left = (center.x - rect.x0).abs();
+        let right = (center.x - rect.x1).abs();
+        let top = (center.y - rect.y0).abs();
+        let bottom = (center.y - rect.y1).abs();
+        let near_x = left.min(right);
+        let near_y = top.min(bottom);
+        let far_x = left.max(right);
+        let far_y = top.max(bottom);
 
-        match shape {
-            RadialGradientShape::CircleTo(RadialGradientExtent::ClosestCorner) => {
-                dist_to_corners.into_iter().reduce(f64::min).unwrap()
-            }
-            RadialGradientShape::CircleTo(RadialGradientExtent::ClosestSide) => {
-                dist_to_sides.into_iter().reduce(f64::min).unwrap()
-            }
-            RadialGradientShape::CircleTo(RadialGradientExtent::FarthestSide) => {
-                dist_to_sides.into_iter().reduce(f64::max).unwrap()
-            }
-            RadialGradientShape::CircleTo(RadialGradientExtent::FarthestCorner) => {
-                dist_to_corners.into_iter().reduce(f64::max).unwrap()
-            }
-            RadialGradientShape::FixedCircle(radius) => radius.get(),
+        match extent {
+            RadialGradientExtent::ClosestCorner => near_x.hypot(near_y),
+            RadialGradientExtent::ClosestSide => near_x.min(near_y),
+            RadialGradientExtent::FarthestSide => far_x.max(far_y),
+            RadialGradientExtent::FarthestCorner => far_x.hypot(far_y),
         }
     }
 
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "Peniko represents gradient angles as f32"
+    )]
     fn get_peniko_sweep_for_rect(
         center: UnitPoint,
         start_angle: f64,
@@ -330,16 +330,8 @@ impl GradientShape {
     ) -> peniko::GradientKind {
         let center = center.resolve(rect);
 
-        // TODO: We'd like to write:
-        #[cfg(false)]
-        crate::peniko::GradientKind::Sweep {
-            center,
-            start_angle: (-start_angle - FRAC_PI_2) as f32,
-            end_angle: (-end_angle - FRAC_PI_2) as f32,
-        };
-        // but Vello currently doesn't let us do this kind of gradient
-        // offsetting.
-        // Giving Vello angles outside the 0..2*PI range just culls the displayed gradient.
+        // Keep the renderer's native angle convention; Vello currently culls
+        // sweeps outside the 0..2*PI range.
 
         SweepGradientPosition {
             center,
@@ -353,5 +345,68 @@ impl GradientShape {
 impl Default for RadialGradientShape {
     fn default() -> Self {
         Self::CircleTo(RadialGradientExtent::FarthestCorner)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn radial_extents_match_brute_force_for_arbitrary_centers() {
+        let rects = [
+            Rect::new(10.0, 20.0, 110.0, 80.0),
+            Rect::new(110.0, 80.0, 10.0, 20.0),
+            Rect::new(0.0, 0.0, 0.0, 0.0),
+        ];
+        for rect in rects {
+            for x in [-100.0, 10.0, 50.0, 110.0, 200.0] {
+                for y in [-100.0, 20.0, 50.0, 80.0, 200.0] {
+                    let center = Point::new(x, y);
+                    let corners = [
+                        Point::new(rect.x0, rect.y0),
+                        Point::new(rect.x1, rect.y0),
+                        Point::new(rect.x0, rect.y1),
+                        Point::new(rect.x1, rect.y1),
+                    ]
+                    .map(|corner| center.distance(corner));
+                    let sides = [
+                        (x - rect.x0).abs(),
+                        (x - rect.x1).abs(),
+                        (y - rect.y0).abs(),
+                        (y - rect.y1).abs(),
+                    ];
+                    let expected = [
+                        (
+                            RadialGradientExtent::ClosestCorner,
+                            corners.into_iter().fold(f64::INFINITY, f64::min),
+                        ),
+                        (
+                            RadialGradientExtent::FarthestCorner,
+                            corners.into_iter().fold(0.0, f64::max),
+                        ),
+                        (
+                            RadialGradientExtent::ClosestSide,
+                            sides.into_iter().fold(f64::INFINITY, f64::min),
+                        ),
+                        (
+                            RadialGradientExtent::FarthestSide,
+                            sides.into_iter().fold(0.0, f64::max),
+                        ),
+                    ];
+                    for (extent, radius) in expected {
+                        let actual = GradientShape::get_gradient_radius(
+                            rect,
+                            center,
+                            RadialGradientShape::CircleTo(extent),
+                        );
+                        assert!(
+                            (actual - radius).abs() <= f64::EPSILON * radius.max(1.0),
+                            "{rect:?}, {center:?}, {extent:?}: {actual} != {radius}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

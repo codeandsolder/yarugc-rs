@@ -5,8 +5,6 @@
 //!
 //! Uses the same dataset as the `http_cats` example.
 
-#![expect(clippy::missing_assert_message, reason = "Deferred: Noisy")]
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,9 +12,9 @@ use masonry::core::ArcStr;
 use masonry::layout::{AsUnit, Dim, UnitPoint};
 use masonry::properties::{LineBreaking, Padding};
 use winit::dpi::LogicalSize;
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::core::fork;
-use xilem::core::one_of::{OneOf, OneOf3};
+use xilem::core::one_of::{Either, OneOf, OneOf3};
 use xilem::palette::css::{BLACK, WHITE};
 use xilem::peniko::{Blob, ImageAlphaType, ImageData, ImageFormat};
 use xilem::style::Style as _;
@@ -49,10 +47,9 @@ enum ImageState {
 
 impl VirtualCats {
     fn virtual_item(&mut self, index: usize) -> impl WidgetView<Self> + use<> {
-        let item = self
-            .statuses
-            .get_mut(index)
-            .expect("VirtualScroll bounds set correctly.");
+        let Some(item) = self.statuses.get(index) else {
+            return Either::B(prose("Item no longer available"));
+        };
         let spawn_task = match &item.image {
             ImageState::Pending | ImageState::Error(_) => true,
             ImageState::Available(_) => false,
@@ -76,7 +73,7 @@ impl VirtualCats {
                 },
                 move |state: &mut Self, message| {
                     let Some(status) = state.statuses.iter_mut().find(|it| it.code == code) else {
-                        unreachable!("We never remove items from `statuses`")
+                        return;
                     };
                     status.image = match message {
                         Ok(image) => ImageState::Available(image),
@@ -124,10 +121,10 @@ impl VirtualCats {
                 OneOf::C(view)
             }
         };
-        fork(
+        Either::A(fork(
             flex_col((prose(item.message.clone()), img)).width(Dim::Stretch),
             task,
-        )
+        ))
     }
 
     fn view(&mut self) -> impl WidgetView<Self> + use<> {
@@ -140,7 +137,7 @@ impl VirtualCats {
 ///
 /// N.B. This is functionality shared with `http_cats`.
 async fn image_from_url(url: &str) -> anyhow::Result<ImageData> {
-    let response = reqwest::get(url).await?;
+    let response = reqwest::get(url).await?.error_for_status()?;
     let bytes = response.bytes().await?;
     let image = image::load_from_memory(&bytes)?.into_rgba8();
     let width = image.width();
@@ -155,7 +152,7 @@ async fn image_from_url(url: &str) -> anyhow::Result<ImageData> {
     })
 }
 
-fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
+fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
     let data = VirtualCats {
         statuses: Status::parse_file(),
     };
@@ -175,8 +172,11 @@ impl Status {
     fn parse_file() -> Vec<Self> {
         let mut lines = STATUS_CODES_CSV.lines();
         let first_line = lines.next();
-        assert_eq!(first_line, Some("code,message"));
-        lines.flat_map(Self::parse_single).collect()
+        if first_line != Some("code,message") {
+            tracing::error!("Invalid HTTP status CSV header");
+            return Vec::new();
+        }
+        lines.filter_map(Self::parse_single).collect()
     }
 
     fn parse_single(line: &'static str) -> Option<Self> {
@@ -198,6 +198,6 @@ const STATUS_CODES_CSV: &str = include_str!(concat!(
 ));
 
 // TODO: This example doesn't support Android because the virtual scroll component doesn't have gesture support.
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     run(EventLoop::with_user_event())
 }

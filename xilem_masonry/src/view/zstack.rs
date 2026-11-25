@@ -32,7 +32,7 @@ use crate::{Pod, ViewCtx, WidgetView};
 ///     ))
 /// }
 /// ```
-pub fn zstack<State: 'static, Action, Seq: ZStackSequence<State, Action>>(
+pub const fn zstack<State: 'static, Action, Seq: ZStackSequence<State, Action>>(
     sequence: Seq,
 ) -> ZStack<Seq> {
     ZStack {
@@ -93,7 +93,7 @@ where
         for child in elements.drain() {
             widget = widget.with(child.widget.new_widget, child.alignment);
         }
-        let pod = ctx.create_pod(widget);
+        let pod = Pod::new(widget);
         (
             pod,
             ZStackState {
@@ -210,45 +210,7 @@ where
         (ZStackElement::new(pod.erased(), self.alignment), state)
     }
 
-    fn rebuild(
-        &self,
-        prev: &Self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) {
-        {
-            if self.alignment != prev.alignment {
-                widgets::ZStack::set_params(&mut element.parent, element.idx, self.alignment);
-            }
-            let mut child = widgets::ZStack::get_mut(&mut element.parent, element.idx);
-            self.view
-                .rebuild(&prev.view, view_state, ctx, child.downcast(), app_state);
-        }
-    }
-
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-    ) {
-        let mut child = widgets::ZStack::get_mut(&mut element.parent, element.idx);
-        self.view.teardown(view_state, ctx, child.downcast());
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        mut element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        let mut child = widgets::ZStack::get_mut(&mut element.parent, element.idx);
-        self.view
-            .message(view_state, message, child.downcast(), app_state)
-    }
+    indexed_item_lifecycle!(ZStack, alignment);
 }
 
 // --- MARK: ZStackElement
@@ -271,30 +233,7 @@ impl ZStackElement {
     }
 }
 
-impl ViewElement for ZStackElement {
-    type Mut<'a> = ZStackElementMut<'a>;
-}
-
-impl SuperElement<Self, ViewCtx> for ZStackElement {
-    fn upcast(_ctx: &mut ViewCtx, child: Self) -> Self {
-        child
-    }
-
-    fn with_downcast_val<R>(
-        mut this: Mut<'_, Self>,
-        f: impl FnOnce(Mut<'_, Self>) -> R,
-    ) -> (Self::Mut<'_>, R) {
-        let r = {
-            let parent = this.parent.reborrow_mut();
-            let reborrow = ZStackElementMut {
-                idx: this.idx,
-                parent,
-            };
-            f(reborrow)
-        };
-        (this, r)
-    }
-}
+impl_indexed_element!(ZStackElement, ZStackElementMut);
 
 impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for ZStackElement {
     fn upcast(_: &mut ViewCtx, child: Pod<W>) -> Self {
@@ -304,12 +243,8 @@ impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for ZStac
     fn with_downcast_val<R>(
         mut this: Mut<'_, Self>,
         f: impl FnOnce(Mut<'_, Pod<W>>) -> R,
-    ) -> (Self::Mut<'_>, R) {
-        let ret = {
-            let mut child = widgets::ZStack::get_mut(&mut this.parent, this.idx);
-            let downcast = child.downcast();
-            f(downcast)
-        };
+    ) -> (Self::Mut<'_>, Option<R>) {
+        let ret = { widgets::ZStack::get_mut(&mut this.parent, this.idx).map(f) };
 
         (this, ret)
     }
@@ -332,78 +267,9 @@ where
 
 // MARK: Splice
 
-/// An implementation of [`ElementSplice`] for `ZStackElement`.
-pub struct ZStackSplice<'w, 's> {
-    idx: usize,
-    element: WidgetMut<'w, widgets::ZStack>,
-    scratch: &'s mut AppendVec<ZStackElement>,
-}
-
-impl<'w, 's> ZStackSplice<'w, 's> {
-    fn new(
-        element: WidgetMut<'w, widgets::ZStack>,
-        scratch: &'s mut AppendVec<ZStackElement>,
-    ) -> Self {
-        Self {
-            idx: 0,
-            element,
-            scratch,
-        }
-    }
-}
-
+type ZStackSplice<'w, 's> = super::CollectionSplice<'w, 's, widgets::ZStack, ZStackElement>;
 impl ElementSplice<ZStackElement> for ZStackSplice<'_, '_> {
-    fn with_scratch<R>(&mut self, f: impl FnOnce(&mut AppendVec<ZStackElement>) -> R) -> R {
-        let ret = f(self.scratch);
-        for element in self.scratch.drain() {
-            widgets::ZStack::insert(
-                &mut self.element,
-                self.idx,
-                element.widget.new_widget,
-                element.alignment,
-            );
-            self.idx += 1;
-        }
-        ret
-    }
+    collection_splice_insert!(ZStack, ZStackElement, widget, element => element.alignment);
 
-    fn insert(&mut self, element: ZStackElement) {
-        widgets::ZStack::insert(
-            &mut self.element,
-            self.idx,
-            element.widget.new_widget,
-            element.alignment,
-        );
-        self.idx += 1;
-    }
-
-    fn mutate<R>(&mut self, f: impl FnOnce(Mut<'_, ZStackElement>) -> R) -> R {
-        let child = ZStackElementMut {
-            parent: self.element.reborrow_mut(),
-            idx: self.idx,
-        };
-        let ret = f(child);
-        self.idx += 1;
-        ret
-    }
-
-    fn skip(&mut self, n: usize) {
-        self.idx += n;
-    }
-
-    fn index(&self) -> usize {
-        self.idx
-    }
-
-    fn delete<R>(&mut self, f: impl FnOnce(Mut<'_, ZStackElement>) -> R) -> R {
-        let ret = {
-            let child = ZStackElementMut {
-                parent: self.element.reborrow_mut(),
-                idx: self.idx,
-            };
-            f(child)
-        };
-        widgets::ZStack::remove(&mut self.element, self.idx);
-        ret
-    }
+    collection_splice_cursor!(ZStack, ZStackElement, ZStackElementMut);
 }

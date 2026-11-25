@@ -10,25 +10,105 @@
 // On Windows platform, don't show a console when opening the app.
 #![cfg_attr(not(test), windows_subsystem = "windows")]
 
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod badge;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod basics;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod checkbox;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod demo;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod divider;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod horizontal_color_picker;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod image;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod kitchen_sink;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod pagination;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod progress;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod radio_buttons;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod slider;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod spinner;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod split;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod step_input;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod svg;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod switch;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod text_input;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod tooltip;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod transforms;
 
 use masonry::core::{ErasedAction, NewWidget, StyleProperty, Widget as _, WidgetId, WidgetTag};
@@ -48,11 +128,11 @@ use crate::demo::{DemoPage, new_demo_shell_tags};
 use crate::horizontal_color_picker::{ColorSelected, HorizontalColorPicker};
 use crate::switch::SwitchDemo;
 
-const SIDEBAR_WIDTH: Length = Length::const_px(240.0);
-const SIDEBAR_SCROLLBAR_INSET: Length = Length::const_px(12.0);
-const LEFT_PANE_TOP_PADDING: Length = Length::const_px(12.0);
-const LEFT_PANE_LEFT_PADDING: Length = Length::const_px(12.0);
-const RIGHT_PANE_PADDING: Length = Length::const_px(12.0);
+const SIDEBAR_WIDTH: Length = masonry::layout::length!(240.0);
+const SIDEBAR_SCROLLBAR_INSET: Length = masonry::layout::length!(12.0);
+const LEFT_PANE_TOP_PADDING: Length = masonry::layout::length!(12.0);
+const LEFT_PANE_LEFT_PADDING: Length = masonry::layout::length!(12.0);
+const RIGHT_PANE_PADDING: Length = masonry::layout::length!(12.0);
 
 const DEMO_TITLE_FONT_SIZE: f32 = 20.0;
 
@@ -68,7 +148,7 @@ struct Driver {
 
 impl Driver {
     fn apply_demo_disabled(
-        &mut self,
+        &self,
         ctx: &mut DriverCtx<'_>,
         window_id: WindowId,
         demo_idx: usize,
@@ -76,11 +156,13 @@ impl Driver {
     ) {
         let shell = self.demos[demo_idx].shell_tags();
 
-        let render_root = ctx.render_root(window_id);
-        render_root.edit_widget_with_tag(shell.disabled_toggle, |mut checkbox| {
+        let Some(render_root) = ctx.render_root(window_id) else {
+            return;
+        };
+        let _ = render_root.edit_widget_with_tag(shell.disabled_toggle, |mut checkbox| {
             Checkbox::set_checked(&mut checkbox, disabled);
         });
-        render_root.edit_widget_with_tag(shell.content_wrapper, |mut content| {
+        let _ = render_root.edit_widget_with_tag(shell.content_wrapper, |mut content| {
             content.ctx.set_disabled(disabled);
         });
     }
@@ -94,12 +176,16 @@ impl Driver {
 
         {
             let name = self.demos[idx].name();
-            let render_root = ctx.render_root(window_id);
-            render_root.edit_widget_with_tag(self.title_tag, |mut label| {
+            let Some(render_root) = ctx.render_root(window_id) else {
+                return;
+            };
+            let _ = render_root.edit_widget_with_tag(self.title_tag, |mut label| {
                 Label::set_text(&mut label, name);
             });
-            render_root.edit_widget_with_tag(self.stack_tag, |mut stack| {
-                IndexedStack::set_active_child(&mut stack, idx);
+            let _ = render_root.edit_widget_with_tag(self.stack_tag, |mut stack| {
+                if let Err(error) = IndexedStack::set_active_child(&mut stack, idx) {
+                    tracing::error!(%error, "Invalid gallery tab");
+                }
             });
         }
 
@@ -107,7 +193,9 @@ impl Driver {
         self.apply_demo_disabled(ctx, window_id, idx, disabled);
 
         {
-            let render_root = ctx.render_root(window_id);
+            let Some(render_root) = ctx.render_root(window_id) else {
+                return;
+            };
             self.demos[idx].on_selected(render_root);
         }
     }
@@ -127,12 +215,14 @@ impl AppDriver for Driver {
         if action.is::<ButtonPress>() {
             // Sidebar: match by tagged ids.
             let selected_idx = {
-                let render_root = ctx.render_root(window_id);
+                let Some(render_root) = ctx.render_root(window_id) else {
+                    return;
+                };
                 self.sidebar_buttons
                     .iter()
                     .enumerate()
                     .find_map(|(idx, tag)| {
-                        let id = render_root.get_widget_with_tag(*tag).unwrap().id();
+                        let id = render_root.get_widget_with_tag(*tag)?.id();
                         (id == widget_id).then_some(idx)
                     })
             };
@@ -147,13 +237,12 @@ impl AppDriver for Driver {
         if let Some(toggled) = action.downcast_ref::<CheckboxToggled>() {
             let toggled = toggled.0;
             let disabled_demo = {
-                let render_root = ctx.render_root(window_id);
+                let Some(render_root) = ctx.render_root(window_id) else {
+                    return;
+                };
                 self.demos.iter().enumerate().find_map(|(idx, demo)| {
                     let shell = demo.shell_tags();
-                    let id = render_root
-                        .get_widget_with_tag(shell.disabled_toggle)
-                        .unwrap()
-                        .id();
+                    let id = render_root.get_widget_with_tag(shell.disabled_toggle)?.id();
                     (id == widget_id).then_some(idx)
                 })
             };
@@ -166,7 +255,9 @@ impl AppDriver for Driver {
         }
 
         // Forward everything else to demos.
-        let render_root = ctx.render_root(window_id);
+        let Some(render_root) = ctx.render_root(window_id) else {
+            return;
+        };
         for demo in &mut self.demos {
             if demo.on_action(render_root, &action, widget_id).is_handled() {
                 return;
@@ -200,7 +291,7 @@ fn build_demos() -> Vec<Box<dyn DemoPage>> {
     demos
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let demos = build_demos();
 
     // Sidebar button tags (one per demo).
@@ -285,6 +376,6 @@ fn main() {
         )],
         driver,
         default_property_set(),
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }

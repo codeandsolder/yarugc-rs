@@ -34,16 +34,20 @@ impl AppDriver for Driver {
     ) {
         debug_assert_eq!(window_id, self.window_id, "unknown window");
 
-        if action.is::<ButtonPress>() {
-            let button = action.downcast::<ButtonPress>().unwrap().button;
-            self.grid_gap += match button {
-                Some(PointerButton::Primary) => 1.0,
-                Some(PointerButton::Secondary) => -1.0,
-                _ => 0.5,
-            };
+        if let Some(press) = action.downcast_ref::<ButtonPress>() {
+            let button = press.button;
+            self.grid_gap = (self.grid_gap
+                + match button {
+                    Some(PointerButton::Primary) => 1.0,
+                    Some(PointerButton::Secondary) => -1.0,
+                    _ => 0.5,
+                })
+            .max(0.);
 
-            ctx.render_root(window_id).edit_base_layer(|mut root| {
-                let mut grid = root.downcast::<Grid>();
+            let Some(render_root) = ctx.render_root(window_id) else {
+                return;
+            };
+            let _ = render_root.edit_base_layer(|mut grid: masonry::core::WidgetMut<'_, Grid>| {
                 grid.insert_prop(Gap::new(Length::px(self.grid_gap)));
             });
         }
@@ -53,14 +57,19 @@ impl AppDriver for Driver {
 fn grid_button(params: GridParams) -> Button {
     Button::with_text(format!(
         "X: {}, Y: {}, W: {}, H: {}",
-        params.col.unwrap(),
-        params.row.unwrap(),
+        params
+            .col
+            .map_or_else(|| "auto".to_owned(), |col| col.to_string()),
+        params
+            .row
+            .map_or_else(|| "auto".to_owned(), |row| row.to_string()),
         params.width,
         params.height
     ))
 }
 
 /// Creates a grid with a bunch of buttons
+/// Builds a grid with the requested gap.
 pub fn make_grid(grid_gap: f64) -> NewWidget<Grid> {
     let label = Prose::from_text_area(
         TextArea::new_immutable("Change spacing by right and left clicking on the buttons")
@@ -95,7 +104,7 @@ pub fn make_grid(grid_gap: f64) -> NewWidget<Grid> {
     NewWidget::new(main_widget).with_props(PropertySet::one(Gap::new(Length::px(grid_gap))))
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let driver = Driver {
         grid_gap: 1.0,
         window_id: WindowId::next(),
@@ -116,8 +125,8 @@ fn main() {
         )],
         driver,
         default_property_set(),
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }
 
 // --- MARK: TESTS

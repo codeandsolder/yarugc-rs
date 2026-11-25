@@ -8,13 +8,10 @@ use include_doc_path::include_doc_path;
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesMut,
-    PropertiesRef, RegisterCtx, StyleProperty, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
-    WidgetPod,
+    AccessCtx, NewWidget, NoAction, PropertiesMut, PropertiesRef, StyleProperty, Update, UpdateCtx,
+    Widget, WidgetId, WidgetPod,
 };
-use crate::imaging::Painter;
-use crate::kurbo::{Axis, Size};
-use crate::layout::{LayoutSize, LenReq, Length, SizeDef};
+use crate::layout::UnitPoint;
 use crate::parley::style::FontWeight;
 use crate::widgets::Label;
 
@@ -71,9 +68,10 @@ impl Default for BadgeCountOverflow {
 // --- MARK: BUILDERS
 impl Badge {
     /// Creates a new badge with the provided child.
+    #[must_use = "Use the returned value."]
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
-            child: child.erased().to_pod(),
+            child: child.erased().into_pod(),
         }
     }
 
@@ -100,11 +98,13 @@ impl Badge {
     /// Creates a badge displaying a numeric count using the default overflow behavior.
     ///
     /// For a conditional badge that is hidden at `0`, see [`Badge::count_nonzero`].
+    #[must_use = "Use the returned value."]
     pub fn count(count: u32) -> Self {
         Self::count_with_overflow(count, BadgeCountOverflow::default())
     }
 
     /// Creates a badge displaying a numeric count, with explicit overflow formatting.
+    #[must_use = "Use the returned value."]
     pub fn count_with_overflow(count: u32, overflow: BadgeCountOverflow) -> Self {
         let text: Arc<str> = match overflow {
             BadgeCountOverflow::Exact => Arc::from(count.to_string().into_boxed_str()),
@@ -124,6 +124,7 @@ impl Badge {
     }
 
     /// Creates a numeric badge only when `count` is non-zero.
+    #[must_use = "Use the returned value."]
     pub fn count_nonzero(count: u32) -> Option<Self> {
         (count != 0).then(|| Self::count(count))
     }
@@ -131,70 +132,19 @@ impl Badge {
 
 // --- MARK: WIDGETMUT
 impl Badge {
-    /// Replaces the child widget with a new one.
-    pub fn set_child(this: &mut WidgetMut<'_, Self>, child: NewWidget<impl Widget + ?Sized>) {
-        this.ctx.remove_child(std::mem::replace(
-            &mut this.widget.child,
-            child.erased().to_pod(),
-        ));
-    }
-
-    /// Returns a mutable reference to the child.
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
-        this.ctx.get_mut(&mut this.widget.child)
-    }
+    child_accessors!(child, set_child, child_mut, erased);
 }
 
 // --- MARK: IMPL WIDGET
 impl Widget for Badge {
     type Action = NoAction;
 
-    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.child);
-    }
+    masonry_core::single_child_container!(child, UnitPoint::CENTER);
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         if matches!(event, Update::DisabledChanged(_)) {
             ctx.request_paint_only();
         }
-    }
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        axis: Axis,
-        len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        let auto_length = len_req.into();
-        let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-
-        ctx.compute_length(
-            &mut self.child,
-            auto_length,
-            context_size,
-            axis,
-            cross_length,
-        )
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let child_size = ctx.compute_size(&mut self.child, SizeDef::fit(size), size.into());
-        ctx.run_layout(&mut self.child, child_size);
-
-        let child_origin = ((size - child_size).to_vec2() * 0.5).to_point();
-        ctx.place_child(&mut self.child, child_origin);
-
-        ctx.derive_baselines(&self.child);
-    }
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
     }
 
     fn accessibility_role(&self) -> Role {
@@ -207,10 +157,6 @@ impl Widget for Badge {
         _props: &PropertiesRef<'_>,
         _node: &mut Node,
     ) {
-    }
-
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.child.id()])
     }
 
     fn make_trace_span(&self, id: WidgetId) -> Span {
@@ -235,7 +181,7 @@ mod tests {
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (80, 40));
         let badge_id = harness.root_id();
 
-        harness.mouse_click_on(badge_id, None);
+        harness.mouse_click_on(badge_id, None).unwrap();
         assert!(harness.pop_action_erased().is_none());
         assert!(harness.focused_widget().is_none());
     }

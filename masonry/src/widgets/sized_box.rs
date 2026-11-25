@@ -3,15 +3,14 @@
 
 use std::any::TypeId;
 
-use accesskit::{Node, Role};
+use accesskit::Role;
 use include_doc_path::include_doc_path;
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesRef,
+    ChildrenIds, FromDynWidget, LayoutCtx, MeasureCtx, NewWidget, NoAction, PropertiesRef,
     RegisterCtx, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
-use crate::imaging::Painter;
 use crate::kurbo::{Axis, Point, Size};
 use crate::layout::{LayoutSize, LenReq, Length};
 use crate::properties::{BorderWidth, Padding};
@@ -66,9 +65,10 @@ pub struct SizedBox {
 // --- MARK: BUILDERS
 impl SizedBox {
     /// Creates container with child, and both width and height unset.
+    #[must_use = "Use the returned value."]
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
-            child: Some(child.erased().to_pod()),
+            child: Some(child.erased().into_pod()),
             width: None,
             height: None,
         }
@@ -78,6 +78,7 @@ impl SizedBox {
     ///
     /// In this state it will render no content but will still render its border and padding.
     #[doc(alias = "null")]
+    #[must_use = "Use the returned value."]
     pub fn empty() -> Self {
         Self {
             child: None,
@@ -87,19 +88,22 @@ impl SizedBox {
     }
 
     /// Returns the container with `width`.
-    pub fn width(mut self, width: Length) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn width(mut self, width: Length) -> Self {
         self.width = Some(width);
         self
     }
 
     /// Returns the container with `height`.
-    pub fn height(mut self, height: Length) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn height(mut self, height: Length) -> Self {
         self.height = Some(height);
         self
     }
 
     /// Returns the container with `width` and `height`.
-    pub fn size(mut self, width: Length, height: Length) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn size(mut self, width: Length, height: Length) -> Self {
         self.width = Some(width);
         self.height = Some(height);
         self
@@ -108,7 +112,8 @@ impl SizedBox {
     /// Returns the container with `width`.
     ///
     /// `None` means that the width will be adopted from the child.
-    pub fn raw_width(mut self, width: Option<Length>) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn raw_width(mut self, width: Option<Length>) -> Self {
         self.width = width;
         self
     }
@@ -116,7 +121,8 @@ impl SizedBox {
     /// Returns the container with `height`.
     ///
     /// `None` means that the height will be adopted from the child.
-    pub fn raw_height(mut self, height: Option<Length>) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn raw_height(mut self, height: Option<Length>) -> Self {
         self.height = height;
         self
     }
@@ -125,6 +131,7 @@ impl SizedBox {
 // --- MARK: METHODS
 impl SizedBox {
     /// Returns the length of the given `axis`.
+    #[must_use = "Use the returned value."]
     pub const fn length(&self, axis: Axis) -> Option<Length> {
         match axis {
             Axis::Horizontal => self.width,
@@ -140,7 +147,7 @@ impl SizedBox {
         if let Some(child) = this.widget.child.take() {
             this.ctx.remove_child(child);
         }
-        this.widget.child = Some(child.erased().to_pod());
+        this.widget.child = Some(child.erased().into_pod());
         this.ctx.children_changed();
     }
 
@@ -201,9 +208,11 @@ impl SizedBox {
     }
 
     /// Returns mutable reference to the child widget, if any.
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, dyn Widget>> {
+    pub fn child_mut<'t, W: Widget + FromDynWidget + ?Sized>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> Option<WidgetMut<'t, W>> {
         let child = this.widget.child.as_mut()?;
-        Some(this.ctx.get_mut(child))
+        this.ctx.get_mut(child.id())
     }
 }
 
@@ -242,7 +251,7 @@ impl Widget for SizedBox {
         }
 
         // Otherwise measure the child
-        if let Some(child) = self.child.as_mut() {
+        self.child.as_mut().map_or(Length::ZERO, |child| {
             let cross = axis.cross();
             let cross_length = cross_length.or_else(|| {
                 // Can't use self.length() due to borrow checker stupidity,
@@ -262,9 +271,7 @@ impl Widget for SizedBox {
             let context_size = LayoutSize::maybe(cross, cross_length);
 
             ctx.compute_length(child, auto_length, context_size, axis, cross_length)
-        } else {
-            Length::ZERO
-        }
+        })
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
@@ -279,32 +286,12 @@ impl Widget for SizedBox {
         ctx.derive_baselines(child);
     }
 
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-    }
-
     fn accessibility_role(&self) -> Role {
         Role::GenericContainer
     }
 
-    fn accessibility(
-        &mut self,
-        _ctx: &mut AccessCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _node: &mut Node,
-    ) {
-    }
-
     fn children_ids(&self) -> ChildrenIds {
-        if let Some(child) = &self.child {
-            ChildrenIds::from_slice(&[child.id()])
-        } else {
-            ChildrenIds::from_slice(&[])
-        }
+        self.child.iter().map(WidgetPod::id).collect()
     }
 
     fn make_trace_span(&self, id: WidgetId) -> Span {

@@ -68,13 +68,13 @@ pub struct Checkbox<State, Action, F> {
 impl<State, Action, F> Checkbox<State, Action, F> {
     /// Sets text size of the checkbox label.
     #[doc(alias = "font_size")]
-    pub fn text_size(mut self, text_size: f32) -> Self {
+    pub const fn text_size(mut self, text_size: f32) -> Self {
         self.text_size = text_size;
         self
     }
 
     /// Sets font weight of the checkbox label.
-    pub fn weight(mut self, weight: FontWeight) -> Self {
+    pub const fn weight(mut self, weight: FontWeight) -> Self {
         self.weight = weight;
         self
     }
@@ -89,7 +89,7 @@ impl<State, Action, F> Checkbox<State, Action, F> {
     }
 
     /// Set the disabled state of the widget.
-    pub fn disabled(mut self, disabled: bool) -> Self {
+    pub const fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
@@ -111,8 +111,8 @@ where
             .with_style(StyleProperty::FontWeight(self.weight))
             .with_style(StyleProperty::FontFamily(self.font.clone()));
 
-        let element = ctx.with_action_widget(|ctx| {
-            let mut pod = ctx.create_pod(widgets::Checkbox::from_label(
+        let element = ctx.with_action_widget({
+            let mut pod = Pod::new(widgets::Checkbox::from_label(
                 self.checked,
                 NewWidget::new(label),
             ));
@@ -140,8 +140,10 @@ where
             widgets::Checkbox::set_checked(&mut element, self.checked);
         }
 
-        let mut label = widgets::Checkbox::label_mut(&mut element);
-        if prev.text_size != self.text_size {
+        let Some(mut label) = widgets::Checkbox::label_mut(&mut element) else {
+            return;
+        };
+        if prev.text_size.to_bits() != self.text_size.to_bits() {
             widgets::Label::insert_style(&mut label, StyleProperty::FontSize(self.text_size));
         }
         if prev.weight != self.weight {
@@ -152,32 +154,5 @@ where
         }
     }
 
-    fn teardown(
-        &self,
-        (): &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
-    ) {
-        ctx.teardown_action_source(element);
-    }
-
-    fn message(
-        &self,
-        (): &mut Self::ViewState,
-        message: &mut MessageCtx,
-        _element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        debug_assert!(
-            message.remaining_path().is_empty(),
-            "id path should be empty in Checkbox::message"
-        );
-        match message.take_message::<CheckboxToggled>() {
-            Some(checked) => MessageResult::Action((self.callback)(app_state, checked.0)),
-            None => {
-                tracing::error!("Wrong message type in Checkbox::message, got {message:?}.");
-                MessageResult::Stale
-            }
-        }
-    }
+    toggle_action_lifecycle!(CheckboxToggled);
 }

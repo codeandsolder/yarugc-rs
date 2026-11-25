@@ -3,15 +3,14 @@
 
 use std::any::TypeId;
 
-use accesskit::{Node, Role};
+use accesskit::Role;
 use include_doc_path::include_doc_path;
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, ChildrenIds, CollectionWidget, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
-    PropertiesRef, RegisterCtx, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    ChildrenIds, CollectionWidget, LayoutCtx, MeasureCtx, NewWidget, NoAction, PropertiesRef,
+    RegisterCtx, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
-use crate::imaging::Painter;
 use crate::kurbo::{Axis, Point, Size};
 use crate::layout::{LayoutSize, LenReq, Length, SizeDef};
 
@@ -40,34 +39,24 @@ pub struct IndexedStack {
 // --- MARK: BUILDERS
 impl IndexedStack {
     /// Creates a new stack with no children.
+    #[must_use = "Use the returned value."]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Builder-style method to add a child widget.
+    #[must_use = "Use the returned value."]
     pub fn with(mut self, child: NewWidget<impl Widget + ?Sized>) -> Self {
-        self.children.push(child.erased().to_pod());
+        self.children.push(child.erased().into_pod());
         self
     }
 
     /// Builder-style method to set the active child.
     ///
-    /// Index must be a valid index into the stack's children, or 0
-    /// if there are no children.
+    /// Clamps the index to the last child, or zero for an empty stack.
+    #[must_use = "Use the returned value."]
     pub fn with_active_child(mut self, idx: usize) -> Self {
-        if self.children.is_empty() {
-            assert!(
-                idx == 0,
-                "Called set_active on empty IndexedStack with non-zero index {idx}"
-            );
-        } else {
-            assert!(
-                idx < self.children.len(),
-                "Called set_active with invalid index {idx}"
-            );
-        }
-
-        self.active_child = idx;
+        self.active_child = idx.min(self.children.len().saturating_sub(1));
         self
     }
 }
@@ -75,57 +64,35 @@ impl IndexedStack {
 // --- MARK: METHODS
 impl IndexedStack {
     /// Returns the index of the currently active child.
-    pub fn active_child(&self) -> usize {
+    #[must_use = "Use the returned value."]
+    pub const fn active_child(&self) -> usize {
         self.active_child
     }
 }
 
 // --- MARK: WIDGETMUT
 impl IndexedStack {
-    /// Sets the active child.
+    /// Sets the active child, accepting index zero for an empty stack.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the index is larger than the number of children.
-    /// If there are no children, the index 0 is accepted.
-    pub fn set_active_child(this: &mut WidgetMut<'_, Self>, idx: usize) {
-        if this.widget.children.is_empty() {
-            assert!(
-                idx == 0,
-                "Called set_active_child on empty IndexedStack with non-zero index {idx}"
-            );
-        } else {
-            assert!(
-                idx < this.widget.children.len(),
-                "Called set_active_child with invalid index {idx}"
-            );
+    /// Returns an error for an invalid index, leaving the active child unchanged.
+    pub fn set_active_child(
+        this: &mut WidgetMut<'_, Self>,
+        idx: usize,
+    ) -> Result<(), crate::core::CollectionError> {
+        if idx != 0 || !this.widget.children.is_empty() {
+            crate::check_slot(idx, this.widget.children.len())?;
         }
         this.widget.active_child = idx;
         this.ctx.request_layout();
+        Ok(())
     }
 }
 
 // --- MARK: COLLECTIONWIDGET
 impl CollectionWidget<()> for IndexedStack {
-    /// Returns the number of children.
-    fn len(&self) -> usize {
-        self.children.len()
-    }
-
-    /// Returns `true` if there are no children.
-    fn is_empty(&self) -> bool {
-        self.children.is_empty()
-    }
-
-    /// Returns a mutable reference to the child widget at the given index.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `idx` is out of bounds.
-    fn get_mut<'t>(this: &'t mut WidgetMut<'_, Self>, idx: usize) -> WidgetMut<'t, dyn Widget> {
-        let child = &mut this.widget.children[idx];
-        this.ctx.get_mut(child)
-    }
+    collection_accessors!(child => child.id());
 
     /// Appends a child widget to the collection.
     fn add(
@@ -133,65 +100,91 @@ impl CollectionWidget<()> for IndexedStack {
         child: NewWidget<impl Widget + ?Sized>,
         _params: impl Into<()>,
     ) {
-        this.widget.children.push(child.erased().to_pod());
+        this.widget.children.push(child.erased().into_pod());
         this.ctx.children_changed();
     }
 
     /// Inserts a child widget at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is larger than the number of children.
+    /// Returns an error if `idx` is larger than the number of children.
     fn insert(
         this: &mut WidgetMut<'_, Self>,
         idx: usize,
         child: NewWidget<impl Widget + ?Sized>,
         _params: impl Into<()>,
-    ) {
-        this.widget.children.insert(idx, child.erased().to_pod());
-        if this.widget.active_child >= idx {
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_insert_slot(idx, this.widget.children.len())?;
+        let had_children = !this.widget.children.is_empty();
+        this.widget.children.insert(idx, child.erased().into_pod());
+        if had_children && this.widget.active_child >= idx {
             // adjust index to keep the same widget active
             this.widget.active_child += 1;
         }
         this.ctx.children_changed();
+        Ok(())
     }
 
     /// Replaces the child widget at the given index.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
+    /// Returns an error if `idx` is out of bounds.
     fn set(
         this: &mut WidgetMut<'_, Self>,
         idx: usize,
         child: NewWidget<impl Widget + ?Sized>,
         _params: impl Into<()>,
-    ) {
-        let old_child = std::mem::replace(&mut this.widget.children[idx], child.erased().to_pod());
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(idx, this.widget.children.len())?;
+        let old_child =
+            std::mem::replace(&mut this.widget.children[idx], child.erased().into_pod());
         this.ctx.remove_child(old_child);
+        Ok(())
     }
 
     /// Not applicable.
-    fn set_params(_this: &mut WidgetMut<'_, Self>, _idx: usize, _params: impl Into<()>) {}
+    fn set_params(
+        this: &mut WidgetMut<'_, Self>,
+        idx: usize,
+        _params: impl Into<()>,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(idx, this.widget.children.len())
+    }
 
     /// Swaps the index of two children.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `a` or `b` are out of bounds.
-    fn swap(this: &mut WidgetMut<'_, Self>, a: usize, b: usize) {
-        this.widget.children.swap(a, b);
+    /// Returns an error if `a` or `b` are out of bounds.
+    fn swap(
+        this: &mut WidgetMut<'_, Self>,
+        a: usize,
+        b: usize,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::swap_slots(&mut this.widget.children, a, b)?;
+        if this.widget.active_child == a {
+            this.widget.active_child = b;
+        } else if this.widget.active_child == b {
+            this.widget.active_child = a;
+        }
         this.ctx.children_changed();
+        Ok(())
     }
 
     /// Removes the child at the given index.
     ///
     /// If the active child is removed, the first child in the stack will be selected as active.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `idx` is out of bounds.
-    fn remove(this: &mut WidgetMut<'_, Self>, idx: usize) {
+    /// Returns an error if `idx` is out of bounds.
+    fn remove(
+        this: &mut WidgetMut<'_, Self>,
+        idx: usize,
+    ) -> Result<(), crate::core::CollectionError> {
+        crate::check_slot(idx, this.widget.children.len())?;
         let child = this.widget.children.remove(idx);
         if idx == this.widget.active_child {
             // This is valid even if we are removing the last child,
@@ -202,6 +195,7 @@ impl CollectionWidget<()> for IndexedStack {
             this.widget.active_child -= 1;
         }
         this.ctx.remove_child(child);
+        Ok(())
     }
 
     /// Removes all children.
@@ -218,7 +212,7 @@ impl Widget for IndexedStack {
     type Action = NoAction;
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        for child in self.children.iter_mut() {
+        for child in &mut self.children {
             ctx.register_child(child);
         }
     }
@@ -233,19 +227,19 @@ impl Widget for IndexedStack {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        if !self.children.is_empty() {
+        if self.children.is_empty() {
+            Length::ZERO
+        } else {
             let auto_length = len_req.into();
             let context_size = LayoutSize::maybe(axis.cross(), cross_length);
 
             ctx.compute_length(
-                &mut self.children[self.active_child],
+                &self.children[self.active_child],
                 auto_length,
                 context_size,
                 axis,
                 cross_length,
             )
-        } else {
-            Length::ZERO
         }
     }
 
@@ -261,36 +255,20 @@ impl Widget for IndexedStack {
         }
 
         let child_size = ctx.compute_size(
-            &mut self.children[self.active_child],
+            &self.children[self.active_child],
             SizeDef::fit(size),
             size.into(),
         );
-        ctx.run_layout(&mut self.children[self.active_child], child_size);
+        ctx.run_layout(&self.children[self.active_child], child_size);
 
         let child_origin = Point::ORIGIN;
-        ctx.place_child(&mut self.children[self.active_child], child_origin);
+        ctx.place_child(&self.children[self.active_child], child_origin);
 
         ctx.derive_baselines(&self.children[self.active_child]);
     }
 
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-    }
-
     fn accessibility_role(&self) -> Role {
         Role::GenericContainer
-    }
-
-    fn accessibility(
-        &mut self,
-        _ctx: &mut AccessCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _node: &mut Node,
-    ) {
     }
 
     fn children_ids(&self) -> ChildrenIds {
@@ -318,45 +296,51 @@ mod tests {
 
         assert_render_snapshot!(harness, "indexed_stack_empty");
 
-        harness.edit_root_widget(|mut stack| {
-            IndexedStack::add(
-                &mut stack,
-                Button::with_text("A")
-                    .prepare()
-                    .with_props(Dimensions::STRETCH),
-                (),
-            );
-        });
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::add(
+                    &mut stack,
+                    Button::with_text("A")
+                        .prepare()
+                        .with_props(Dimensions::STRETCH),
+                    (),
+                );
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "indexed_stack_single");
 
-        harness.edit_root_widget(|mut stack| {
-            IndexedStack::add(
-                &mut stack,
-                Button::with_text("B")
-                    .prepare()
-                    .with_props(Dimensions::STRETCH),
-                (),
-            );
-            IndexedStack::add(
-                &mut stack,
-                Button::with_text("C")
-                    .prepare()
-                    .with_props(Dimensions::STRETCH),
-                (),
-            );
-            IndexedStack::add(
-                &mut stack,
-                Button::with_text("D")
-                    .prepare()
-                    .with_props(Dimensions::STRETCH),
-                (),
-            );
-        });
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::add(
+                    &mut stack,
+                    Button::with_text("B")
+                        .prepare()
+                        .with_props(Dimensions::STRETCH),
+                    (),
+                );
+                IndexedStack::add(
+                    &mut stack,
+                    Button::with_text("C")
+                        .prepare()
+                        .with_props(Dimensions::STRETCH),
+                    (),
+                );
+                IndexedStack::add(
+                    &mut stack,
+                    Button::with_text("D")
+                        .prepare()
+                        .with_props(Dimensions::STRETCH),
+                    (),
+                );
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "indexed_stack_single"); // the active child should not change
 
-        harness.edit_root_widget(|mut stack| {
-            IndexedStack::set_active_child(&mut stack, 2);
-        });
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::set_active_child(&mut stack, 2).unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "indexed_stack_many_2");
     }
 
@@ -385,73 +369,90 @@ mod tests {
         assert_render_snapshot!(harness, "indexed_stack_initial_builder");
 
         // Remove the first (inactive) widget
-        harness.edit_root_widget(|mut stack| {
-            IndexedStack::remove(&mut stack, 0);
-        });
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::remove(&mut stack, 0).unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "indexed_stack_initial_builder"); // Should not be changed
 
         // Now remove the active widget
-        harness.edit_root_widget(|mut stack| {
-            IndexedStack::remove(&mut stack, 0);
-        });
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::remove(&mut stack, 0).unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "indexed_stack_builder_removed_widget");
 
         // Add another widget at the end
-        harness.edit_root_widget(|mut stack| {
-            IndexedStack::add(
-                &mut stack,
-                Button::with_text("D")
-                    .prepare()
-                    .with_props(Dimensions::STRETCH),
-                (),
-            );
-        });
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::add(
+                    &mut stack,
+                    Button::with_text("D")
+                        .prepare()
+                        .with_props(Dimensions::STRETCH),
+                    (),
+                );
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "indexed_stack_builder_removed_widget"); // Should not change
 
         // Make it active
-        harness.edit_root_widget(|mut stack| {
-            IndexedStack::set_active_child(&mut stack, 1);
-        });
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::set_active_child(&mut stack, 1).unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "indexed_stack_builder_new_widget");
 
         // Insert back the first two at the start
-        harness.edit_root_widget(|mut stack| {
-            IndexedStack::insert(
-                &mut stack,
-                0,
-                Button::with_text("A")
-                    .prepare()
-                    .with_props(Dimensions::STRETCH),
-                (),
-            );
-            IndexedStack::insert(
-                &mut stack,
-                1,
-                Button::with_text("B")
-                    .prepare()
-                    .with_props(Dimensions::STRETCH),
-                (),
-            );
-        });
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::insert(
+                    &mut stack,
+                    0,
+                    Button::with_text("A")
+                        .prepare()
+                        .with_props(Dimensions::STRETCH),
+                    (),
+                )
+                .unwrap();
+                IndexedStack::insert(
+                    &mut stack,
+                    1,
+                    Button::with_text("B")
+                        .prepare()
+                        .with_props(Dimensions::STRETCH),
+                    (),
+                )
+                .unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "indexed_stack_builder_new_widget"); // Should not change
 
         // Reset original active index
-        harness.edit_root_widget(|mut stack| {
-            IndexedStack::set_active_child(&mut stack, 1);
-        });
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::set_active_child(&mut stack, 1).unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "indexed_stack_initial_builder");
 
         // Change the active widget
-        harness.edit_root_widget(|mut stack| {
-            IndexedStack::set(
-                &mut stack,
-                1,
-                Button::with_text("D")
-                    .prepare()
-                    .with_props(Dimensions::STRETCH),
-                (),
-            );
-        });
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::set(
+                    &mut stack,
+                    1,
+                    Button::with_text("D")
+                        .prepare()
+                        .with_props(Dimensions::STRETCH),
+                    (),
+                )
+                .unwrap();
+            })
+            .unwrap();
         assert_render_snapshot!(harness, "indexed_stack_builder_new_widget");
     }
 }

@@ -3,19 +3,16 @@
 
 use std::collections::HashSet;
 
-use crate::core::ClassSet;
+use crate::core::{ClassSet, PseudoClass, PseudoClassFilter};
 
 /// A predicate for matching widgets based on their classes and pseudo-classes.
 ///
 /// This type is mostly used for property resolution.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[must_use = "Use the selector in a property stack."]
 pub struct Selector {
     pub(crate) classes: HashSet<String>,
-    // None means "don't filter on this flag"
-    pub(crate) is_hovered: Option<bool>,
-    pub(crate) is_active: Option<bool>,
-    pub(crate) is_disabled: Option<bool>,
-    pub(crate) has_focus_target: Option<bool>,
+    pub(crate) pseudo: PseudoClassFilter,
 }
 
 impl Selector {
@@ -34,37 +31,31 @@ impl Selector {
     }
 
     /// Builder method for a selector that matches widgets with a specific "hovered" status.
-    pub fn with_hovered(mut self, value: bool) -> Self {
-        self.is_hovered = Some(value);
+    pub const fn with_hovered(mut self, value: bool) -> Self {
+        self.pseudo.set(PseudoClass::Hovered, value);
         self
     }
 
     /// Builder method for a selector that matches widgets with a specific "active" status.
-    pub fn with_active(mut self, value: bool) -> Self {
-        self.is_active = Some(value);
+    pub const fn with_active(mut self, value: bool) -> Self {
+        self.pseudo.set(PseudoClass::Active, value);
         self
     }
 
     /// Builder method for a selector that matches widgets with a specific "disabled" status.
-    pub fn with_disabled(mut self, value: bool) -> Self {
-        self.is_disabled = Some(value);
+    pub const fn with_disabled(mut self, value: bool) -> Self {
+        self.pseudo.set(PseudoClass::Disabled, value);
         self
     }
 
     /// Builder method for a selector that matches widgets with a specific "focused" status.
-    pub fn with_focused(mut self, value: bool) -> Self {
-        self.has_focus_target = Some(value);
+    pub const fn with_focused(mut self, value: bool) -> Self {
+        self.pseudo.set(PseudoClass::Focused, value);
         self
     }
 
     /// Checks whether this selector matches a given `ClassSet`.
     pub(crate) fn matches(&self, class_set: &ClassSet) -> bool {
-        self.classes.is_subset(&class_set.classes)
-            && self.is_hovered.is_none_or(|v| class_set.is_hovered == v)
-            && self.is_active.is_none_or(|v| class_set.is_active == v)
-            && self.is_disabled.is_none_or(|v| class_set.is_disabled == v)
-            && self
-                .has_focus_target
-                .is_none_or(|v| class_set.has_focus_target == v)
+        self.classes.is_subset(&class_set.classes) && self.pseudo.matches(class_set.pseudo)
     }
 }

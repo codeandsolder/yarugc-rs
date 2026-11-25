@@ -4,7 +4,7 @@
 use wasm_bindgen::{JsCast, UnwrapThrowExt};
 
 use crate::modifiers::{Attributes, Children, Classes, Modifier, Styles};
-use crate::{AnyPod, Pod, PodFlags, ViewCtx, document};
+use crate::{AnyPod, Pod, PodFlags, ViewCtx};
 
 // Lazy access to attributes etc. to avoid allocating unnecessary memory when it isn't needed
 // Benchmarks have shown, that this can significantly increase performance and reduce memory usage...
@@ -17,6 +17,7 @@ pub struct Element {
 }
 
 impl Element {
+    #[must_use = "Retain the properties associated with the element."]
     pub fn new(
         children: Vec<AnyPod>,
         attr_size_hint: usize,
@@ -57,15 +58,16 @@ impl Pod<web_sys::Element> {
         let attr_size_hint = ctx.take_modifier_size_hint::<Attributes>();
         let class_size_hint = ctx.take_modifier_size_hint::<Classes>();
         let style_size_hint = ctx.take_modifier_size_hint::<Styles>();
-        let element = document()
+        let element = ctx
+            .document()
             .create_element_ns(
                 Some(wasm_bindgen::intern(ns)),
                 wasm_bindgen::intern(elem_name),
             )
             .unwrap_throw();
 
-        for child in children.iter() {
-            let _ = element.append_child(child.node.as_ref());
+        for child in &children {
+            element.append_child(child.node.as_ref()).unwrap_throw();
         }
 
         let props = Element::new(children, attr_size_hint, style_size_hint, class_size_hint);

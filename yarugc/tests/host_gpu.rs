@@ -146,13 +146,15 @@ fn cached_window_and_dynamic_layer_on_host_device() {
         .unwrap();
     write_dynamic(&queue, &dynamic, [0, 128, 0, 128]);
     let prepare = |w: &CachedWindow, x: f64| {
-        compositor.prepare(
-            EXTENT,
-            &[
-                Layer::at(w.surface().unwrap(), [x, 4.0]),
-                Layer::at(&dynamic, [x + 1.0, 5.0]),
-            ],
-        )
+        compositor
+            .prepare(
+                EXTENT,
+                &[
+                    Layer::at(w.surface().unwrap(), [x, 4.0]),
+                    Layer::at(&dynamic, [x + 1.0, 5.0]),
+                ],
+            )
+            .unwrap()
     };
     let composition = prepare(&window, 4.0);
     let pixels = read_composition(&device, &queue, &compositor, &composition, &target);
@@ -216,7 +218,10 @@ fn fixed_readouts_share_one_dynamic_layer() {
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
     let timestamp_features =
         wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
-    let timestamps_available = adapter.features().contains(timestamp_features);
+    // Software adapters exercise the same rendering assertions, but their
+    // timestamp measurements are not representative GPU performance data.
+    let timestamps_available = adapter.get_info().device_type != wgpu::DeviceType::Cpu
+        && adapter.features().contains(timestamp_features);
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_features: if timestamps_available {
             timestamp_features
@@ -321,13 +326,15 @@ fn fixed_readouts_share_one_dynamic_layer() {
     let target = compositor
         .create_surface(EXTENT, AlphaMode::Premultiplied)
         .unwrap();
-    let composition = compositor.prepare(
-        EXTENT,
-        &[
-            Layer::at(window.surface().unwrap(), [0.0, 0.0]),
-            Layer::at(batch.surface(), [0.0, 0.0]),
-        ],
-    );
+    let composition = compositor
+        .prepare(
+            EXTENT,
+            &[
+                Layer::at(window.surface().unwrap(), [0.0, 0.0]),
+                Layer::at(batch.surface(), [0.0, 0.0]),
+            ],
+        )
+        .unwrap();
     let before = read_composition(&device, &queue, &compositor, &composition, &target);
 
     for i in 0..COUNT {
@@ -448,12 +455,18 @@ fn measure_readout_gpu(
         for frame in 0..SAMPLES {
             let text = if frame % 2 == 0 { "999 m" } else { "1.00 km" };
             for i in 0..changed {
-                assert!(batch.set_text(i, text).unwrap());
+                assert!(
+                    batch.set_text(i, text).unwrap(),
+                    "slot {i} must change at frame {frame}"
+                );
             }
             let mut encoder = device.create_command_encoder(&Default::default());
             let base = frame * 3;
             encoder.write_timestamp(&query_set, base);
-            assert!(batch.render(&mut encoder));
+            assert!(
+                batch.render(&mut encoder),
+                "changed readout must encode a raster pass"
+            );
             encoder.write_timestamp(&query_set, base + 1);
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

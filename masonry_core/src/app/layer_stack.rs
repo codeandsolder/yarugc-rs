@@ -48,7 +48,7 @@ impl LayerStack {
     /// Creates a stack with the provided base layer.
     pub(crate) fn new(root: NewWidget<impl Widget + ?Sized>) -> Self {
         let layer = LayerEntry {
-            root: root.erased().to_pod(),
+            root: root.erased().into_pod(),
             position: Point::ZERO,
         };
         Self {
@@ -56,18 +56,13 @@ impl LayerStack {
         }
     }
 
-    /// Returns the number of layers, including the base layer.
-    pub(crate) fn layer_count(&self) -> usize {
-        self.layers.len()
+    /// The root identifiers, in layer order.
+    pub(crate) fn layer_root_ids(&self) -> impl Iterator<Item = WidgetId> + '_ {
+        self.layers.iter().map(|layer| layer.root.id())
     }
-
-    /// The [`WidgetId`] of the root widget of the given layer.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `idx` is out of bounds.
-    pub(crate) fn layer_root_id(&self, idx: usize) -> WidgetId {
-        self.layers[idx].root.id()
+    /// The root identifier of a layer, if present.
+    pub(crate) fn layer_root_id(&self, idx: usize) -> Option<WidgetId> {
+        self.layers.get(idx).map(|layer| layer.root.id())
     }
 }
 
@@ -84,25 +79,11 @@ impl LayerStack {
         position: Point,
     ) {
         let layer = LayerEntry {
-            root: root.erased().to_pod(),
+            root: root.erased().into_pod(),
             position,
         };
         this.widget.layers.push(layer);
         this.ctx.children_changed();
-    }
-
-    /// Returns a mutable reference to the root widget of the layer at `idx`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `idx` is out of bounds.
-    #[expect(dead_code, reason = "Might be useful later")]
-    pub(crate) fn layer_root_mut<'t>(
-        this: &'t mut WidgetMut<'_, Self>,
-        idx: usize,
-    ) -> WidgetMut<'t, dyn Widget> {
-        let layer = &mut this.widget.layers[idx].root;
-        this.ctx.get_mut(layer)
     }
 
     /// Removes the layer with the given widget as root.
@@ -167,7 +148,7 @@ impl Widget for LayerStack {
     type Action = NoAction;
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        for layer in self.layers.iter_mut() {
+        for layer in &mut self.layers {
             ctx.register_child(&mut layer.root);
         }
     }
@@ -188,7 +169,7 @@ impl Widget for LayerStack {
             return Length::ZERO;
         };
         // Let the base layer handle the response
-        ctx.redirect_measurement(&mut base_layer.root, axis, cross_length)
+        ctx.redirect_measurement(&base_layer.root, axis, cross_length)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
@@ -200,9 +181,9 @@ impl Widget for LayerStack {
 
         // Our measurement is just the passed on result from the base layer,
         // so the size we received is effectively meant for the base layer.
-        ctx.run_layout(&mut base_layer.root, size);
+        ctx.run_layout(&base_layer.root, size);
         // The base layer is always located at our origin.
-        ctx.place_child(&mut base_layer.root, Point::ORIGIN);
+        ctx.place_child(&base_layer.root, Point::ORIGIN);
 
         ctx.derive_baselines(&base_layer.root);
 
@@ -212,9 +193,9 @@ impl Widget for LayerStack {
             // We don't really care if they go outside the bounds of the base layer,
             // so we won't give any FitContent fallback and instead just use MaxContent.
             // These other layers still have access to the window size via context size.
-            let layer_size = ctx.compute_size(&mut layer.root, SizeDef::MAX, size.into());
-            ctx.run_layout(&mut layer.root, layer_size);
-            ctx.place_child(&mut layer.root, layer.position);
+            let layer_size = ctx.compute_size(&layer.root, SizeDef::MAX, size.into());
+            ctx.run_layout(&layer.root, layer_size);
+            ctx.place_child(&layer.root, layer.position);
         }
     }
 

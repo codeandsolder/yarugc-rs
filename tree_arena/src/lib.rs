@@ -26,20 +26,23 @@
 //!
 //! # Architecture
 //!
+//! Reparenting validates the entire move before changing parent links and returns a typed error for missing nodes or cycles. Node handles retain the identity of their payload independently of their child-list handles.
+//!
 //! ## Safe Tree
 //!
-//! The safe tree contains a root `TreeArena` which owns the root nodes as `Vec<TreeNode<T>>`, and a `parents_map` tracking the parent of every node.
-//! Each `TreeNode` subsequently owns its own children as `Vec<TreeNode<T>>`. This model of ownership is thus checked by the rust compiler,
+//! The safe tree contains a root `TreeArena` which owns the root nodes as `HashMap<NodeId, TreeNode<T>>`, and a `parents_map` tracking the parent of every node.
+//! Each `TreeNode` subsequently owns its own children as `HashMap<NodeId, TreeNode<T>>`. This model of ownership is thus checked by the rust compiler,
 //! but has the downside of requiring passing through every ancestor node to access the descendant -
-//! this requires an O(depth) determination of whether the node is a descendant, followed by O(children) time at each level to traverse the path to the child.
+//! this requires an O(depth) determination of whether the node is a descendant, followed by expected O(1) lookup at each level to traverse the path to the child.
 //!
 //! ## Unsafe Tree
 //!
 //! The unsafe tree arena contains a `DataMap` which **owns** all nodes. The `DataMap` contains:
 //!
 //! * A `HashMap` associating `NodeId` with `Box<UnsafeCell<TreeNode<T>>>`, owning the node data (boxed to prevent movement of the node when the `HashMap` is resized and `UnsafeCell` to express the interior mutability);
-//! * A `HashMap` associating `NodeId` with `Option<NodeId>`, containing the parent information for the nodes;
-//! * `Box<UnsafeCell<Vec<NodeId>>>` containing the roots of the tree.
+//! * A `HashMap` associating `NodeId` with `Option<NodeId>`, containing the parent information for the nodes.
+//!
+//! The `TreeArena` also stores a `Vec<NodeId>` containing the roots of the tree.
 //!
 //! It is possible to get shared (immutable) access or exclusive (mutable) access to the tree. These return `ArenaRef<'arena, T>` or `ArenaMut<'arena, T>` respectively.
 //! We do this by leveraging a hash map to store the nodes: from this we can obtain either shared or exclusive access to nodes.
@@ -69,7 +72,7 @@
 //!
 //! |Operation  | Safe         | Unsafe   |
 //! |   ---     |      ---     |   ---    |
-//! |Find child | O(Children)  | O(1)     |
+//! |Find child | O(1)         | O(1)     |
 //! |Descendant | O(Depth)     | O(Depth) |
 //! |From root  | O(Depth)     | O(1)     |
 //!
@@ -78,11 +81,11 @@
 // LINEBENDER LINT SET - lib.rs - v3
 // See https://linebender.org/wiki/canonical-lints/
 // These lints shouldn't apply to examples or tests.
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(not(test), deny(unused_crate_dependencies))]
 // These lints shouldn't apply to examples.
-#![warn(clippy::print_stdout, clippy::print_stderr)]
+#![deny(clippy::print_stdout, clippy::print_stderr)]
 // Targeting e.g. 32-bit means structs containing usize can give false positives for 64-bit.
-#![cfg_attr(target_pointer_width = "64", warn(clippy::trivially_copy_pass_by_ref))]
+#![cfg_attr(target_pointer_width = "64", deny(clippy::trivially_copy_pass_by_ref))]
 // END LINEBENDER LINT SET
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![no_std]
@@ -94,6 +97,185 @@ extern crate alloc;
 extern crate std as _;
 
 type NodeId = u64;
+
+use alloc::vec::Vec;
+use core::fmt;
+use hashbrown::HashMap;
+
+/// Why a subtree could not be moved to a new parent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReparentError {
+    /// The requested child does not exist.
+    MissingChild(u64),
+    /// The requested new parent does not exist.
+    MissingParent(u64),
+    /// The move would make a node its own ancestor.
+    Cycle {
+        /// Node being moved.
+        child: u64,
+        /// Requested parent.
+        new_parent: u64,
+    },
+    /// The stored parent links and node storage disagree.
+    InvalidTopology,
+}
+
+impl fmt::Display for ReparentError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingChild(id) => write!(f, "no node found for child id #{id}"),
+            Self::MissingParent(id) => write!(f, "no node found for new_parent id #{id}"),
+            Self::Cycle { child, new_parent } => {
+                write!(f, "cannot move node #{child} below #{new_parent}: cycle")
+            }
+            Self::InvalidTopology => f.write_str("arena parent links disagree with node storage"),
+        }
+    }
+}
+
+impl core::error::Error for ReparentError {}
+
+/// Walks the parent map up to (but excluding) the requested ancestor.
+fn parent_path(
+    parents: &HashMap<NodeId, Option<NodeId>>,
+    id: NodeId,
+    ancestor: Option<NodeId>,
+) -> Vec<NodeId> {
+    let mut path = Vec::new();
+    let mut current = Some(id);
+    while let Some(node) = current {
+        if current == ancestor {
+            return path;
+        }
+        let Some(parent) = parents.get(&node) else {
+            return Vec::new();
+        };
+        path.push(node);
+        current = *parent;
+    }
+    if ancestor.is_none() { path } else { Vec::new() }
+}
+
+/// Validate the request before either implementation mutates its storage.
+fn validate_reparent(
+    parents: &HashMap<NodeId, Option<NodeId>>,
+    child: NodeId,
+    new_parent: NodeId,
+) -> Result<Option<NodeId>, ReparentError> {
+    if child == new_parent {
+        return Err(ReparentError::Cycle { child, new_parent });
+    }
+    let old_parent = *parents
+        .get(&child)
+        .ok_or(ReparentError::MissingChild(child))?;
+    let mut current = Some(new_parent);
+    while let Some(node) = current {
+        if node == child {
+            return Err(ReparentError::Cycle { child, new_parent });
+        }
+        current = *parents
+            .get(&node)
+            .ok_or(ReparentError::MissingParent(node))?;
+    }
+    Ok(old_parent)
+}
+
+// Both storage backends expose the same payload handles. Keep identity and
+// borrow semantics defined once, independent of the child-list storage.
+macro_rules! define_node_handles {
+    () => {
+        /// A reference type giving shared access to an arena item and its children.
+        ///
+        /// When you borrow an item from a [`TreeArena`], it returns an `ArenaRef`.
+        /// You can iterate over its children to get access to child `ArenaRef` handles.
+        #[derive(Debug)]
+        pub struct ArenaRef<'arena, T> {
+            id: NodeId,
+            /// The parent of this node
+            pub parent_id: Option<NodeId>,
+            /// The payload of the node
+            pub item: &'arena T,
+            /// Reference to the children of the node
+            pub children: ArenaRefList<'arena, T>,
+        }
+
+        /// A reference type giving mutable access to an arena item and its children.
+        ///
+        /// When you borrow an item from a [`TreeArena`], it returns an `ArenaMut`.
+        /// This struct holds four fields:
+        ///  - the identity of the node and the id of its parent.
+        ///  - a reference to the item itself.
+        ///  - an [`ArenaMutList`] handle to access its children.
+        ///
+        /// Because the latter two are disjoint references, you can mutate the node's value
+        /// and its children independently without invalidating the references.
+        ///
+        /// You can iterate over its children to get access to child `ArenaMut` handles.
+        #[derive(Debug)]
+        pub struct ArenaMut<'arena, T> {
+            id: NodeId,
+            /// The parent of the node
+            pub parent_id: Option<NodeId>,
+            /// The payload of the node
+            pub item: &'arena mut T,
+            /// Reference to the children of the node
+            pub children: ArenaMutList<'arena, T>,
+        }
+
+        impl<T> Clone for ArenaRef<'_, T> {
+            fn clone(&self) -> Self {
+                *self
+            }
+        }
+
+        impl<T> Copy for ArenaRef<'_, T> {}
+
+        impl<T> ArenaRef<'_, T> {
+            /// Id of the item this handle is associated with.
+            #[must_use = "Identifies the node associated with this handle."]
+            pub const fn id(&self) -> NodeId {
+                self.id
+            }
+
+            /// An iterator visiting all child ids in arbitrary order.
+            #[must_use = "Iterate the returned child identifiers."]
+            pub fn child_ids(&self) -> impl IntoIterator<Item = NodeId> {
+                self.children.ids()
+            }
+        }
+
+        impl<T> ArenaMut<'_, T> {
+            /// Id of the item this handle is associated with.
+            #[must_use = "Identifies the node associated with this handle."]
+            pub const fn id(&self) -> NodeId {
+                self.id
+            }
+
+            /// Returns a shared reference equivalent to this one.
+            #[must_use = "Use the returned shared handle to inspect the node."]
+            pub const fn reborrow(&self) -> ArenaRef<'_, T> {
+                ArenaRef {
+                    id: self.id,
+                    parent_id: self.parent_id,
+                    item: self.item,
+                    children: self.children.reborrow(),
+                }
+            }
+
+            /// Returns a mutable reference equivalent to this one.
+            ///
+            /// This is sometimes useful to work with the borrow checker.
+            pub const fn reborrow_mut(&mut self) -> ArenaMut<'_, T> {
+                ArenaMut {
+                    id: self.id,
+                    parent_id: self.parent_id,
+                    item: self.item,
+                    children: self.children.reborrow_mut(),
+                }
+            }
+        }
+    };
+}
 
 // We instantiate both modules when `cfg(test)` is true.
 // This tricks IDEs (at least VSCode) into always building both modules

@@ -15,13 +15,13 @@ struct AppState {
 }
 
 impl AppState {
-    fn increment(&mut self) {
+    const fn increment(&mut self) {
         self.clicks += 1;
     }
-    fn decrement(&mut self) {
+    const fn decrement(&mut self) {
         self.clicks -= 1;
     }
-    fn reset(&mut self) {
+    const fn reset(&mut self) {
         self.clicks = 0;
     }
     fn change_class(&mut self) {
@@ -50,7 +50,7 @@ fn btn<F: Fn(&mut AppState, web_sys::PointerEvent) + 'static>(
 }
 
 /// And functions that return a sequence of views.
-fn huzzah(state: &mut AppState) -> impl DomFragment<AppState> + use<> {
+fn huzzah(state: &AppState) -> impl DomFragment<AppState> + use<> {
     (state.clicks >= 5).then_some("Huzzah, clicked at least 5 times")
 }
 
@@ -71,7 +71,8 @@ fn app_logic(state: &mut AppState) -> impl DomFragment<AppState> + use<> {
     )
 }
 
-fn main() {
+fn main() -> Result<(), xilem_web::DomError> {
     console_error_panic_hook::set_once();
-    App::new(document_body(), AppState::default(), app_logic).run();
+    App::new(document_body()?, AppState::default(), app_logic)?.run();
+    Ok(())
 }

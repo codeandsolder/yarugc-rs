@@ -11,6 +11,7 @@ use masonry_winit::app::{
     AppDriver, DriverCtx, MasonryState, MasonryUserEvent, NewWindow, WindowId,
 };
 
+use crate::app::StartCallback;
 use crate::core::{
     DynMessage, MessageCtx, MessageResult, ProxyError, RawProxy, SendMessage, View, ViewId,
     ViewPathTracker,
@@ -32,7 +33,7 @@ pub struct MasonryDriver<State: 'static, Logic> {
     // Fonts which will be registered on startup.
     fonts: Vec<Blob<u8>>,
     // Optional callback invoked once on startup, after windows creation.
-    start_callback: Option<Box<dyn FnOnce(&mut MasonryState)>>,
+    start_callback: Option<StartCallback>,
 }
 
 struct Window<State: 'static> {
@@ -56,7 +57,7 @@ where
         runtime: Arc<tokio::runtime::Runtime>,
         default_base_color: Color,
         fonts: Vec<Blob<u8>>,
-        start_callback: Option<Box<dyn FnOnce(&mut MasonryState)>>,
+        start_callback: Option<StartCallback>,
     ) -> (Self, Vec<NewWindow>) {
         let mut driver = Self {
             state,
@@ -69,13 +70,24 @@ where
             start_callback,
         };
         let windows: Vec<_> = (driver.logic)(&mut driver.state)
-            .map(|view| driver.build_window(view))
+            .filter_map(|view| {
+                if driver.windows.contains_key(&view.id) {
+                    tracing::error!(
+                        window_id = view.id.trace(),
+                        "Duplicate initial window, ignoring it"
+                    );
+                    None
+                } else {
+                    Some(driver.build_window(view))
+                }
+            })
             .collect();
         (driver, windows)
     }
 }
 
 /// The action which should be used for async events.
+#[must_use = "The action must be dispatched to the event loop."]
 pub fn async_action(path: Arc<[ViewId]>, message: SendMessage) -> ErasedAction {
     Box::<MessagePackage>::new((path, message))
 }
@@ -94,14 +106,15 @@ impl MasonryProxy {
         match (self.0)(user_event) {
             Ok(()) => Ok(()),
             Err(err) => {
-                let MasonryUserEvent::AsyncAction(_, res) = err else {
-                    unreachable!(
-                        "We know this is the value we just created, which matches this pattern"
-                    )
-                };
-                Err(ProxyError::DriverFinished(
-                    res.downcast::<MessagePackage>().unwrap().1,
-                ))
+                if let MasonryUserEvent::AsyncAction(_, res) = err
+                    && let Ok(package) = res.downcast::<MessagePackage>()
+                {
+                    Err(ProxyError::DriverFinished(package.1))
+                } else {
+                    Err(ProxyError::Other(Box::new(std::io::Error::other(
+                        "Event sink returned an unrelated event",
+                    ))))
+                }
             }
         }
     }
@@ -162,17 +175,21 @@ where
         driver_ctx: &mut DriverCtx<'_>,
         view: WindowView<State>,
     ) {
-        driver_ctx.create_window(self.build_window(view));
+        let id = view.id;
+        if let Err(err) = driver_ctx.create_window(self.build_window(view)) {
+            tracing::error!(%err, "Could not create Xilem window");
+            self.windows.remove(&id);
+        }
     }
 
     fn close_window(&mut self, window_id: WindowId, ctx: &mut DriverCtx<'_>) {
-        let window = self.windows.get_mut(&window_id).unwrap();
-        window.view.teardown(
-            &mut window.view_state,
-            &mut window.view_ctx,
-            ctx.window(window_id),
-        );
-        self.windows.remove(&window_id);
+        if let Some(mut window) = self.windows.remove(&window_id)
+            && let Some(element) = ctx.window(window_id)
+        {
+            window
+                .view
+                .teardown(&mut window.view_state, &mut window.view_ctx, element);
+        }
         ctx.close_window(window_id);
     }
 
@@ -193,13 +210,10 @@ where
                     view_ctx,
                     view_state,
                 }) => {
-                    next_view.rebuild(
-                        view,
-                        view_state,
-                        view_ctx,
-                        driver_ctx.window(next_view.id),
-                        &mut self.state,
-                    );
+                    let Some(element) = driver_ctx.window(next_view.id) else {
+                        continue;
+                    };
+                    next_view.rebuild(view, view_state, view_ctx, element, &mut self.state);
                     *view = next_view;
                 }
                 None => self.create_window(driver_ctx, next_view),
@@ -232,9 +246,12 @@ where
         message: DynMessage,
     ) -> MessageResult<()> {
         let Some(window) = self.windows.get_mut(&window_id) else {
-            unreachable!("Already checked");
+            return MessageResult::Stale;
         };
 
+        let Some(element) = masonry_ctx.window(window_id) else {
+            return MessageResult::Stale;
+        };
         let mut message_context = MessageCtx::new(
             std::mem::take(window.view_ctx.environment()),
             id_path,
@@ -243,7 +260,7 @@ where
         let res = window.view.message(
             &mut window.view_state,
             &mut message_context,
-            masonry_ctx.window(window_id),
+            element,
             &mut self.state,
         );
         // TODO: Handle `_message` somehow?
@@ -257,10 +274,10 @@ where
         &mut self,
         window_id: WindowId,
         masonry_ctx: &mut DriverCtx<'_>,
-        message_result: MessageResult<()>,
+        message_result: &MessageResult<()>,
     ) {
         let Some(window) = self.windows.get_mut(&window_id) else {
-            unreachable!("Already checked");
+            return;
         };
 
         match message_result {
@@ -277,11 +294,14 @@ where
                 }
             }
             MessageResult::RequestRebuild => {
+                let Some(root) = masonry_ctx.render_root(window_id) else {
+                    return;
+                };
                 window.view.masonry_root.rebuild(
                     &window.view.masonry_root,
                     &mut window.view_state,
                     &mut window.view_ctx,
-                    masonry_ctx.render_root(window_id),
+                    root,
                     &mut self.state,
                 );
             }
@@ -289,7 +309,7 @@ where
             MessageResult::Stale => {
                 tracing::info!("Discarding message");
             }
-        };
+        }
     }
 }
 
@@ -325,7 +345,7 @@ where
         let message = DynMessage(action);
 
         let message_result = self.dispatch_message(window_id, masonry_ctx, id_path, message);
-        self.handle_message_result(window_id, masonry_ctx, message_result);
+        self.handle_message_result(window_id, masonry_ctx, &message_result);
     }
 
     fn on_async_action(
@@ -340,15 +360,19 @@ where
                 "called on_async_action for unknown window"
             );
             return;
-        };
+        }
 
         // Dispatch this message using the path it contains.
-        let (id_path, message) = *action.downcast::<MessagePackage>().unwrap();
+        let Ok(package) = action.downcast::<MessagePackage>() else {
+            tracing::warn!("Discarding malformed async action");
+            return;
+        };
+        let (id_path, message) = *package;
         let id_path = Vec::from(&*id_path);
         let message = message.into();
 
         let message_result = self.dispatch_message(window_id, masonry_ctx, id_path, message);
-        self.handle_message_result(window_id, masonry_ctx, message_result);
+        self.handle_message_result(window_id, masonry_ctx, &message_result);
     }
 
     fn on_start(&mut self, state: &mut MasonryState) {
@@ -358,7 +382,7 @@ where
         for root in state.roots() {
             if let Some(root_widget) = root
                 .get_layer_root(0)
-                .downcast::<masonry::widgets::Passthrough>()
+                .and_then(|root| root.downcast::<masonry::widgets::Passthrough>())
             {
                 let fallback = root_widget.inner().inner_id();
                 root.set_focus_fallback(Some(fallback));
@@ -379,13 +403,58 @@ where
     }
 
     fn on_close_requested(&mut self, window_id: WindowId, ctx: &mut DriverCtx<'_>) {
-        let view = &self.windows.get(&window_id).unwrap().view;
-        view.on_close(&mut self.state);
+        let Some(window) = self.windows.get(&window_id) else {
+            return;
+        };
+        window.view.on_close(&mut self.state);
         self.run_logic(ctx);
 
         if !self.state.keep_running() {
             // TODO: we should probably call teardown for all windows before exiting => introduce AppDriver::on_exit
             ctx.exit();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn closed_event_sink_returns_original_message() {
+        let proxy = MasonryProxy(Box::new(Err));
+        let result = proxy.send_message(WindowId::next(), Arc::from([]), SendMessage::new(42_u32));
+        let Err(ProxyError::DriverFinished(message)) = result else {
+            panic!("expected the original undelivered message");
+        };
+        assert_eq!(*message.downcast::<u32>().unwrap(), 42);
+    }
+
+    #[test]
+    fn duplicate_initial_windows_are_not_built_twice() {
+        let id = WindowId::next();
+        let runtime = Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap(),
+        );
+        let (driver, windows) = MasonryDriver::new(
+            (),
+            move |_: &mut ()| {
+                [
+                    crate::window(id, "First", crate::view::label("first")),
+                    crate::window(id, "Second", crate::view::label("second")),
+                ]
+                .into_iter()
+            },
+            |_| Ok(()),
+            runtime,
+            Color::BLACK,
+            Vec::new(),
+            None,
+        );
+        assert_eq!(windows.len(), 1);
+        assert_eq!(driver.windows.len(), 1);
+        assert_eq!(windows[0].attributes.title, "First");
     }
 }

@@ -35,12 +35,12 @@ macro_rules! assert_overflow {
 
 impl OverwriteBool {
     #[inline]
-    pub fn rebuild(&mut self, prev_len: u8) {
+    pub const fn rebuild(&mut self, prev_len: u8) {
         self.idx -= prev_len;
     }
 
     /// Returns if `modifier` has changed.
-    fn set(&mut self, modifier: bool) -> bool {
+    const fn set(&mut self, modifier: bool) -> bool {
         let before = self.modifiers & (1 << self.idx);
         if modifier {
             self.modifiers |= 1 << self.idx;
@@ -51,7 +51,7 @@ impl OverwriteBool {
     }
 
     /// Returns the current boolean modifier (at `self.idx`)
-    fn get(&self) -> bool {
+    const fn get(&self) -> bool {
         let bit = 1 << self.idx;
         self.modifiers & bit == bit
     }
@@ -143,7 +143,7 @@ macro_rules! overwrite_bool_modifier {
         pub struct $modifier($crate::modifiers::OverwriteBool);
 
         impl $modifier {
-            fn as_overwrite_bool_modifier(
+            const fn as_overwrite_bool_modifier(
                 this: $crate::modifiers::Modifier<'_, Self>,
             ) -> $crate::modifiers::Modifier<'_, $crate::modifiers::OverwriteBool> {
                 $crate::modifiers::Modifier::new(&mut this.modifier.0, this.flags)

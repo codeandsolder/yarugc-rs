@@ -57,19 +57,21 @@ impl TextInput {
     /// Creates a new `TextInput` with the given text.
     ///
     /// To use non-default text properties, use [`from_text_area`](Self::from_text_area) instead.
+    #[must_use = "Use the returned value."]
     pub fn new(text: &str) -> Self {
         Self::from_text_area(TextArea::new_editable(text).prepare())
     }
 
     /// Creates a new `TextInput` from a styled text area.
+    #[must_use = "Use the returned value."]
     pub fn from_text_area(text: NewWidget<TextArea<true>>) -> Self {
         Self {
-            text: text.to_pod(),
+            text: text.into_pod(),
             placeholder: Label::new("")
                 .accessibility_hidden(true)
                 .prepare()
                 .with_props(LineBreaking::Clip)
-                .to_pod(),
+                .into_pod(),
             placeholder_text: "".into(),
             text_alignment: TextAlign::default(),
             clip: false,
@@ -77,7 +79,8 @@ impl TextInput {
     }
 
     /// Sets the text alignment for both the input text and placeholder.
-    pub fn with_text_alignment(mut self, text_alignment: TextAlign) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_text_alignment(mut self, text_alignment: TextAlign) -> Self {
         self.text_alignment = text_alignment;
         self
     }
@@ -85,6 +88,7 @@ impl TextInput {
     /// The text that will be displayed when this input is empty.
     ///
     /// To modify this on active text input, use [`set_placeholder`](Self::set_placeholder).
+    #[must_use = "Use the configured value."]
     pub fn with_placeholder(mut self, placeholder_text: impl Into<ArcStr>) -> Self {
         let placeholder_text = placeholder_text.into();
         let label = Label::new(placeholder_text.clone()).with_text_alignment(self.text_alignment);
@@ -92,7 +96,7 @@ impl TextInput {
             .accessibility_hidden(true)
             .prepare()
             .with_props(LineBreaking::Clip)
-            .to_pod();
+            .into_pod();
         self.placeholder_text = placeholder_text;
         self
     }
@@ -103,7 +107,8 @@ impl TextInput {
     /// wraps a text area with [word wrapping](TextArea::with_word_wrap) enabled.
     ///
     /// To modify this on active text input, use [`set_clip`](Self::set_clip).
-    pub fn with_clip(mut self, clip: bool) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_clip(mut self, clip: bool) -> Self {
         self.clip = clip;
         self
     }
@@ -114,7 +119,8 @@ impl TextInput {
     /// Reads the underlying text area.
     ///
     /// Useful for getting its ID, as most actions from the text input will be sent by the child.
-    pub fn area_pod(&self) -> &WidgetPod<TextArea<true>> {
+    #[must_use = "Use the returned value."]
+    pub const fn area_pod(&self) -> &WidgetPod<TextArea<true>> {
         &self.text
     }
 }
@@ -124,13 +130,15 @@ impl TextInput {
     /// Edits the underlying text area.
     ///
     /// Used to modify most properties of the text.
-    pub fn text_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, TextArea<true>> {
-        this.ctx.get_mut(&mut this.widget.text)
+    pub fn text_mut<'t>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> Option<WidgetMut<'t, TextArea<true>>> {
+        this.ctx.get_mut(this.widget.text.id())
     }
 
     /// Edits the child label representing the placeholder text.
-    pub fn placeholder_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, Label> {
-        this.ctx.get_mut(&mut this.widget.placeholder)
+    pub fn placeholder_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, Label>> {
+        this.ctx.get_mut(this.widget.placeholder.id())
     }
 
     /// The text that will be displayed when this input is empty.
@@ -139,8 +147,12 @@ impl TextInput {
     pub fn set_placeholder(this: &mut WidgetMut<'_, Self>, placeholder_text: impl Into<ArcStr>) {
         let placeholder_text = placeholder_text.into();
         this.widget.placeholder_text = placeholder_text.clone();
-        Label::set_text(&mut Self::placeholder_mut(this), placeholder_text.clone());
-        TextArea::set_placeholder(&mut Self::text_mut(this), placeholder_text);
+        if let Some(mut child) = Self::placeholder_mut(this) {
+            Label::set_text(&mut child, placeholder_text.clone());
+        }
+        if let Some(mut child) = Self::text_mut(this) {
+            TextArea::set_placeholder(&mut child, placeholder_text);
+        }
     }
 
     /// Whether to clip the text to the drawn boundaries.
@@ -157,8 +169,12 @@ impl TextInput {
     /// Sets the text alignment for both the input text and placeholder.
     pub fn set_text_alignment(this: &mut WidgetMut<'_, Self>, text_alignment: TextAlign) {
         this.widget.text_alignment = text_alignment;
-        TextArea::set_text_alignment(&mut Self::text_mut(this), text_alignment);
-        Label::set_text_alignment(&mut Self::placeholder_mut(this), text_alignment);
+        if let Some(mut child) = Self::text_mut(this) {
+            TextArea::set_text_alignment(&mut child, text_alignment);
+        }
+        if let Some(mut child) = Self::placeholder_mut(this) {
+            Label::set_text_alignment(&mut child, text_alignment);
+        }
     }
 }
 
@@ -213,57 +229,38 @@ impl Widget for TextInput {
     }
 
     fn property_changed(&mut self, ctx: &mut UpdateCtx<'_>, property_type: TypeId) {
-        // FIXME - Find more elegant way to propagate property to child.
         if property_type == TypeId::of::<CaretColor>() {
-            ctx.mutate_self_later(|mut input| {
-                let mut input = input.downcast::<Self>();
-                let color = *input.get_prop::<CaretColor>();
-                let mut text_area = Self::text_mut(&mut input);
-                text_area.insert_prop(color);
-            });
+            super::text_area::inherit_property::<CaretColor, CaretColor, TextArea<true>>(
+                ctx,
+                self.text.id(),
+                std::convert::identity,
+            );
         } else if property_type == TypeId::of::<SelectionColor>() {
-            ctx.mutate_self_later(|mut input| {
-                let mut input = input.downcast::<Self>();
-                let color = *input.get_prop::<SelectionColor>();
-                let mut text_area = Self::text_mut(&mut input);
-                text_area.insert_prop(color);
-            });
+            super::text_area::inherit_property::<SelectionColor, SelectionColor, TextArea<true>>(
+                ctx,
+                self.text.id(),
+                std::convert::identity,
+            );
         } else if property_type == TypeId::of::<PlaceholderColor>() {
-            ctx.mutate_self_later(|mut input| {
-                let mut input = input.downcast::<Self>();
-                let color = input.get_prop::<PlaceholderColor>().color;
-                let mut label = Self::placeholder_mut(&mut input);
-                label.insert_prop(ContentColor::new(color));
-            });
+            super::text_area::inherit_property::<PlaceholderColor, ContentColor, Label>(
+                ctx,
+                self.placeholder.id(),
+                |color| ContentColor::new(color.color),
+            );
         }
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
             Update::WidgetAdded => {
-                // FIXME - Find more elegant way to propagate property to child.
-                ctx.mutate_self_later(|mut input| {
-                    let mut input = input.downcast::<Self>();
-                    let color = *input.get_prop::<CaretColor>();
-                    let mut text_area = Self::text_mut(&mut input);
-                    text_area.insert_prop(color);
-                });
-                ctx.mutate_self_later(|mut input| {
-                    let mut input = input.downcast::<Self>();
-                    let color = *input.get_prop::<SelectionColor>();
-                    let mut text_area = Self::text_mut(&mut input);
-                    text_area.insert_prop(color);
-                });
-                ctx.mutate_self_later(|mut input| {
-                    let mut input = input.downcast::<Self>();
-                    let color = input.get_prop::<PlaceholderColor>().color;
-                    let mut label = Self::placeholder_mut(&mut input);
-                    label.insert_prop(ContentColor::new(color));
-                });
-                ctx.mutate_self_later(|mut input| {
-                    let mut input = input.downcast::<Self>();
+                self.property_changed(ctx, TypeId::of::<CaretColor>());
+                self.property_changed(ctx, TypeId::of::<SelectionColor>());
+                self.property_changed(ctx, TypeId::of::<PlaceholderColor>());
+                ctx.mutate_self_later::<Self>(|mut input| {
                     let placeholder_text = input.widget.placeholder_text.clone();
-                    TextArea::set_placeholder(&mut Self::text_mut(&mut input), placeholder_text);
+                    if let Some(mut child) = Self::text_mut(&mut input) {
+                        TextArea::set_placeholder(&mut child, placeholder_text);
+                    }
                 });
             }
             // We check for `ChildFocusChanged` instead of `FocusChanged`
@@ -284,37 +281,31 @@ impl Widget for TextInput {
         cross_length: Option<Length>,
     ) -> Length {
         match len_req {
-            LenReq::MaxContent | LenReq::MinContent => {
+            LenReq::Max | LenReq::Min => {
                 let auto_length = len_req.into();
                 let context_size = LayoutSize::maybe(axis.cross(), cross_length);
 
-                ctx.compute_length(
-                    &mut self.text,
-                    auto_length,
-                    context_size,
-                    axis,
-                    cross_length,
-                )
+                ctx.compute_length(&self.text, auto_length, context_size, axis, cross_length)
             }
             // We always want to use all the offered space,
             // even on the block axis as we have multi-line display.
-            LenReq::FitContent(space) => space,
+            LenReq::Fit(space) => space,
         }
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        ctx.run_layout(&mut self.text, size);
+        ctx.run_layout(&self.text, size);
 
         let child_origin = Point::ORIGIN;
-        ctx.place_child(&mut self.text, child_origin);
+        ctx.place_child(&self.text, child_origin);
 
         ctx.derive_baselines(&self.text);
 
-        let text_is_empty = ctx.get_raw(&mut self.text).0.is_empty();
-        ctx.set_stashed(&mut self.placeholder, !text_is_empty);
+        let text_is_empty = ctx.get_child(&self.text).is_some_and(TextArea::is_empty);
+        ctx.set_stashed(&self.placeholder, !text_is_empty);
         if text_is_empty {
-            ctx.run_layout(&mut self.placeholder, size);
-            ctx.place_child(&mut self.placeholder, child_origin);
+            ctx.run_layout(&self.placeholder, size);
+            ctx.place_child(&self.placeholder, child_origin);
         }
 
         if self.clip {
@@ -410,21 +401,23 @@ mod tests {
         assert_render_snapshot!(harness, "text_input_outline");
 
         let mut text_area_id = None;
-        harness.edit_root_widget(|mut text_input| {
-            let mut text_input = TextInput::text_mut(&mut text_input);
-            text_area_id = Some(text_input.ctx.widget_id());
+        harness
+            .edit_root_widget(|mut text_input| {
+                let mut text_input = TextInput::text_mut(&mut text_input).unwrap();
+                text_area_id = Some(text_input.ctx.widget_id());
 
-            TextArea::select_text(&mut text_input, "contents");
-        });
+                TextArea::select_text(&mut text_input, "contents");
+            })
+            .unwrap();
         harness.focus_on(text_area_id);
 
         assert_render_snapshot!(harness, "text_input_selection");
 
-        harness.process_text_event(TextEvent::WindowFocusChange(false));
+        harness.process_text_event(&TextEvent::WindowFocusChange(false));
 
         assert_render_snapshot!(harness, "text_input_selection_unfocused");
 
-        harness.process_text_event(TextEvent::WindowFocusChange(true));
+        harness.process_text_event(&TextEvent::WindowFocusChange(true));
         harness.animate_ms(500 + 1);
 
         assert_render_snapshot!(harness, "text_input_cursor_blink");
@@ -463,9 +456,11 @@ mod tests {
         let text_area_node = harness.access_node(text_area_id).unwrap();
         assert_eq!(text_area_node.data().placeholder(), Some("Search"));
 
-        harness.edit_root_widget(|mut text_input| {
-            TextInput::set_placeholder(&mut text_input, "Filter");
-        });
+        harness
+            .edit_root_widget(|mut text_input| {
+                TextInput::set_placeholder(&mut text_input, "Filter");
+            })
+            .unwrap();
         let _ = harness.redraw();
 
         let text_area_node = harness.access_node(text_area_id).unwrap();

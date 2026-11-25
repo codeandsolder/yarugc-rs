@@ -58,13 +58,13 @@ pub struct SizedBox<V, State, Action = ()> {
 
 impl<V, State, Action> SizedBox<V, State, Action> {
     /// Set container's width.
-    pub fn fixed_width(mut self, width: Length) -> Self {
+    pub const fn fixed_width(mut self, width: Length) -> Self {
         self.width = Some(width);
         self
     }
 
     /// Set container's height.
-    pub fn fixed_height(mut self, height: Length) -> Self {
+    pub const fn fixed_height(mut self, height: Length) -> Self {
         self.height = Some(height);
         self
     }
@@ -86,7 +86,7 @@ where
             .raw_width(self.width)
             .raw_height(self.height);
 
-        (ctx.create_pod(widget), child_state)
+        (Pod::new(widget), child_state)
     }
 
     fn rebuild(
@@ -104,34 +104,13 @@ where
             widgets::SizedBox::set_raw_height(&mut element, self.height);
         }
         {
-            let mut child = widgets::SizedBox::child_mut(&mut element)
-                .expect("We only create SizedBox with a child");
+            let Some(typed_child) = widgets::SizedBox::child_mut(&mut element) else {
+                return;
+            };
             self.inner
-                .rebuild(&prev.inner, view_state, ctx, child.downcast(), app_state);
+                .rebuild(&prev.inner, view_state, ctx, typed_child, app_state);
         }
     }
 
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-    ) {
-        let mut child = widgets::SizedBox::child_mut(&mut element)
-            .expect("We only create SizedBox with a child");
-        self.inner.teardown(view_state, ctx, child.downcast());
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        mut element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        let mut child = widgets::SizedBox::child_mut(&mut element)
-            .expect("We only create SizedBox with a child");
-        self.inner
-            .message(view_state, message, child.downcast(), app_state)
-    }
+    single_child_view_lifecycle!(SizedBox, inner);
 }

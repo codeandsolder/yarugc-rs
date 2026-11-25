@@ -6,10 +6,10 @@
 //! Though usually it's more idiomatic to modularize state with `map_state` and update state directly within event callbacks, as seen in the `components` example.
 
 use masonry::properties::types::{CrossAxisAlignment, MainAxisAlignment};
+use xilem::RunError;
 use xilem::core::{MessageResult, map_action};
 use xilem::view::{flex_col, flex_row, label, text_button};
 use xilem::winit::dpi::LogicalSize;
-use xilem::winit::error::EventLoopError;
 use xilem::{EventLoop, WidgetView, WindowOptions, Xilem};
 use xilem_core::{lens, map_message_result};
 
@@ -99,7 +99,7 @@ fn app_logic(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
     .main_axis_alignment(MainAxisAlignment::Center)
 }
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     let app = Xilem::new_simple(
         AppState::default(),
         app_logic,

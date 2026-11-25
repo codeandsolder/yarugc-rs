@@ -28,9 +28,9 @@ Note that unless otherwise specified, all passes run over widgets in depth-first
 When a user interacts with the application in some way, like a mouse click, Masonry runs an **event pass** over the tree.
 There are three types of event passes:
 
-- **on_pointer_event:** covers positional events from the mouse and other pointing devices (pen, stylus, touchpad, etc).
-- **on_text_event:** text input events like keyboard presses, IME, clipboard paste, etc.
-- **on_access_event:** events from the OS's accessibility API.
+- **`on_pointer_event`:** covers positional events from the mouse and other pointing devices (pen, stylus, touchpad, etc).
+- **`on_text_event`:** text input events like keyboard presses, IME, clipboard paste, etc.
+- **`on_access_event`:** events from the OS's accessibility API.
 
 When an event occurs, the application selects the widget targeted by the event.
 For pointer events, this is either the widget under the pointer or the widget with pointer capture.
@@ -42,7 +42,7 @@ This behavior is known in browsers as event bubbling.
 
 ### Animation pass
 
-The **update_anim** pass runs an animation frame, which occurs at set intervals if the widget tree includes animated widgets.
+The **`update_anim`** pass runs an animation frame, which occurs at set intervals if the widget tree includes animated widgets.
 
 It runs in depth-first preorder on all animated widgets in the tree.
 
@@ -54,36 +54,36 @@ The animation pass may be considered as a special event pass: it's not triggered
 After an event pass, some flags may have been changed, and some values may have been invalidated and need to be recomputed.
 To address these invalidations, Masonry runs a set of **rewrite passes** over the tree, in the following order:
 
-- **mutate:** Runs callbacks with mutable access to the tree.
-- **update_widget_tree:** Updates the tree when widgets are added or removed.
-- **update_disabled:** Updates the disabled status of widgets.
-- **update_stashed:** Updates the stashed status of widgets.
-- **update_focusable:** Updates whether widgets have focusable children. (Internal-only, doesn't call widget methods.)
-- **update_focus:** Updates the focused status of widgets.
-- **layout:** Computes the layout of the widget tree.
-- **update_scrolls:** Updates the scroll positions of widgets.
-- **compose:** Assigns transforms to widgets.
-- **update_pointer:** Updates the hovered status of widgets and the current cursor icon.
-- **update_props:** Apply changes to computed properties when classes change.
+- **`mutate`:** Runs callbacks with mutable access to the tree.
+- **`update_widget_tree`:** Updates the tree when widgets are added or removed.
+- **`update_disabled`:** Updates the disabled status of widgets.
+- **`update_stashed`:** Updates the stashed status of widgets.
+- **`update_focusable`:** Updates whether widgets have focusable children. (Internal-only, doesn't call widget methods.)
+- **`update_focus`:** Updates the focused status of widgets.
+- **`layout`:** Computes the layout of the widget tree.
+- **`update_scrolls`:** Updates the scroll positions of widgets.
+- **`compose`:** Assigns transforms to widgets.
+- **`update_pointer`:** Updates the hovered status of widgets and the current cursor icon.
+- **`update_props`:** Apply changes to computed properties when classes change.
 
 The layout pass may call [`Widget::measure`] any number of times, including zero.
 It may then call [`Widget::layout`].
 The compose pass will call [`Widget::compose`] on widgets that requested compose.
 Running [`Widget::layout`] also requests [`Widget::compose`] for that widget.
-The update_xxx passes call the widgets' update method.
+The `update_xxx` passes call the widgets' update method.
 
 By default, each of these passes completes without doing any work, unless pass-dependent invalidation flags are set.
 Each pass can generally request work for later passes; for instance, the mutate pass can invalidate the layout of a widget, in which case the layout pass will run on that widget and its children and parents.
 
 Passes may also request work for *previous* passes, in which case all rewrite passes are run again in sequence.
-For instance, the update_pointer pass may change a widget's size, requiring another layout pass.
+For instance, the `update_pointer` pass may change a widget's size, requiring another layout pass.
 
 To avoid infinite loops in those cases, the number of reruns has a static limit.
 If passes are still requested past that limit, they're delayed to a later frame.
 
 ### The mutate pass
 
-The **mutate** pass runs a list of callbacks with mutable access to the widget tree.
+The **`mutate`** pass runs a list of callbacks with mutable access to the widget tree.
 These callbacks can be queued with the `mutate_later()` method of various context types.
 
 "Mutable access" means that those callbacks are given a [`WidgetMut`] to the widget that requested them, something that is otherwise only accessible from the owner of the global [`RenderRoot`] object.
@@ -189,7 +189,7 @@ Not doing so is a logical bug, and may trigger debug assertions.
 
 ### Compose pass
 
-The **compose** pass runs top-down and assigns transforms to children.
+The **`compose`** pass runs top-down and assigns transforms to children.
 Transform-only presentation changes (e.g. scrolling) should request compose instead of requesting layout.
 
 [`Widget::compose`] is called when the widget explicitly requests compose or after that widget's [`Widget::layout`] method runs.

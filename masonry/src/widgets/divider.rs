@@ -10,9 +10,9 @@ use smallvec::SmallVec;
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, ArcStr, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
-    PropertiesMut, PropertiesRef, Property, RegisterCtx, Update, UpdateCtx, UsesProperty, Widget,
-    WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ArcStr, ChildrenIds, FromDynWidget, LayoutCtx, MeasureCtx, NewWidget, NoAction,
+    PaintCtx, PropertiesMut, PropertiesRef, Property, RegisterCtx, Update, UpdateCtx, UsesProperty,
+    Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Cap, Join, Line, Size, Stroke};
@@ -59,7 +59,7 @@ pub struct Divider {
 /// Describes the strategy how to display a dashed divider.
 ///
 /// It has no effect on a solid line divider.
-#[derive(Default, Copy, Clone, Debug, PartialEq)]
+#[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum DashFit {
     /// Clip the end edge.
     ///
@@ -119,7 +119,7 @@ pub enum DashFit {
 }
 
 /// Describes the strategy where to place the divider's content.
-#[derive(Default, Copy, Clone, Debug, PartialEq)]
+#[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Placement {
     /// Place the content at the start.
     ///
@@ -143,9 +143,140 @@ struct LineLayout {
     dashes: SmallVec<[f64; 4]>,
 }
 
+/// Normalizes a divider dash pattern for both native and declarative builders.
+#[doc(hidden)]
+#[must_use = "Use the normalized dash pattern."]
+pub fn normalize_divider_dash_pattern(dash_pattern: &[Length]) -> SmallVec<[Length; 2]> {
+    let mut dash_pattern = SmallVec::from_slice(dash_pattern);
+    // Paint code assumes an even number for simplicity of implementation.
+    let len = dash_pattern.len();
+    if len == 1 {
+        dash_pattern.push(dash_pattern[0]);
+    } else if len > 0 && !len.is_multiple_of(2) {
+        debug_panic!(
+            "The divider dash pattern must have an even number of lengths. Received {len}"
+        );
+        dash_pattern.pop();
+    }
+    dash_pattern
+}
+
+/// Shared style configuration methods for native and declarative dividers.
+#[macro_export]
+macro_rules! divider_style_builders {
+    () => {
+        /// Returns `self` with the given line `thickness`.
+        #[must_use = "Use the returned value."]
+        pub const fn thickness(mut self, thickness: $crate::layout::Length) -> Self {
+            self.thickness = Some(thickness);
+            self
+        }
+
+        /// Returns `self` with the line thickness set to hairline, i.e. 1 device pixel.
+        #[must_use = "Use the returned value."]
+        pub const fn hairline(mut self) -> Self {
+            self.thickness = None;
+            self
+        }
+
+        /// Returns `self` with the given `dash_fit`.
+        #[must_use = "Use the returned value."]
+        pub const fn dash_fit(mut self, dash_fit: $crate::widgets::DashFit) -> Self {
+            self.dash_fit = dash_fit;
+            self
+        }
+
+        /// Returns `self` with the given `dash_pattern`.
+        ///
+        /// The pattern defines the lengths of dashes in alternating on/off order.
+        /// * `10` - 10px dashes and 10px gaps
+        /// * `10, 5` - 10px dashes with 5px gaps
+        /// * `10, 5, 20, 30` - 10 px dash, 5px gap, 20px dash, 30px gap
+        ///
+        /// The pattern can be even longer and in any case will repeat to fill the whole divider space.
+        ///
+        /// The pattern must contain an even number of lengths. With exceptions for zero and one, where
+        /// zero lengths means a solid line and one length will be used for both the dash and the gap.
+        /// When given any other uneven number of the lengths, the last length will be ignored.
+        ///
+        /// # Panics
+        ///
+        /// Panics if `dash_pattern` contains an uneven number of entries of 3 or more
+        /// and debug assertions are enabled.
+        #[must_use = "Use the configured value."]
+        pub fn dash_pattern(mut self, dash_pattern: &[$crate::layout::Length]) -> Self {
+            self.dash_pattern = $crate::widgets::normalize_divider_dash_pattern(dash_pattern);
+            self
+        }
+
+        /// Returns `self` with the given `cap` used both for start and end.
+        ///
+        /// Use [`start_cap`] or [`end_cap`] to set different edge caps.
+        ///
+        /// Defaults to [`Cap::Butt`].
+        ///
+        /// [`start_cap`]: Self::start_cap
+        /// [`end_cap`]: Self::end_cap
+        #[must_use = "Use the returned value."]
+        pub const fn cap(mut self, cap: $crate::kurbo::Cap) -> Self {
+            self.start_cap = cap;
+            self.end_cap = cap;
+            self
+        }
+
+        /// Returns `self` with the given starting `cap`.
+        ///
+        /// Use [`cap`] to set the cap for both the start and the end.
+        ///
+        /// Defaults to [`Cap::Butt`].
+        ///
+        /// [`cap`]: Self::cap
+        #[must_use = "Use the returned value."]
+        pub const fn start_cap(mut self, cap: $crate::kurbo::Cap) -> Self {
+            self.start_cap = cap;
+            self
+        }
+
+        /// Returns `self` with the given ending `cap`.
+        ///
+        /// Use [`cap`] to set the cap for both the start and the end.
+        ///
+        /// Defaults to [`Cap::Butt`].
+        ///
+        /// [`cap`]: Self::cap
+        #[must_use = "Use the returned value."]
+        pub const fn end_cap(mut self, cap: $crate::kurbo::Cap) -> Self {
+            self.end_cap = cap;
+            self
+        }
+
+        /// Returns `self` with the given content `placement`.
+        ///
+        /// Defaults to [`Placement::Center`].
+        #[must_use = "Use the returned value."]
+        pub const fn placement(mut self, placement: $crate::widgets::Placement) -> Self {
+            self.placement = placement;
+            self
+        }
+
+        /// Returns `self` with the given `pad`.
+        ///
+        /// This `pad` determines the amount of space between the divider line and the content.
+        /// It does nothing when there is no content.
+        ///
+        /// The default value is 5px.
+        #[must_use = "Use the returned value."]
+        pub const fn pad(mut self, pad: $crate::layout::Length) -> Self {
+            self.pad = pad;
+            self
+        }
+    };
+}
+
 // --- MARK: BUILDERS
 impl Divider {
     /// Creates a new [`Divider`] parallel with the given `axis`.
+    #[must_use = "Use the returned value."]
     pub fn new(axis: Axis) -> Self {
         Self {
             axis,
@@ -156,125 +287,33 @@ impl Divider {
             end_cap: Cap::Butt,
             placement: Placement::default(),
             content: None,
-            pad: Length::const_px(5.),
+            pad: crate::layout::length!(5.),
             lines: SmallVec::default(),
         }
     }
 
     /// Creates a new horizontal [`Divider`].
+    #[must_use = "Use the returned value."]
     pub fn horizontal() -> Self {
         Self::new(Axis::Horizontal)
     }
 
     /// Creates a new vertical [`Divider`].
+    #[must_use = "Use the returned value."]
     pub fn vertical() -> Self {
         Self::new(Axis::Vertical)
     }
 
-    /// Returns `self` with the given line `thickness`.
-    pub fn thickness(mut self, thickness: Length) -> Self {
-        self.thickness = Some(thickness);
-        self
-    }
-
-    /// Returns `self` with the line thickness set to hairline, i.e. 1 device pixel.
-    pub fn hairline(mut self) -> Self {
-        self.thickness = None;
-        self
-    }
-
-    /// Returns `self` with the given `dash_fit`.
-    pub fn dash_fit(mut self, dash_fit: DashFit) -> Self {
-        self.dash_fit = dash_fit;
-        self
-    }
-
-    /// Returns `self` with the given `dash_pattern`.
-    ///
-    /// The pattern defines the lengths of dashes in alternating on/off order.
-    /// * `10` - 10px dashes and 10px gaps
-    /// * `10, 5` - 10px dashes with 5px gaps
-    /// * `10, 5, 20, 30` - 10 px dash, 5px gap, 20px dash, 30px gap
-    ///
-    /// The pattern can be even longer and in any case will repeat to fill the whole divider space.
-    ///
-    /// The pattern must contain an even number of lengths. With exceptions for zero and one, where
-    /// zero lengths means a solid line and one length will be used for both the dash and the gap.
-    /// When given any other uneven number of the lengths, the last length will be ignored.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `dash_pattern` contains an uneven number of entries of 3 or more
-    /// and debug assertions are enabled.
-    pub fn dash_pattern(mut self, dash_pattern: &[Length]) -> Self {
-        let mut dash_pattern = SmallVec::from_slice(dash_pattern);
-        // Paint code assumes an even number for simplicity of implementation.
-        let len = dash_pattern.len();
-        if len == 1 {
-            dash_pattern.push(dash_pattern[0]);
-        } else if len > 0 && !len.is_multiple_of(2) {
-            debug_panic!(
-                "The divider dash pattern must have an even number of lengths. Received {len}"
-            );
-            dash_pattern.pop();
-        }
-        self.dash_pattern = dash_pattern;
-        self
-    }
-
-    /// Returns `self` with the given `cap` used both for start and end.
-    ///
-    /// Use [`start_cap`] or [`end_cap`] to set different edge caps.
-    ///
-    /// Defaults to [`Cap::Butt`].
-    ///
-    /// [`start_cap`]: Self::start_cap
-    /// [`end_cap`]: Self::end_cap
-    pub fn cap(mut self, cap: Cap) -> Self {
-        self.start_cap = cap;
-        self.end_cap = cap;
-        self
-    }
-
-    /// Returns `self` with the given starting `cap`.
-    ///
-    /// Use [`cap`] to set the cap for both the start and the end.
-    ///
-    /// Defaults to [`Cap::Butt`].
-    ///
-    /// [`cap`]: Self::cap
-    pub fn start_cap(mut self, cap: Cap) -> Self {
-        self.start_cap = cap;
-        self
-    }
-
-    /// Returns `self` with the given ending `cap`.
-    ///
-    /// Use [`cap`] to set the cap for both the start and the end.
-    ///
-    /// Defaults to [`Cap::Butt`].
-    ///
-    /// [`cap`]: Self::cap
-    pub fn end_cap(mut self, cap: Cap) -> Self {
-        self.end_cap = cap;
-        self
-    }
-
-    /// Returns `self` with the given content `placement`.
-    ///
-    /// Defaults to [`Placement::Center`].
-    pub fn placement(mut self, placement: Placement) -> Self {
-        self.placement = placement;
-        self
-    }
+    crate::divider_style_builders!();
 
     /// Returns `self` with the given `content`.
     ///
     /// For simple text labels use [`label`].
     ///
     /// [`label`]: Self::label
+    #[must_use = "Use the returned value."]
     pub fn content(mut self, content: NewWidget<impl Widget + ?Sized>) -> Self {
-        self.content = Some(content.erased().to_pod());
+        self.content = Some(content.erased().into_pod());
         self
     }
 
@@ -283,19 +322,9 @@ impl Divider {
     /// For more control over the label use [`content`].
     ///
     /// [`content`]: Self::content
+    #[must_use = "Use the configured value."]
     pub fn label(self, text: impl Into<ArcStr>) -> Self {
         self.content(Label::new(text).prepare())
-    }
-
-    /// Returns `self` with the given `pad`.
-    ///
-    /// This `pad` determines the amount of space between the divider line and the content.
-    /// It does nothing when there is no content.
-    ///
-    /// The default value is 5px.
-    pub fn pad(mut self, pad: Length) -> Self {
-        self.pad = pad;
-        self
     }
 }
 
@@ -336,18 +365,7 @@ impl Divider {
     ///
     /// [`dash_pattern`]: Self::dash_pattern
     pub fn set_dash_pattern(this: &mut WidgetMut<'_, Self>, dash_pattern: &[Length]) {
-        let mut dash_pattern = SmallVec::from_slice(dash_pattern);
-        // Paint code assumes an even number for simplicity of implementation.
-        let len = dash_pattern.len();
-        if len == 1 {
-            dash_pattern.push(dash_pattern[0]);
-        } else if len > 0 && !len.is_multiple_of(2) {
-            debug_panic!(
-                "The divider dash pattern must have an even number of lengths. Received {len}"
-            );
-            dash_pattern.pop();
-        }
-        this.widget.dash_pattern = dash_pattern;
+        this.widget.dash_pattern = normalize_divider_dash_pattern(dash_pattern);
         this.ctx.request_layout();
     }
 
@@ -399,7 +417,7 @@ impl Divider {
 
     /// Sets the `content`.
     pub fn set_content(this: &mut WidgetMut<'_, Self>, content: NewWidget<impl Widget + ?Sized>) {
-        if let Some(old_content) = this.widget.content.replace(content.erased().to_pod()) {
+        if let Some(old_content) = this.widget.content.replace(content.erased().into_pod()) {
             this.ctx.remove_child(old_content);
         }
         this.ctx.children_changed();
@@ -424,8 +442,13 @@ impl Divider {
     }
 
     /// Returns a mutable reference to the content widget.
-    pub fn content_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, dyn Widget>> {
-        this.widget.content.as_mut().map(|c| this.ctx.get_mut(c))
+    pub fn content_mut<'t, W: Widget + FromDynWidget + ?Sized>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> Option<WidgetMut<'t, W>> {
+        this.widget
+            .content
+            .as_ref()
+            .and_then(|c| this.ctx.get_mut(c.id()))
     }
 }
 
@@ -436,20 +459,16 @@ impl Divider {
 fn length_with_whole_dashes(space: f64, dashes: &[f64]) -> (f64, SmallVec<[f64; 3]>) {
     let n = dashes.len();
 
-    let mut return_zero = false;
     if n < 2 || !n.is_multiple_of(2) {
         debug_panic!("Can only calculate whole dashes for actual dash pattern pairs");
-        return_zero = true;
+        return (0., SmallVec::from_elem(0., n / 2));
     }
-    if dashes.iter().any(|&v| v < 0.) {
-        debug_panic!("Negative dash lengths are not allowed");
-        return_zero = true;
+    if dashes.iter().any(|&v| !v.is_finite() || v < 0.) {
+        debug_panic!("Dash lengths must be finite and nonnegative");
+        return (0., SmallVec::from_elem(0., n / 2));
     }
     let cycle_length: f64 = dashes.iter().sum();
-    if cycle_length <= 0. || space <= 0. {
-        return_zero = true;
-    }
-    if return_zero {
+    if !cycle_length.is_finite() || cycle_length <= 0. || !space.is_finite() || space <= 0. {
         return (0., SmallVec::from_elem(0., n / 2));
     }
 
@@ -463,8 +482,8 @@ fn length_with_whole_dashes(space: f64, dashes: &[f64]) -> (f64, SmallVec<[f64; 
     let mut end_pair = n / 2 - 1;
 
     // Add as many (dash, gap) pairs as possible to form the final partial cycle.
-    for (i, pair) in dashes.chunks_exact(2).enumerate() {
-        let (dash, gap) = (pair[0], pair[1]);
+    for (i, pair) in dashes.as_chunks::<2>().0.iter().enumerate() {
+        let &[dash, gap] = pair;
         if dash > space_free {
             break;
         }
@@ -515,10 +534,10 @@ fn stretch_gaps(dashes: &mut [f64], gap_counts: &[f64], space: f64) {
             continue;
         }
         // Guard against the case where all gaps have a zero length
-        let gap_fraction = if gaps_sum != 0. {
-            gap * count / gaps_sum
-        } else {
+        let gap_fraction = if gaps_sum == 0. {
             count / gap_counts_sum
+        } else {
+            gap * count / gaps_sum
         };
         let add_per_gap_type = space * gap_fraction;
         let add_per_occurrence = add_per_gap_type / count;
@@ -538,7 +557,7 @@ fn line_length(space: f64, dashes: &mut [f64], dash_fit: DashFit) -> (f64, f64) 
         (0., space)
     } else {
         // Dashed line
-        if let DashFit::Clip = dash_fit {
+        if dash_fit == DashFit::Clip {
             (0., space)
         } else {
             let (length, gap_counts) = length_with_whole_dashes(space, dashes);
@@ -566,7 +585,7 @@ impl Divider {
             match cap {
                 Cap::Butt => (),
                 Cap::Square | Cap::Round => {
-                    overhang += thickness * 0.5;
+                    overhang = thickness.mul_add(0.5, overhang);
                 }
             }
         }
@@ -608,22 +627,20 @@ impl Widget for Divider {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        const DEFAULT_LENGTH: Length = Length::const_px(100.);
-        let thickness = self.thickness.unwrap_or(Length::const_px(1.));
+        const DEFAULT_LENGTH: Length = crate::layout::length!(100.);
+        let thickness = self.thickness.unwrap_or(crate::layout::length!(1.));
 
-        let content_length = if let Some(content) = &mut self.content {
+        let content_length = self.content.as_mut().map_or(Length::ZERO, |content| {
             let auto_length = len_req.into();
             let context_size = LayoutSize::maybe(axis.cross(), cross_length);
             ctx.compute_length(content, auto_length, context_size, axis, cross_length)
-        } else {
-            Length::ZERO
-        };
+        });
 
         if axis == self.axis {
             match len_req {
-                LenReq::MinContent => content_length,
-                LenReq::MaxContent => DEFAULT_LENGTH.max(content_length),
-                LenReq::FitContent(space) => space.max(content_length),
+                LenReq::Min => content_length,
+                LenReq::Max => DEFAULT_LENGTH.max(content_length),
+                LenReq::Fit(space) => space.max(content_length),
             }
         } else {
             thickness.max(content_length)
@@ -631,9 +648,6 @@ impl Widget for Divider {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        // Clear any previously laid out lines.
-        self.lines.clear();
-
         /// Stores the line layout info for painting.
         fn lay_out_line(
             this: &mut Divider,
@@ -655,7 +669,9 @@ impl Widget for Divider {
             });
         }
 
-        let thickness = self.thickness.map(|t| t.get()).unwrap_or(1.);
+        // Clear any previously laid out lines.
+        self.lines.clear();
+        let thickness = self.thickness.map_or(1., Length::get);
         let cross_pos = size.get_coord(self.axis.cross()) * 0.5;
         let mut dashes: SmallVec<[f64; 4]> = self.dash_pattern.iter().map(|l| l.get()).collect();
 
@@ -741,7 +757,7 @@ impl Widget for Divider {
 
         let cache = ctx.property_cache();
         let color = props.get::<ContentColor>(cache);
-        let thickness = self.thickness.map(|t| t.get()).unwrap_or(one_dp);
+        let thickness = self.thickness.map_or(one_dp, Length::get);
 
         for line in &self.lines {
             let style = Stroke {

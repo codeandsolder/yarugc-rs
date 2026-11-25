@@ -41,8 +41,10 @@ impl Driver {
     fn set_mode(&mut self, ctx: &mut DriverCtx<'_>, mode: SplitPointMode) {
         self.mode = mode;
 
-        let render_root = ctx.render_root(self.window_id);
-        render_root.edit_widget_with_tag(SPLIT_TAG, |mut split| {
+        let Some(render_root) = ctx.render_root(self.window_id) else {
+            return;
+        };
+        let _ = render_root.edit_widget_with_tag(SPLIT_TAG, |mut split| {
             let split_point = match mode {
                 SplitPointMode::Fraction => SplitPoint::Fraction(0.5),
                 SplitPointMode::FromStart => SplitPoint::FromStart(220.px()),
@@ -51,7 +53,7 @@ impl Driver {
             Split::set_split_point(&mut split, split_point);
         });
 
-        render_root.edit_widget_with_tag(STATUS_TAG, |mut label| {
+        let _ = render_root.edit_widget_with_tag(STATUS_TAG, |mut label| {
             let text = match mode {
                 SplitPointMode::Fraction => "Mode: fraction (0.5)",
                 SplitPointMode::FromStart => "Mode: from start (220px)",
@@ -75,23 +77,31 @@ impl AppDriver for Driver {
             return;
         }
 
-        let render_root = ctx.render_root(window_id);
-        let fraction_id = render_root.get_widget_with_tag(FRACTION_BTN).unwrap().id();
-        let start_id = render_root.get_widget_with_tag(START_BTN).unwrap().id();
-        let end_id = render_root.get_widget_with_tag(END_BTN).unwrap().id();
+        let Some(render_root) = ctx.render_root(window_id) else {
+            return;
+        };
+        let fraction_id = render_root
+            .get_widget_with_tag(FRACTION_BTN)
+            .map(|widget| widget.id());
+        let start_id = render_root
+            .get_widget_with_tag(START_BTN)
+            .map(|widget| widget.id());
+        let end_id = render_root
+            .get_widget_with_tag(END_BTN)
+            .map(|widget| widget.id());
 
-        if widget_id == fraction_id {
+        if Some(widget_id) == fraction_id {
             self.set_mode(ctx, SplitPointMode::Fraction);
-        } else if widget_id == start_id {
+        } else if Some(widget_id) == start_id {
             self.set_mode(ctx, SplitPointMode::FromStart);
-        } else if widget_id == end_id {
+        } else if Some(widget_id) == end_id {
             self.set_mode(ctx, SplitPointMode::FromEnd);
         }
     }
 }
 
 fn make_widget_tree() -> NewWidget<impl masonry::core::Widget> {
-    const SPACING: Length = Length::const_px(8.0);
+    const SPACING: Length = masonry::layout::length!(8.0);
 
     let controls = Flex::row()
         .with_fixed(NewWidget::new(Button::with_text("Fraction")).with_tag(FRACTION_BTN))
@@ -138,7 +148,7 @@ fn make_widget_tree() -> NewWidget<impl masonry::core::Widget> {
     )
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window_size = LogicalSize::new(900.0, 600.0);
     let window_attributes = Window::default_attributes()
         .with_title("Split playground")
@@ -158,6 +168,6 @@ fn main() {
         )],
         driver,
         default_property_set(),
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }

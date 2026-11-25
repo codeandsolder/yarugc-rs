@@ -7,28 +7,29 @@ use crate::layout::Length;
 ///
 /// It is up to the widget itself to define how it responds to these requests.
 #[derive(Copy, Clone, Debug, PartialEq)]
+#[must_use = "Use the computed measurement request."]
 pub enum LenReq {
     /// The widget should measure its minimum preferred length.
-    MinContent,
+    Min,
     /// The widget should measure its maximum preferred length.
-    MaxContent,
+    Max,
     /// The widget should attempt to fit into the specified available space.
-    FitContent(Length),
+    Fit(Length),
 }
 
 impl LenReq {
     /// Returns [`LenReq`] with `delta` subtracted from it.
     ///
-    /// [`FitContent`] will have its value reduced by `delta`, but clamped to zero.
-    /// [`MinContent`] and [`MaxContent`] are returned as-is.
+    /// [`Fit`] will have its value reduced by `delta`, but clamped to zero.
+    /// [`Min`] and [`Max`] are returned as-is.
     ///
-    /// [`FitContent`]: Self::FitContent
-    /// [`MinContent`]: Self::MinContent
-    /// [`MaxContent`]: Self::MaxContent
-    pub fn reduce(self, delta: Length) -> Self {
+    /// [`Fit`]: Self::Fit
+    /// [`Min`]: Self::Min
+    /// [`Max`]: Self::Max
+    pub const fn reduce(self, delta: Length) -> Self {
         match self {
-            Self::MinContent | Self::MaxContent => self,
-            Self::FitContent(space) => Self::FitContent(space.saturating_sub(delta)),
+            Self::Min | Self::Max => self,
+            Self::Fit(space) => Self::Fit(space.saturating_sub(delta)),
         }
     }
 }

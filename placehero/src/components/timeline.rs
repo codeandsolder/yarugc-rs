@@ -28,6 +28,7 @@ struct TimelineContinuationRequest {
 }
 
 /// The state needed to load and display a single timeline (i.e. a sequence of unrelated posts)
+#[derive(Default)]
 pub(crate) struct Timeline {
     /// The currently loaded statuses in the timeline.
     statuses: Vec<Status>,
@@ -35,6 +36,7 @@ pub(crate) struct Timeline {
     pending_id: bool,
     /// Whether we've reached the end of this timeline
     at_end: bool,
+    error: Option<String>,
     /// The sender for newly requested items.
     requests: Option<UnboundedSender<TimelineContinuationRequest>>,
     // We can't cache here due to Avatars not being cache busting ready.
@@ -52,10 +54,15 @@ impl Timeline {
             requests: None,
             user_id: account.id.into(),
             at_end: false,
+            error: None,
         }
     }
 
-    pub(crate) fn view(&mut self, mastodon: Mastodon) -> impl WidgetView<Self, Navigation> + use<> {
+    pub(crate) fn has_account(&self) -> bool {
+        !self.user_id.is_empty()
+    }
+
+    pub(crate) fn view(&self, mastodon: Mastodon) -> impl WidgetView<Self, Navigation> + use<> {
         // We clone the relevant user id for use in `worker_raw`
         // (We plan for the function which makes the future to have access to the app state, but that hasn't happened yet)
         let user = self.user_id.clone();
@@ -65,31 +72,34 @@ impl Timeline {
                 // We currently never unload previous statuses (note that the widgets but not the remainder are)
                 // +1 to allow room for the spinner.
                 // Note that we also launch the very first initial request from the spinner
-                self.statuses.len(),
+                self.statuses.len() + 1,
                 |timeline: &mut Self, idx| {
                     // If we're "close" to the last downloaded item.
-                    if idx + BUFFER >= timeline.statuses.len()
+                    if idx.saturating_add(BUFFER) >= timeline.statuses.len()
                         // And don't already have a request in flight
                         && !timeline.pending_id
                         && !timeline.at_end
+                        && timeline.error.is_none()
                     {
-                        // Kick off the next request
-                        timeline.pending_id = true;
-                        timeline
-                            .requests
-                            .as_ref()
-                            .unwrap()
-                            .send(TimelineContinuationRequest {
-                                // The max id is the newest status which will be excluded; i.e. we request
-                                // all the statuses from before the last loaded one
-                                // (If we haven't loaded any yet, we just load the first n)
-                                max_id: timeline.statuses.last().map(|it| it.id.clone()),
-                            })
-                            .unwrap();
+                        let request = TimelineContinuationRequest {
+                            max_id: timeline.statuses.last().map(|status| status.id.clone()),
+                        };
+                        if let Some(sender) = timeline.requests.as_ref() {
+                            if sender.send(request).is_ok() {
+                                timeline.pending_id = true;
+                            } else {
+                                timeline.error = Some("Timeline worker stopped".to_owned());
+                            }
+                        }
                     }
-                    if idx == timeline.statuses.len() {
-                        if timeline.at_end {
-                            OneOf3::A(prose("End of timeline.").text_alignment(TextAlign::Center))
+                    if idx >= timeline.statuses.len() {
+                        if let Some(error) = timeline.error.as_ref() {
+                            OneOf3::A(prose(error.clone()).text_alignment(TextAlign::Center))
+                        } else if timeline.at_end {
+                            OneOf3::A(
+                                prose("End of timeline.".to_owned())
+                                    .text_alignment(TextAlign::Center),
+                            )
                         } else {
                             OneOf::B(
                                 flex_row(spinner().dims(50.px()))
@@ -150,11 +160,10 @@ impl Timeline {
                             timeline.pending_id = false;
                             timeline.statuses.append(&mut instance.json);
                         }
-                        Err(megalodon::error::Error::RequestError(e)) if e.is_connect() => {
-                            todo!()
-                        }
-                        Err(e) => {
-                            todo!("handle {e}")
+                        Err(error) => {
+                            tracing::warn!(%error, "Could not load timeline");
+                            timeline.pending_id = false;
+                            timeline.error = Some(format!("Could not load timeline: {error}"));
                         }
                     }
                     Navigation::None
@@ -175,14 +184,12 @@ impl Timeline {
 // It also wouldn't need to handle reblogs (the API doesn't provide any way to make a reply status which is a reblog).
 // N.b. API wise, there's no reason that you can't reply to a "reblog" status. TODO: Confirm this
 pub(crate) fn timeline_status(status: &Status) -> impl WidgetView<Timeline, Navigation> + use<> {
-    let (info_line, primary_status) = if let Some(reblog) = status.reblog.as_ref() {
+    let (info_line, primary_status) = status.reblog.as_ref().map_or((None, status), |reblog| {
         (
             Some(prose(format!("🔄 {} boosted", status.account.display_name))),
             &**reblog,
         )
-    } else {
-        (None, status)
-    };
+    });
     // Use a wrapping sized box for margin
     sized_box(
         sized_box(flex_col((info_line, base_status(primary_status))))

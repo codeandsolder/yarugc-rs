@@ -6,8 +6,8 @@ use include_doc_path::include_doc_path;
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesRef,
-    RegisterCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ChildrenIds, FromDynWidget, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
+    PropertiesRef, RegisterCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Point, Size, Vec2};
@@ -27,7 +27,7 @@ pub enum BadgePlacement {
 }
 
 impl BadgePlacement {
-    fn resolve(self, content_size: Size) -> Point {
+    const fn resolve(self, content_size: Size) -> Point {
         match self {
             Self::TopLeft => Point::new(0.0, 0.0),
             Self::TopRight => Point::new(content_size.width, 0.0),
@@ -65,13 +65,14 @@ impl Badged {
     ///
     /// By default, the badge is placed at the content's top-right corner, with the badge's center
     /// anchored to that corner (so it overlaps the content by about half).
+    #[must_use = "Use the returned value."]
     pub fn new(
         content: NewWidget<impl Widget + ?Sized>,
         badge: NewWidget<impl Widget + ?Sized>,
     ) -> Self {
         Self {
-            content: content.erased().to_pod(),
-            badge: Some(badge.erased().to_pod()),
+            content: content.erased().into_pod(),
+            badge: Some(badge.erased().into_pod()),
             placement: BadgePlacement::TopRight,
             offset: Vec2::ZERO,
         }
@@ -80,25 +81,28 @@ impl Badged {
     /// Creates a new `Badged` widget that may omit the badge entirely.
     ///
     /// This is useful for conditional badges, e.g. hiding an unread-count badge when the count is 0.
+    #[must_use = "Use the returned value."]
     pub fn new_optional(
         content: NewWidget<impl Widget + ?Sized>,
         badge: Option<NewWidget<dyn Widget>>,
     ) -> Self {
         Self {
-            content: content.erased().to_pod(),
-            badge: badge.map(|b| b.to_pod()),
+            content: content.erased().into_pod(),
+            badge: badge.map(NewWidget::into_pod),
             placement: BadgePlacement::TopRight,
             offset: Vec2::ZERO,
         }
     }
 
     /// Returns whether a badge is currently present.
+    #[must_use = "Use the returned value."]
     pub fn has_badge(&self) -> bool {
         self.badge.is_some()
     }
 
     /// Sets where the badge is placed relative to the content.
-    pub fn with_badge_placement(mut self, placement: BadgePlacement) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_badge_placement(mut self, placement: BadgePlacement) -> Self {
         self.placement = placement;
         self
     }
@@ -106,7 +110,8 @@ impl Badged {
     /// Sets an additional offset applied after placing the badge.
     ///
     /// This can be used to nudge the badge further outside or inside the content bounds.
-    pub fn with_badge_offset(mut self, offset: Vec2) -> Self {
+    #[must_use = "Use the returned value."]
+    pub const fn with_badge_offset(mut self, offset: Vec2) -> Self {
         self.offset = offset;
         self
     }
@@ -118,13 +123,13 @@ impl Badged {
     pub fn set_content(this: &mut WidgetMut<'_, Self>, content: NewWidget<impl Widget + ?Sized>) {
         this.ctx.remove_child(std::mem::replace(
             &mut this.widget.content,
-            content.erased().to_pod(),
+            content.erased().into_pod(),
         ));
     }
 
     /// Replaces the badge widget with a new one.
     pub fn set_badge(this: &mut WidgetMut<'_, Self>, badge: NewWidget<impl Widget + ?Sized>) {
-        if let Some(old) = this.widget.badge.replace(badge.erased().to_pod()) {
+        if let Some(old) = this.widget.badge.replace(badge.erased().into_pod()) {
             this.ctx.remove_child(old);
         } else {
             this.ctx.children_changed();
@@ -155,16 +160,20 @@ impl Badged {
     }
 
     /// Returns a mutable reference to the content widget.
-    pub fn content_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
-        this.ctx.get_mut(&mut this.widget.content)
+    pub fn content_mut<'t, W: Widget + FromDynWidget + ?Sized>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> Option<WidgetMut<'t, W>> {
+        this.ctx.get_mut(this.widget.content.id())
     }
 
     /// Returns a mutable reference to the badge widget.
-    pub fn badge_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, dyn Widget>> {
+    pub fn badge_mut<'t, W: Widget + FromDynWidget + ?Sized>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> Option<WidgetMut<'t, W>> {
         this.widget
             .badge
-            .as_mut()
-            .map(|badge| this.ctx.get_mut(badge))
+            .as_ref()
+            .and_then(|badge| this.ctx.get_mut(badge.id()))
     }
 }
 
@@ -189,19 +198,13 @@ impl Widget for Badged {
     ) -> Length {
         let auto_length = len_req.into();
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-        ctx.compute_length(
-            &mut self.content,
-            auto_length,
-            context_size,
-            axis,
-            cross_length,
-        )
+        ctx.compute_length(&self.content, auto_length, context_size, axis, cross_length)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let content_size = ctx.compute_size(&mut self.content, SizeDef::fit(size), size.into());
-        ctx.run_layout(&mut self.content, content_size);
-        ctx.place_child(&mut self.content, Point::ORIGIN);
+        let content_size = ctx.compute_size(&self.content, SizeDef::fit(size), size.into());
+        ctx.run_layout(&self.content, content_size);
+        ctx.place_child(&self.content, Point::ORIGIN);
         ctx.derive_baselines(&self.content);
 
         let Some(badge) = &mut self.badge else {
@@ -239,10 +242,9 @@ impl Widget for Badged {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        match &self.badge {
-            Some(badge) => ChildrenIds::from_slice(&[self.content.id(), badge.id()]),
-            None => ChildrenIds::from_slice(&[self.content.id()]),
-        }
+        let mut ids = ChildrenIds::from_slice(&[self.content.id()]);
+        ids.extend(self.badge.iter().map(WidgetPod::id));
+        ids
     }
 
     fn make_trace_span(&self, id: WidgetId) -> Span {
