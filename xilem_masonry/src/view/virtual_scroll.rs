@@ -441,13 +441,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, mpsc};
+    use std::sync::mpsc;
 
-    use masonry::app::{RenderRoot, RenderRootOptions, RenderRootSignal, WindowSizePolicy};
-    use masonry::dpi::PhysicalSize;
+    use masonry::app::RenderRootSignal;
 
     use crate::core::{DynMessage, Environment};
-    use crate::test_support::ClosedProxy;
+    use crate::test_support::{render_root, view_context};
     use crate::view::spinner;
 
     use super::*;
@@ -475,36 +474,6 @@ mod tests {
         )
     }
 
-    fn view_context() -> ViewCtx {
-        let runtime = Arc::new(
-            tokio::runtime::Builder::new_current_thread()
-                .build()
-                .unwrap(),
-        );
-        ViewCtx::new(Arc::new(ClosedProxy), runtime)
-    }
-
-    fn root_for(
-        pod: Pod<widgets::VirtualScroll>,
-    ) -> (RenderRoot, mpsc::Receiver<RenderRootSignal>) {
-        let (send, receive) = mpsc::channel();
-        let root = RenderRoot::new(
-            pod.new_widget,
-            move |signal| {
-                let _ = send.send(signal);
-            },
-            RenderRootOptions {
-                default_properties: Arc::new(masonry::theme::default_property_set()),
-                use_system_fonts: false,
-                size_policy: WindowSizePolicy::User,
-                size: PhysicalSize::new(100, 200),
-                scale_factor: 1.0,
-                test_font: None,
-            },
-        );
-        (root, receive)
-    }
-
     #[test]
     fn growing_and_jumping_in_one_rebuild_uses_new_length() {
         let mut ctx = view_context();
@@ -512,7 +481,7 @@ mod tests {
         let original = virtual_scroll::<_, (), _, _>(1, component);
         let grown = virtual_scroll::<_, (), _, _>(100, component).jump_to(Some(80));
         let (pod, mut state) = original.build(&mut ctx, &mut ());
-        let (mut root, receive) = root_for(pod);
+        let (mut root, receive) = render_root(pod.new_widget, (100, 200));
         let first = next_fetch(&receive);
         assert_eq!(
             first.target(),
@@ -564,7 +533,7 @@ mod tests {
         let original = virtual_scroll::<_, (), _, _>(100, component);
         let smaller = virtual_scroll::<_, (), _, _>(1, component);
         let (pod, mut state) = original.build(&mut ctx, &mut calls);
-        let (mut root, receive) = root_for(pod);
+        let (mut root, receive) = render_root(pod.new_widget, (100, 200));
         let old = next_fetch(&receive);
         assert!(old.target().end > 1);
 

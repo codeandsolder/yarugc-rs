@@ -150,40 +150,27 @@ impl<T> OptionalChildState<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use masonry::app::{RenderRoot, RenderRootOptions, WindowSizePolicy};
-    use masonry::dpi::PhysicalSize;
     use masonry::kurbo::Axis;
     use masonry::widgets::{ButtonPress, Divider};
 
     use crate::core::{DynMessage, Environment};
-    use crate::test_support::ClosedProxy;
+    use crate::test_support::{render_root, view_context};
     use crate::view::{button, spinner};
 
     use super::*;
 
     #[test]
     fn replacing_optional_child_rejects_old_messages_and_cleans_routing() {
-        let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
-        let mut ctx = ViewCtx::new(Arc::new(ClosedProxy), runtime);
+        let mut ctx = view_context();
         let view = button(spinner(), |count: &mut usize| *count += 1);
         let mut count = 0;
         let (child, mut state) = OptionalChildState::build(Some(&view), &mut ctx, &mut count);
         let child = child.unwrap();
         let old_id = child.id();
         let old_path = ctx.get_id_path(old_id).unwrap().clone();
-        let mut root = RenderRoot::new(
+        let (mut root, _receive) = render_root(
             NewWidget::new(Divider::new(Axis::Horizontal).content(child)),
-            |_| {},
-            RenderRootOptions {
-                default_properties: Arc::new(masonry::theme::default_property_set()),
-                use_system_fonts: false,
-                size_policy: WindowSizePolicy::User,
-                size: PhysicalSize::new(100, 100),
-                scale_factor: 1.0,
-                test_font: None,
-            },
+            (100, 100),
         );
         let send = |path| {
             MessageCtx::new(
