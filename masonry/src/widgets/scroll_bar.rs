@@ -152,11 +152,11 @@ impl ScrollBar {
         } else {
             return false;
         };
-        if new_progress.to_bits() != self.cursor_progress.to_bits() {
+        if new_progress.to_bits() == self.cursor_progress.to_bits() {
+            false
+        } else {
             self.cursor_progress = new_progress;
             true
-        } else {
-            false
         }
     }
 
@@ -592,25 +592,34 @@ mod tests {
     use crate::testing::{TestHarness, assert_render_snapshot};
     use crate::theme::test_property_set;
 
-    #[test]
-    fn simple_scrollbar() {
-        let widget = NewWidget::new(ScrollBar::new(Axis::Vertical, 200.px(), 600.px()))
-            .with_props(Dimensions::FIT);
-
-        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (50, 200));
+    fn centered_scrollbar(
+        axis: Axis,
+        size: (u32, u32),
+        before: &str,
+        after: &str,
+    ) -> TestHarness<ScrollBar> {
+        let widget =
+            NewWidget::new(ScrollBar::new(axis, 200.px(), 600.px())).with_props(Dimensions::FIT);
+        let mut harness = TestHarness::create_with_size(test_property_set(), widget, size);
         let scrollbar_id = harness.root_id();
-
-        assert_render_snapshot!(harness, "scrollbar_default");
-
+        assert_render_snapshot!(harness, before);
         assert!(harness.pop_action_erased().is_none());
-
         harness.mouse_click_on(scrollbar_id, None).unwrap();
         let (action, source) = harness.pop_action::<ScrollBarMoved>().unwrap().unwrap();
         assert_eq!(source, scrollbar_id);
         assert!((action.0 - 0.5).abs() < 1e-9);
+        assert_render_snapshot!(harness, after);
+        harness
+    }
 
-        assert_render_snapshot!(harness, "scrollbar_middle");
-
+    #[test]
+    fn simple_scrollbar() {
+        let mut harness = centered_scrollbar(
+            Axis::Vertical,
+            (50, 200),
+            "scrollbar_default",
+            "scrollbar_middle",
+        );
         harness.mouse_button_press(None);
         harness.mouse_move(Point::new(30.0, 150.0));
 
@@ -633,22 +642,12 @@ mod tests {
 
     #[test]
     fn horizontal_scrollbar() {
-        let widget = NewWidget::new(ScrollBar::new(Axis::Horizontal, 200.px(), 600.px()))
-            .with_props(Dimensions::FIT);
-
-        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (200, 50));
-        let scrollbar_id = harness.root_id();
-
-        assert_render_snapshot!(harness, "scrollbar_horizontal");
-
-        assert!(harness.pop_action_erased().is_none());
-
-        harness.mouse_click_on(scrollbar_id, None).unwrap();
-        let (action, source) = harness.pop_action::<ScrollBarMoved>().unwrap().unwrap();
-        assert_eq!(source, scrollbar_id);
-        assert!((action.0 - 0.5).abs() < 1e-9);
-
-        assert_render_snapshot!(harness, "scrollbar_horizontal_middle");
+        centered_scrollbar(
+            Axis::Horizontal,
+            (200, 50),
+            "scrollbar_horizontal",
+            "scrollbar_horizontal_middle",
+        );
     }
 
     #[test]
