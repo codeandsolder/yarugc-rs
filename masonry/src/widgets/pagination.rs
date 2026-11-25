@@ -410,83 +410,40 @@ trait SyncCtx {
     );
 }
 
-impl SyncCtx for MutateCtx<'_> {
-    fn request_layout(&mut self) {
-        self.request_layout();
-    }
+// These contexts expose identical mutation operations. Keep the adapter in one place.
+macro_rules! impl_sync_ctx {
+    ($($ctx:ident),+ $(,)?) => {
+        $(
+            impl SyncCtx for $ctx<'_> {
+                fn request_layout(&mut self) {
+                    self.request_layout();
+                }
 
-    fn children_changed(&mut self) {
-        self.children_changed();
-    }
+                fn children_changed(&mut self) {
+                    self.children_changed();
+                }
 
-    fn set_stashed(&mut self, child: &WidgetPod<impl Widget + ?Sized>, stashed: bool) {
-        self.set_stashed(child, stashed);
-    }
+                fn set_stashed(&mut self, child: &WidgetPod<impl Widget + ?Sized>, stashed: bool) {
+                    self.set_stashed(child, stashed);
+                }
 
-    fn remove_child(&mut self, child: WidgetPod<impl Widget + ?Sized>) {
-        self.remove_child(child);
-    }
+                fn remove_child(&mut self, child: WidgetPod<impl Widget + ?Sized>) {
+                    self.remove_child(child);
+                }
 
-    fn mutate_child_later<W: Widget + FromDynWidget + ?Sized>(
-        &mut self,
-        child: &WidgetPod<W>,
-        f: impl FnOnce(WidgetMut<'_, W>) + Send + 'static,
-    ) {
-        self.mutate_child_later(child, f);
-    }
+                fn mutate_child_later<W: Widget + FromDynWidget + ?Sized>(
+                    &mut self,
+                    child: &WidgetPod<W>,
+                    f: impl FnOnce(WidgetMut<'_, W>) + Send + 'static,
+                ) {
+                    self.mutate_child_later(child, f);
+                }
+            }
+        )+
+    };
 }
 
-impl SyncCtx for ActionCtx<'_> {
-    fn request_layout(&mut self) {
-        self.request_layout();
-    }
-
-    fn children_changed(&mut self) {
-        self.children_changed();
-    }
-
-    fn set_stashed(&mut self, child: &WidgetPod<impl Widget + ?Sized>, stashed: bool) {
-        self.set_stashed(child, stashed);
-    }
-
-    fn remove_child(&mut self, child: WidgetPod<impl Widget + ?Sized>) {
-        self.remove_child(child);
-    }
-
-    fn mutate_child_later<W: Widget + FromDynWidget + ?Sized>(
-        &mut self,
-        child: &WidgetPod<W>,
-        f: impl FnOnce(WidgetMut<'_, W>) + Send + 'static,
-    ) {
-        self.mutate_child_later(child, f);
-    }
-}
-
-impl SyncCtx for UpdateCtx<'_> {
-    fn request_layout(&mut self) {
-        self.request_layout();
-    }
-
-    fn children_changed(&mut self) {
-        self.children_changed();
-    }
-
-    fn set_stashed(&mut self, child: &WidgetPod<impl Widget + ?Sized>, stashed: bool) {
-        self.set_stashed(child, stashed);
-    }
-
-    fn remove_child(&mut self, child: WidgetPod<impl Widget + ?Sized>) {
-        self.remove_child(child);
-    }
-
-    fn mutate_child_later<W: Widget + FromDynWidget + ?Sized>(
-        &mut self,
-        child: &WidgetPod<W>,
-        f: impl FnOnce(WidgetMut<'_, W>) + Send + 'static,
-    ) {
-        self.mutate_child_later(child, f);
-    }
-}
+impl_sync_ctx!(MutateCtx, ActionCtx, UpdateCtx);
 
 // --- MARK: TESTS
 #[cfg(test)]
