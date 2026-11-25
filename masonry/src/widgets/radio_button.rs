@@ -5,18 +5,18 @@ use std::any::TypeId;
 
 use accesskit::{Node, Role, Toggled};
 use include_doc_path::include_doc_path;
-use masonry_core::debug_panic;
 use tracing::{Span, trace, trace_span};
 
 use crate::core::{
     AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
-    PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update,
-    UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut, WidgetPod, keyboard::Key,
+    PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef,
+    RegisterCtx, TextEvent, Update, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut,
+    WidgetPod, keyboard::Key,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Circle, Size, Stroke};
 use crate::layout::{LenReq, Length};
-use crate::properties::{BorderColor, BorderWidth, CheckmarkColor, CheckmarkStrokeWidth};
+use crate::properties::{BorderColor, BorderWidth, CheckmarkColor};
 use crate::theme;
 use crate::widgets::{Label, RadioGroup};
 
@@ -28,7 +28,8 @@ use crate::widgets::{Label, RadioGroup};
     ")",
 )]
 ///
-/// Emits [`RadioButtonSelected`] when selected.
+/// Emits [`RadioButtonSelected`] when an unchecked button is activated.
+/// A button outside a group behaves as an independent selection control.
 pub struct RadioButton {
     selected: bool,
     // FIXME - Remove label child, have this widget only be a box with a checkmark.
@@ -59,20 +60,37 @@ impl RadioButton {
 
 // --- MARK: WIDGETMUT
 impl RadioButton {
-    /// Check or uncheck the box.
-    pub fn set_checked(this: &mut WidgetMut<'_, Self>, checked: bool) {
-        this.widget.selected = checked;
-        // Checked state impacts appearance and accessibility node
-        this.ctx.request_render();
+    /// Returns the current selection state.
+    #[must_use = "Inspect whether the radio button is checked."]
+    pub const fn is_checked(&self) -> bool {
+        self.selected
+    }
 
-        let Some(parent_id) = this.widget.parent_group else {
-            return;
-        };
-        let self_id = this.ctx.widget_id();
-        this.ctx
-            .mutate_later::<RadioGroup>(parent_id, move |group| {
-                Self::update_group(group, self_id, checked);
-            });
+    /// Check or uncheck the button.
+    ///
+    /// Within a group, selection changes are applied in submission order
+    /// during the mutation pass. Selecting a button deselects the previous one.
+    pub fn set_checked(this: &mut WidgetMut<'_, Self>, checked: bool) {
+        if let Some(parent_id) = this.widget.parent_group {
+            let self_id = this.id();
+            this.ctx
+                .mutate_later::<RadioGroup>(parent_id, move |group| {
+                    RadioGroup::apply_selection(group, self_id, checked);
+                });
+        } else {
+            Self::apply_checked(this, checked);
+        }
+    }
+
+    pub(super) fn apply_checked(this: &mut WidgetMut<'_, Self>, checked: bool) {
+        if this.widget.selected != checked {
+            this.widget.selected = checked;
+            this.ctx.request_render();
+        }
+    }
+
+    pub(super) const fn group_id(&self) -> Option<WidgetId> {
+        self.parent_group
     }
 
     label_text_accessors!();
@@ -89,45 +107,20 @@ pub struct RadioButtonSelected;
 // --- MARK: HELPERS
 impl RadioButton {
     fn select(&mut self, ctx: &mut EventCtx<'_>) {
-        self.selected = true;
-        ctx.submit_action::<RadioButtonSelected>(RadioButtonSelected);
-        ctx.request_render();
-
-        let Some(parent_id) = self.parent_group else {
+        ctx.set_handled();
+        if self.selected {
             return;
-        };
-        let self_id = ctx.widget_id();
-        ctx.mutate_later::<RadioGroup>(parent_id, move |group| {
-            Self::update_group(group, self_id, true);
-        });
-    }
-
-    fn update_group(mut group: WidgetMut<'_, RadioGroup>, self_id: WidgetId, selected: bool) {
-        let selected_button = group.widget.selected_button;
-        if let Some(button_id) = selected_button
-            && button_id != self_id
-            && selected
-        {
-            // We don't bother checking that the button still exists,
-            // the mutate pass does that for us.
-            group
-                .ctx
-                .mutate_later::<Self>(button_id, move |mut button| {
-                    button.widget.selected = false;
-                    button.ctx.request_render();
-                });
-            // TODO - Submit action from RadioGroup?
         }
-
-        if let Some(button_id) = selected_button
-            && button_id == self_id
-            && !selected
-        {
-            group.widget.selected_button = None;
+        if let Some(parent_id) = self.parent_group {
+            let self_id = ctx.widget_id();
+            ctx.mutate_later::<RadioGroup>(parent_id, move |group| {
+                RadioGroup::apply_selection(group, self_id, true);
+            });
+        } else {
+            self.selected = true;
+            ctx.request_render();
         }
-        if selected {
-            group.widget.selected_button = Some(self_id);
-        }
+        ctx.submit_action::<RadioButtonSelected>(RadioButtonSelected);
     }
 }
 
@@ -142,11 +135,19 @@ impl Widget for RadioButton {
         event: &PointerEvent,
     ) {
         match event {
-            PointerEvent::Down { .. } => {
+            PointerEvent::Down(PointerButtonEvent {
+                button: None | Some(PointerButton::Primary),
+                ..
+            }) => {
+                ctx.request_focus();
                 ctx.capture_pointer();
+                ctx.set_handled();
                 trace!("RadioButton {:?} pressed", ctx.widget_id());
             }
-            PointerEvent::Up { .. } if ctx.is_active() && ctx.is_hovered() => {
+            PointerEvent::Up(PointerButtonEvent {
+                button: None | Some(PointerButton::Primary),
+                ..
+            }) if ctx.is_active() && ctx.is_hovered() => {
                 trace!("RadioButton {:?} released", ctx.widget_id());
                 self.select(ctx);
             }
@@ -168,6 +169,10 @@ impl Widget for RadioButton {
             }
             _ => (),
         }
+    }
+
+    fn propagates_pointer_interaction(&self) -> bool {
+        false
     }
 
     fn accepts_focus(&self) -> bool {
@@ -192,13 +197,15 @@ impl Widget for RadioButton {
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
             Update::WidgetAdded => {
-                let Some((_, id)) = ctx.nearest_ancestor::<RadioGroup>() else {
-                    let id = ctx.widget_id();
-                    debug_panic!("RadioButton {id} is not a child of a RadioGroup");
-                    return;
-                };
-
-                self.parent_group = Some(id);
+                self.parent_group = ctx.nearest_ancestor::<RadioGroup>().map(|(_, id)| id);
+                if let Some(parent_id) = self.parent_group
+                    && self.selected
+                {
+                    let self_id = ctx.widget_id();
+                    ctx.mutate_later::<RadioGroup>(parent_id, move |group| {
+                        RadioGroup::apply_selection(group, self_id, true);
+                    });
+                }
             }
             Update::HoveredChanged(_)
             | Update::ActiveChanged(_)
@@ -216,7 +223,6 @@ impl Widget for RadioButton {
     }
 
     fn property_changed(&mut self, ctx: &mut UpdateCtx<'_>, property_type: TypeId) {
-        CheckmarkStrokeWidth::prop_changed(ctx, property_type);
         CheckmarkColor::prop_changed(ctx, property_type);
     }
 
@@ -294,11 +300,89 @@ impl Widget for RadioButton {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{StyleProperty, WidgetTag};
+    use crate::core::{CollectionWidget, StyleProperty, WidgetTag};
     use crate::properties::ContentColor;
     use crate::testing::{TestHarness, assert_render_snapshot};
     use crate::theme::{ACCENT_COLOR, default_property_set};
     use crate::widgets::Flex;
+
+    fn check_state(harness: &mut TestHarness<RadioGroup>, ids: &[WidgetId], expected: &[bool]) {
+        let _ = harness.redraw();
+        for (&id, &checked) in ids.iter().zip(expected) {
+            let node = harness.access_node(id).unwrap();
+            assert_eq!(
+                node.data().toggled(),
+                Some(if checked {
+                    Toggled::True
+                } else {
+                    Toggled::False
+                })
+            );
+            let button = harness.get_widget_with_id(id).unwrap();
+            assert_eq!(
+                button.downcast::<RadioButton>().unwrap().is_checked(),
+                checked
+            );
+        }
+        assert!(harness.pop_action_erased().is_none());
+    }
+
+    #[test]
+    fn initial_and_batched_selection_are_exclusive() {
+        let a = RadioButton::new(true, "A").prepare();
+        let b = RadioButton::new(true, "B").prepare();
+        let ids = [a.id(), b.id()];
+        let group = RadioGroup::new(Flex::row().with_fixed(a).with_fixed(b).prepare()).prepare();
+        let mut harness = TestHarness::create_with_size(default_property_set(), group, (200, 40));
+        check_state(&mut harness, &ids, &[false, true]);
+
+        harness
+            .edit_root_widget(|mut group| {
+                let mut row = RadioGroup::child_mut::<Flex>(&mut group).unwrap();
+                for id in [ids[0], ids[1], ids[0]] {
+                    let mut button = row.ctx.get_mut::<RadioButton>(id).unwrap();
+                    RadioButton::set_checked(&mut button, true);
+                }
+            })
+            .unwrap();
+        check_state(&mut harness, &ids, &[true, false]);
+
+        // Selecting a removed child must not clear the live selection.
+        harness
+            .edit_root_widget(|mut group| {
+                let mut row = RadioGroup::child_mut::<Flex>(&mut group).unwrap();
+                {
+                    let mut b = row.ctx.get_mut::<RadioButton>(ids[1]).unwrap();
+                    RadioButton::set_checked(&mut b, true);
+                }
+                Flex::remove(&mut row, 1).unwrap();
+            })
+            .unwrap();
+        check_state(&mut harness, &ids[..1], &[true]);
+    }
+
+    #[test]
+    fn initially_selected_button_is_unchecked_when_another_is_activated() {
+        let a = RadioButton::new(true, "A").prepare();
+        let b = RadioButton::new(false, "B").prepare();
+        let ids = [a.id(), b.id()];
+        let group = RadioGroup::new(Flex::row().with_fixed(a).with_fixed(b).prepare()).prepare();
+        let mut harness = TestHarness::create_with_size(default_property_set(), group, (200, 40));
+        check_state(&mut harness, &ids, &[true, false]);
+
+        harness
+            .mouse_click_on(ids[1], Some(PointerButton::Secondary))
+            .unwrap();
+        check_state(&mut harness, &ids, &[true, false]);
+        harness.accessibility_click_on(ids[1]);
+        assert_eq!(
+            harness.pop_action::<RadioButtonSelected>().unwrap(),
+            Some((RadioButtonSelected, ids[1]))
+        );
+        check_state(&mut harness, &ids, &[false, true]);
+        harness.accessibility_click_on(ids[1]);
+        check_state(&mut harness, &ids, &[false, true]);
+    }
 
     #[test]
     fn simple_radio_button() {

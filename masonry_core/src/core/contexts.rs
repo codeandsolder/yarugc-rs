@@ -303,6 +303,15 @@ impl MutateCtx<'_> {
         )
     }
 
+    /// Returns a shared typed reference to a registered descendant.
+    ///
+    /// Returns None for a widget outside this subtree, an absent widget,
+    /// or a widget of another type.
+    #[must_use = "Inspect the descendant if it exists."]
+    pub fn get_descendant<W: Widget + FromDynWidget + ?Sized>(&self, id: WidgetId) -> Option<&W> {
+        W::from_dyn(&*self.children.find(id)?.item.widget)
+    }
+
     pub(crate) fn reborrow_mut(&mut self) -> MutateCtx<'_> {
         MutateCtx {
             global_state: self.global_state,
