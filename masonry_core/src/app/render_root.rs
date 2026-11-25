@@ -591,6 +591,17 @@ impl RenderRoot {
         self.get_widget(self.layer_root_id(layer_idx)?)
     }
 
+    /// Hit-tests the complete layer stack at a window-space point.
+    ///
+    /// Unlike a test restricted to the base layer, this includes popups and
+    /// other overlays in their actual stacking order. Pointer capture is not
+    /// considered: this returns the geometrically hit interactive widget.
+    #[must_use = "Inspect the widget at this position."]
+    pub fn widget_at_position(&self, position: Point) -> Option<WidgetRef<'_, dyn Widget>> {
+        self.get_widget(self.root_id())?
+            .find_widget_under_pointer(position)
+    }
+
     /// Returns a [`WidgetRef`] to a specific widget.
     pub fn get_widget(&self, id: WidgetId) -> Option<WidgetRef<'_, dyn Widget>> {
         let node = self.widget_arena.nodes.find(id)?;
@@ -686,9 +697,25 @@ impl RenderRoot {
     ///
     /// # Panics
     ///
-    /// Panics in debug mode if the intended layer is the base layer or
-    /// is not found.
+    /// Panics in debug mode if the intended layer is the base layer.
+    /// An already removed layer is ignored.
     pub fn remove_layer(&mut self, root_id: WidgetId) {
+        // A driver may close an attached layer directly. Clear its owner mapping
+        // even if no widget requested the removal.
+        let mut owner = None;
+        self.global_state.attached_layers.retain(|id, layers| {
+            let before = layers.len();
+            layers.retain(|_, layer| *layer != root_id);
+            if layers.len() != before {
+                owner = Some(*id);
+            }
+            !layers.is_empty()
+        });
+        if let Some(owner) = owner {
+            let _ = mutate_widget(self, owner, |mut widget: WidgetMut<'_, dyn Widget>| {
+                widget.ctx.request_accessibility_update();
+            });
+        }
         let _ = mutate_widget(
             self,
             self.root_id(),

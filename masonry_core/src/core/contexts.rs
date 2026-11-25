@@ -185,6 +185,18 @@ impl_context_method!(
             self.widget_state.id
         }
 
+        /// Returns the attached layer created by this widget with the given type `W`.
+        ///
+        /// See [`MutateCtx::create_attached_layer`] for more details.
+        #[must_use = "Use the attached layer identifier if present."]
+        pub fn get_attached_layer<W: Widget + ?Sized>(&self) -> Option<WidgetId> {
+            self.global_state
+                .attached_layers
+                .get(&self.widget_id())?
+                .get(&TypeId::of::<W>())
+                .copied()
+        }
+
         /// Returns the local transform of this widget.
         ///
         /// This transform is used during the mapping of this widget's border-box coordinate space
@@ -2034,23 +2046,13 @@ impl_context_method!(
                 self.global_state
                     .emit_signal(RenderRootSignal::RemoveLayer(prev));
             }
+            self.widget_state.set_request_accessibility(true);
+            self.widget_state.set_needs_accessibility(true);
             self.global_state.emit_signal(RenderRootSignal::NewLayer(
                 layer_type,
                 fallback_widget.erased(),
                 position,
             ));
-        }
-
-        /// Returns the attached layer created by this widget with the given type `W`.
-        ///
-        /// See [`Self::create_attached_layer`] for more details.
-        #[must_use = "Use the attached layer identifier if present."]
-        pub fn get_attached_layer<W: Widget + ?Sized>(&self) -> Option<WidgetId> {
-            self.global_state
-                .attached_layers
-                .get(&self.widget_id())?
-                .get(&TypeId::of::<W>())
-                .copied()
         }
 
         /// Removes the layer with the specified widget as root.
@@ -2069,6 +2071,11 @@ impl_context_method!(
                 .map(|(type_id, _)| *type_id);
             if let Some(type_id) = layer_type_id {
                 layers.remove(&type_id);
+                self.widget_state.set_request_accessibility(true);
+                self.widget_state.set_needs_accessibility(true);
+            }
+            if layers.is_empty() {
+                self.global_state.attached_layers.remove(&self.widget_id());
             }
         }
 

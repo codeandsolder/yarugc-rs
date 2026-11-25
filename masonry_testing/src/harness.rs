@@ -729,8 +729,7 @@ impl<W: Widget> TestHarness<W> {
         }
         if self
             .render_root
-            .get_layer_root(0)
-            .and_then(|root| root.find_widget_under_pointer(center))
+            .widget_at_position(center)
             .map(|widget| widget.id())
             != Some(id)
         {

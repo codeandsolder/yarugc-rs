@@ -92,8 +92,8 @@ impl LayerStack {
     ///
     /// # Panics
     ///
-    /// Panics in debug mode if the intended layer is the base layer or
-    /// is not found.
+    /// Panics in debug mode if the intended layer is the base layer.
+    /// A layer that has already been removed is ignored.
     pub(crate) fn remove_layer(this: &mut WidgetMut<'_, Self>, root_id: WidgetId) {
         match this
             .widget
@@ -102,7 +102,7 @@ impl LayerStack {
             .position(|layer| layer.root.id() == root_id)
         {
             Some(0) => debug_panic!("Cannot remove initial layer"),
-            None => debug_panic!("layer with root widget {root_id:?} not found"),
+            None => {}
             Some(idx) => {
                 let child = this.widget.layers.remove(idx).root;
                 this.ctx.remove_child(child);
