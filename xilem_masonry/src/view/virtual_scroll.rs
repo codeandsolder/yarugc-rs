@@ -49,11 +49,8 @@ pub struct VirtualScroll<State, Action, ChildrenViews, F, G> {
 /// - `func` is the component for this element's children.
 ///   It is provided with the app's state and the index of the child.
 ///
-/// In rare circumstances, the index of the child could be outside of the requested valid range (this is
-/// most likely to happen if the valid range changes due to something in `app_logic` updating it - e.g.
-/// if a counter which decrements every time a parent component is called is used for the valid range).
-/// As such, you should avoid panicking if the index is outside of a range you expect, and you are
-/// changing the valid range. We expect this limitation to be lifted in the future.
+/// Requests invalidated by a change in length are discarded; the child component is
+/// called only for indices within the current length.
 ///
 /// For full details, see the documentation on the [view type](VirtualScroll).
 pub fn virtual_scroll<State, Action, ChildrenViews, F>(
@@ -221,7 +218,11 @@ where
         app_state: &mut State,
     ) {
         for (&idx, child) in &mut state.children {
-            self.rebuild_child(idx, child, ctx, element, app_state);
+            if idx < self.len
+                && let Some(widget) = widgets::VirtualScroll::child_mut(element, idx)
+            {
+                self.rebuild_child(idx, child, ctx, widget, app_state);
+            }
         }
     }
 
@@ -230,15 +231,13 @@ where
         idx: usize,
         child: &mut private::ChildState<ChildrenViews, ChildrenViews::ViewState>,
         ctx: &mut ViewCtx,
-        element: &mut masonry::core::WidgetMut<'_, widgets::VirtualScroll>,
+        widget: masonry::core::WidgetMut<'_, ChildrenViews::Widget>,
         app_state: &mut State,
     ) {
         let next = (self.func)(app_state, idx);
         with_child_path(ctx, idx, child.generation, |ctx| {
-            if let Some(widget) = widgets::VirtualScroll::child_mut(element, idx) {
-                next.rebuild(&child.view, &mut child.state, ctx, widget, app_state);
-                child.view = next;
-            }
+            next.rebuild(&child.view, &mut child.state, ctx, widget, app_state);
+            child.view = next;
         });
     }
 }
@@ -319,28 +318,27 @@ where
             widgets::VirtualScroll::set_scrolling(&mut element, self.scrolling);
         }
 
-        if let Some(action) = view_state.pending_action.take() {
-            widgets::VirtualScroll::will_handle_action(&mut element, &action);
-            for idx in action.old_active().clone() {
-                if !action.target().contains(&idx) {
-                    if let Some(mut child) = view_state.children.remove(&idx) {
-                        with_child_path(ctx, idx, child.generation, |ctx| {
-                            if let Some(child_element) =
-                                widgets::VirtualScroll::child_mut(&mut element, idx)
-                            {
-                                child.view.teardown(&mut child.state, ctx, child_element);
-                            } else {
-                                ctx.remove_action_sources_under_current_path();
-                            }
-                        });
-                    }
-                    widgets::VirtualScroll::remove_child(&mut element, idx);
+        if let Some(action) = view_state.pending_action.take()
+            && let Some(mut fetch) = widgets::VirtualScroll::begin_fetch(&mut element, &action)
+        {
+            for idx in action.removed() {
+                if let Some(mut child) = view_state.children.remove(&idx) {
+                    with_child_path(ctx, idx, child.generation, |ctx| {
+                        if let Some(child_element) = fetch.child_mut(idx) {
+                            child.view.teardown(&mut child.state, ctx, child_element);
+                        } else {
+                            ctx.remove_action_sources_under_current_path();
+                        }
+                    });
                 }
+                let _ = fetch.remove_child(idx);
             }
             // Preserve index order for both new and retained child callbacks.
             for idx in action.target().clone() {
                 if let Some(child) = view_state.children.get_mut(&idx) {
-                    self.rebuild_child(idx, child, ctx, &mut element, app_state);
+                    if let Some(widget) = fetch.child_mut(idx) {
+                        self.rebuild_child(idx, child, ctx, widget, app_state);
+                    }
                     continue;
                 }
                 let view = (self.func)(app_state, idx);
@@ -348,7 +346,12 @@ where
                 view_state.next_generation = generation.wrapping_add(1);
                 let (child, state) =
                     with_child_path(ctx, idx, generation, |ctx| view.build(ctx, app_state));
-                widgets::VirtualScroll::add_child(&mut element, idx, child.new_widget.erased());
+                if !fetch.add_child(idx, child.new_widget.erased()) {
+                    with_child_path(ctx, idx, generation, |ctx| {
+                        ctx.remove_action_sources_under_current_path()
+                    });
+                    continue;
+                }
                 view_state.children.insert(
                     idx,
                     private::ChildState {
@@ -397,6 +400,9 @@ where
             let Ok(idx) = usize::try_from(first.routing_id()) else {
                 return MessageResult::Stale;
             };
+            if idx >= self.len {
+                return MessageResult::Stale;
+            }
             let Some(target) = view_state.children.get_mut(&idx) else {
                 return MessageResult::Stale;
             };
@@ -413,6 +419,9 @@ where
         if let Some(action) = message.take_message::<widgets::VirtualScrollAction>() {
             match *action {
                 widgets::VirtualScrollAction::Fetch(action) => {
+                    if !element.widget.is_pending_fetch(&action) {
+                        return MessageResult::Stale;
+                    }
                     // TODO: We should be able to rebuild here (we have the element)
                     // but we currently can't make a `ViewCtx`
                     view_state.pending_action = Some(action);

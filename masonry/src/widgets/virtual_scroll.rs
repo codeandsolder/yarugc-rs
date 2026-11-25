@@ -3,69 +3,57 @@
 
 use std::collections::BTreeMap;
 use std::ops::Range;
+use std::sync::Arc;
 
 use understory_virtual_list::{ScrollAlign, SparsePrefixSumExtentModel, VirtualList};
 
 use crate::core::keyboard::{Key, KeyState, NamedKey};
 use crate::core::{
     AccessCtx, AccessEvent, ChildrenIds, ComposeCtx, EventCtx, FromDynWidget, KeyboardEvent,
-    LayoutCtx, MeasureCtx, NewWidget, PaintCtx, PointerEvent, PointerScrollEvent, PropertiesMut,
+    LayoutCtx, MeasureCtx, NewWidget, PointerEvent, PointerScrollEvent, PropertiesMut,
     PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use crate::dpi::PhysicalPosition;
-use crate::imaging::Painter;
 use crate::kurbo::{Axis, Size};
 use crate::layout::{LenDef, LenReq, Length, SizeDef};
-use crate::util::debug_panic;
 
-/// The action type sent by the [`VirtualScroll`] widget when as of yet un-fetched children need to be fetched.
+/// Request to update the materialized children of a [`VirtualScroll`].
 ///
-/// Before handling this action, you must call [`VirtualScroll::will_handle_action`] using it.
-///
-/// Currently, this does not have utilities to produce the ranges which should be added and removed.
-/// The recommended approach is just to use the two loops, as the ranges are expected to be relatively small:
+/// Use [`VirtualScroll::begin_fetch`] to accept the request before modifying
+/// children. A request is accepted at most once and only by its originating
+/// widget. A delayed request invalidated by a length change is harmless.
 ///
 /// ```ignore
-/// let action = action.downcast::<VirtualScrollAction>().unwrap();
-/// let VirtualScrollAction::Fetch(action) = action else {
+/// let Some(mut fetch) = VirtualScroll::begin_fetch(&mut scroll, &action) else {
 ///     return;
 /// };
-/// // We tell the scroll area which action we're about to handle
-/// VirtualScroll::will_handle_action(&mut scroll, &action);
-/// for idx in action.old_active().clone() {
-///     if !action.target().contains(&idx) {
-///         VirtualScroll::remove_child(&mut scroll, idx);
-///     }
+/// for idx in action.removed() {
+///     // Tear down any associated application state before removing the widget.
+///     let _ = fetch.remove_child(idx);
 /// }
-/// for idx in action.target().clone() {
-///     if !action.old_active().contains(&idx) {
-///         let label = Label::new(format!("Child {idx}"));
-///         VirtualScroll::add_child(
-///             &mut scroll,
-///             idx,
-///             NewWidget::new(label).erased(),
-///         );
-///     }
+/// for idx in action.added() {
+///     let label = Label::new(format!("Child {idx}"));
+///     let _ = fetch.add_child(idx, NewWidget::new(label).erased());
 /// }
 /// ```
-///
-/// That is:
-/// - Any items which were in `old_active` and aren't in `target` should
-///   be removed from the `VirtualScroll` using [`remove_child`](VirtualScroll::remove_child).
-/// - Any items which are in `target` and aren't in `old_active` should
-///   be materialised and added to the `VirtualScroll` using [`add_child`](VirtualScroll::add_child).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VirtualScrollFetchAction {
-    /// The range of children ids which were "active" before this change.
-    /// That is, the items which the driver wanted to have available, to properly load what it needs.
-    /// Note that many of these items will likely still be active even after this event;
-    /// only those which aren't also in `target` must be removed.
+    request: Arc<FetchRequest>,
+}
+
+#[derive(Debug)]
+struct FetchRequest {
     old_active: Range<usize>,
-    /// The range of items which are now active.
-    ///
-    /// Note that many of these items will have previously been active before this event (and so require no action);
-    /// only those which aren't also in `target` must be removed.
     target: Range<usize>,
+}
+
+/// Mutable access to the children while applying an accepted fetch request.
+///
+/// The borrow prevents another fetch or list configuration change while editing.
+/// Retained children may also be edited via [`Self::child_mut`].
+#[derive(Debug)]
+pub struct VirtualScrollFetchMut<'a, 'w> {
+    scroll: &'a mut WidgetMut<'w, VirtualScroll>,
 }
 
 /// The action type sent by the [`VirtualScroll`] widget when the range of visible children changes as a result of scrolling.
@@ -119,13 +107,12 @@ pub enum ScrollDirection {
 /// If only a subset of ids are valid, then the valid range of ids widget *must* be set.
 ///
 /// The widget will send a [`VirtualScrollFetchAction`] whenever the children it requires to be loaded (the active children) changes.
-/// To handle this, the driver must [add](Self::add_child) widgets for the ids which are in `target` but not in
-/// `old_active`, and [remove](Self::remove_child) those which are in `old_active` but not in `target`.
+/// To handle this, the driver must [add](VirtualScrollFetchMut::add_child) widgets for the ids which are in `target` but not in
+/// `old_active`, and [remove](VirtualScrollFetchMut::remove_child) those which are in `old_active` but not in `target`.
 /// (`VirtualScroll` does not remove the children itself to enable cleanup by the driver before the
 /// children get removed).
-/// You also need to call [`VirtualScroll::will_handle_action`] with this action, which allows the
-/// `VirtualScroll` controller to know which children it expects to be valid. This avoids issues caused by
-/// things going out of sync.
+/// Accept the action with [`VirtualScroll::begin_fetch`], then use the returned
+/// [`VirtualScrollFetchMut`] to update the children. Stale requests are rejected.
 /// The docs for [`VirtualScrollFetchAction`] include an example demonstrating this.
 ///
 /// It is invalid to not provide all items requested.
@@ -136,7 +123,7 @@ pub enum ScrollDirection {
 /// This widget avoids panicking and infinite loops in these cases, but this widget is not designed to
 /// handle them, and so arbitrarily janky behaviour may occur.
 ///
-/// As a special case, it is not possible to have an item with id [`i64::MAX`].
+/// As a special case, it is not possible to have an item with id [`usize::MAX`].
 /// This is because of the internal use of exclusive ranges.
 ///
 /// # Caveats
@@ -195,15 +182,8 @@ pub struct VirtualScroll {
     /// This is still an invalid state, but we handle it as well as we can.
     active_range: Range<usize>,
 
-    /// Whether the most recent request we sent out was handled.
-    /// If it hasn't been handled, we won't send a new one.
-    action_handled: bool,
-
-    /// We don't want to spam warnings about not being dense, but we want the user to be aware of it.
-    warned_not_dense: bool,
-
-    /// We don't want to spam warnings about missing an action, but we want the user to be aware of it.
-    missed_actions_count: u32,
+    /// The single outstanding request, identified by its shared allocation.
+    pending_fetch: Option<Arc<FetchRequest>>,
 
     items: BTreeMap<usize, WidgetPod<dyn Widget>>,
 
@@ -222,9 +202,7 @@ impl std::fmt::Debug for VirtualScroll {
         f.debug_struct("VirtualScroll")
             .field("virtual_list", &self.virtual_list)
             .field("active_range", &self.active_range)
-            .field("action_handled", &self.action_handled)
-            .field("warned_not_dense", &self.warned_not_dense)
-            .field("missed_actions_count", &self.missed_actions_count)
+            .field("pending_fetch", &self.pending_fetch)
             .field("items", &self.items.keys().collect::<Vec<_>>())
             .field("anchor_index", &self.anchor_index)
             .field("range_in_viewport", &self.range_in_viewport)
@@ -260,9 +238,7 @@ impl VirtualScroll {
             virtual_list,
             // This range starts intentionally empty, as no items have been loaded.
             active_range: initial_anchor..initial_anchor,
-            action_handled: true,
-            warned_not_dense: false,
-            missed_actions_count: 0,
+            pending_fetch: None,
             items: BTreeMap::default(),
             anchor_index: initial_anchor,
             range_in_viewport: initial_anchor..initial_anchor,
@@ -354,18 +330,35 @@ impl VirtualScrollFetchAction {
     /// Note that many of these items will likely still be active even after this event;
     /// only those which aren't also in `target` must be removed.
     #[must_use = "Use the returned value."]
-    pub const fn old_active(&self) -> &Range<usize> {
-        &self.old_active
+    pub fn old_active(&self) -> &Range<usize> {
+        &self.request.old_active
     }
 
     /// The range of items which are now active.
     ///
     /// Note that many of these items will have previously been active before this event (and so require no action);
-    /// only those which aren't also in `target` must be removed.
+    /// only those which weren't also in `old_active` must be added.
     #[must_use = "Use the returned value."]
-    pub const fn target(&self) -> &Range<usize> {
-        &self.target
+    pub fn target(&self) -> &Range<usize> {
+        &self.request.target
     }
+
+    /// Indices that have left the materialized range.
+    #[must_use = "Iterate over the removed indices."]
+    pub fn removed(&self) -> impl Iterator<Item = usize> + '_ {
+        range_difference(self.old_active(), self.target())
+    }
+
+    /// Indices that have entered the materialized range.
+    #[must_use = "Iterate over the added indices."]
+    pub fn added(&self) -> impl Iterator<Item = usize> + '_ {
+        range_difference(self.target(), self.old_active())
+    }
+}
+
+// The difference of two half-open ranges has at most two contiguous pieces.
+fn range_difference(a: &Range<usize>, b: &Range<usize>) -> impl Iterator<Item = usize> {
+    (a.start..a.end.min(b.start)).chain(a.start.max(b.end)..a.end)
 }
 
 impl VirtualScrollScrollAction {
@@ -395,91 +388,30 @@ impl ScrollDirection {
 
 // --- MARK: WIDGETMUT
 impl VirtualScroll {
-    /// Indicates that `action` is about to be handled by the driver (which is calling this method).
+    /// Returns whether this request is still outstanding for this widget.
+    #[must_use = "Check whether this request can be accepted."]
+    pub fn is_pending_fetch(&self, action: &VirtualScrollFetchAction) -> bool {
+        self.pending_fetch
+            .as_ref()
+            .is_some_and(|pending| Arc::ptr_eq(pending, &action.request))
+    }
+
+    /// Accepts a fetch request and grants scoped access to its children.
     ///
-    /// This is required because if multiple actions stack up, `VirtualScroll` would assume that they have all been handled.
-    /// In particular, this method existing allows layout operations to happen after each individual action is handled, which
-    /// achieves several things:
-    /// - It improves robustness, by allowing layout methods to know exactly which indices are valid.
-    /// - It makes writing drivers easier, as the safety rails in `VirtualScroll` can be more precise.
-    // (It also simplifies writing tests)
-    // TODO: This could instead take ownership of the action, and return some kind of `{to_remove, to_add}` iterator index pair.
-    pub fn will_handle_action(this: &mut WidgetMut<'_, Self>, action: &VirtualScrollFetchAction) {
-        if this.widget.active_range != action.old_active {
-            debug_panic!(
-                "Handling a VirtualScrollFetchAction with the wrong range; got {:?}, expected {:?} for widget {}.\n\
-                Maybe this has been routed to the wrong `VirtualScroll`?",
-                action.old_active,
-                this.widget.active_range,
-                this.ctx.widget_id(),
-            );
+    /// Returns `None` for stale, already accepted, or misrouted requests,
+    /// without modifying the widget. Delayed valid requests remain acceptable
+    /// even when the viewport has moved; layout will request any newer range.
+    pub fn begin_fetch<'a, 'w>(
+        this: &'a mut WidgetMut<'w, Self>,
+        action: &VirtualScrollFetchAction,
+    ) -> Option<VirtualScrollFetchMut<'a, 'w>> {
+        if !this.widget.is_pending_fetch(action) {
+            return None;
         }
-        this.widget.action_handled = true;
-        if this.widget.missed_actions_count > 0 {
-            // Avoid spamming the "handling single action delay" warning.
-            this.widget.missed_actions_count = 1;
-        }
-        this.widget.active_range = action.target.clone();
+        this.widget.pending_fetch = None;
+        this.widget.active_range = action.target().clone();
         this.ctx.request_layout();
-    }
-
-    /// Add the child widget for the given index.
-    ///
-    /// This should be done only in the handling of a [`VirtualScrollAction`].
-    /// This must be called after [`VirtualScroll::will_handle_action`].
-    #[track_caller]
-    pub fn add_child(this: &mut WidgetMut<'_, Self>, idx: usize, child: NewWidget<dyn Widget>) {
-        // TODO: Maybe just warn?
-        debug_assert!(
-            this.widget.action_handled,
-            "You must call `will_handle_action` before `add_child`."
-        );
-        debug_assert!(
-            this.widget.active_range.contains(&idx),
-            "`add_child` should only be called with an index requested by the controller."
-        );
-        match this.widget.items.entry(idx) {
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(child.into_pod());
-                this.ctx.children_changed();
-            }
-            std::collections::btree_map::Entry::Occupied(_) => {
-                // Keep the registered widget and its retained state intact.
-                tracing::warn!("Tried to add child {idx} twice to VirtualScroll");
-            }
-        }
-    }
-
-    /// Removes the child widget with id `idx`.
-    ///
-    /// This will log an error if there was no child at the given index.
-    /// This should only happen if the driver does not meet the usage contract.
-    ///
-    /// This should be done only in the handling of a [`VirtualScrollAction`].
-    /// This must be called after [`VirtualScroll::will_handle_action`].
-    ///
-    /// Note that if you are changing the valid range, you should *not* remove any active children
-    /// outside of that range; instead the controller will send an action removing those children.
-    #[track_caller]
-    pub fn remove_child(this: &mut WidgetMut<'_, Self>, idx: usize) {
-        // TODO: Maybe just warn?
-        debug_assert!(
-            this.widget.action_handled,
-            "You must call `will_handle_action` before `remove_child`."
-        );
-        debug_assert!(
-            !this.widget.active_range.contains(&idx),
-            "`remove_child` should only be called with an index which is not active."
-        );
-        let child = this.widget.items.remove(&idx);
-        if let Some(child) = child {
-            this.ctx.remove_child(child);
-        } else if !this.widget.warned_not_dense {
-            // If we have already warned because there's a density problem, don't duplicate it with this error.
-            tracing::error!(
-                "Tried to remove child ({idx}) which has already been removed or was never added."
-            );
-        }
+        Some(VirtualScrollFetchMut { scroll: this })
     }
 
     /// Returns a mutable handle if the index contains a registered child widget.
@@ -497,6 +429,14 @@ impl VirtualScroll {
     /// Runtime equivalent of [`with_len`](Self::with_len).
     pub fn set_len(this: &mut WidgetMut<'_, Self>, len: usize) {
         this.widget.virtual_list.set_len(len);
+        if this
+            .widget
+            .pending_fetch
+            .as_ref()
+            .is_some_and(|pending| pending.target.end > len)
+        {
+            this.widget.pending_fetch = None;
+        }
         this.ctx.request_layout();
     }
 
@@ -539,6 +479,56 @@ impl VirtualScroll {
             .virtual_list
             .scroll_to_index(idx, ScrollAlign::Start);
         this.ctx.request_layout();
+    }
+}
+
+impl VirtualScrollFetchMut<'_, '_> {
+    /// Adds a new child in the accepted target range.
+    ///
+    /// Returns false if the index is outside the range or already occupied.
+    /// An existing registered child is never replaced.
+    #[must_use = "Check whether the child was added."]
+    pub fn add_child(&mut self, idx: usize, child: NewWidget<dyn Widget>) -> bool {
+        if !self.scroll.widget.active_range.contains(&idx) {
+            tracing::warn!(idx, "virtual scroll child outside accepted range");
+            return false;
+        }
+        if let std::collections::btree_map::Entry::Vacant(entry) =
+            self.scroll.widget.items.entry(idx)
+        {
+            entry.insert(child.into_pod());
+            self.scroll.ctx.children_changed();
+            true
+        } else {
+            tracing::warn!(idx, "virtual scroll child already exists");
+            false
+        }
+    }
+
+    /// Removes an existing child outside the accepted target range.
+    ///
+    /// Returns false if the child is still active or was never materialized.
+    /// Missing children are normal for an incomplete driver response.
+    #[must_use = "Check whether the child was removed."]
+    pub fn remove_child(&mut self, idx: usize) -> bool {
+        if self.scroll.widget.active_range.contains(&idx) {
+            tracing::warn!(idx, "cannot remove active virtual scroll child");
+            return false;
+        }
+        if let Some(child) = self.scroll.widget.items.remove(&idx) {
+            self.scroll.ctx.remove_child(child);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Returns a mutable handle to an existing child, including one being removed.
+    pub fn child_mut<W: Widget + FromDynWidget + ?Sized>(
+        &mut self,
+        idx: usize,
+    ) -> Option<WidgetMut<'_, W>> {
+        VirtualScroll::child_mut(self.scroll, idx)
     }
 }
 
@@ -755,20 +745,22 @@ impl Widget for VirtualScroll {
 
         self.anchor_index = self.virtual_list.viewport_range().start;
 
-        // We only send an updated request if the driver has actioned the previous request.
-        if self.action_handled && self.active_range != self.virtual_list.materialized_range() {
+        // Keep one outstanding request until the driver accepts it. Frame count
+        // is not a timeout: delayed drivers may legitimately take many redraws.
+        let materialized = self.virtual_list.materialized_range();
+        if self.pending_fetch.is_none() && self.active_range != materialized {
+            let request = Arc::new(FetchRequest {
+                old_active: self.active_range.clone(),
+                target: materialized.clone(),
+            });
+            self.pending_fetch = Some(Arc::clone(&request));
             ctx.submit_action::<VirtualScrollAction>(VirtualScrollAction::Fetch(
-                VirtualScrollFetchAction {
-                    old_active: self.active_range.clone(),
-                    target: self.virtual_list.materialized_range(),
-                },
+                VirtualScrollFetchAction { request },
             ));
-            self.action_handled = false;
         }
 
         // place children
         let offset_of_anchor = self.virtual_list.offset_of(self.anchor_index);
-        let materialized = self.virtual_list.materialized_range();
         for ((idx, child), child_size) in self.items.iter_mut().zip(sizes) {
             let visible = materialized.contains(idx);
             ctx.set_stashed(child, !visible);
@@ -796,13 +788,11 @@ impl Widget for VirtualScroll {
             -self.direction.appropriate(offset)
         };
         let translation = self.direction.axis().pack_vec2(offset, 0.);
-        for idx in self.active_range.clone() {
-            if let Some(child) = self.items.get_mut(&idx) {
-                if self.scrolling {
-                    ctx.set_animated_child_scroll_translation(child, translation);
-                } else {
-                    ctx.set_child_scroll_translation(child, translation);
-                }
+        for (_, child) in self.items.range_mut(self.active_range.clone()) {
+            if self.scrolling {
+                ctx.set_animated_child_scroll_translation(child, translation);
+            } else {
+                ctx.set_child_scroll_translation(child, translation);
             }
         }
 
@@ -813,33 +803,6 @@ impl Widget for VirtualScroll {
             ctx.submit_action::<VirtualScrollAction>(VirtualScrollAction::Scroll(
                 VirtualScrollScrollAction { range_in_viewport },
             ));
-        }
-    }
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-        // We run these checks in `paint` as they are outside of the pass-based fixedpoint loop
-        if !self.action_handled {
-            if self.missed_actions_count == 0 {
-                tracing::warn!(
-                    "VirtualScroll got to painting without its action (i.e. it's request for items to be loaded) being handled.\n\
-                    This means that there was a delay in handling its action for some reason.\n\
-                    Maybe your driver only handles one action at a time?"
-                );
-            }
-            if self.missed_actions_count > 10 {
-                debug_panic!(
-                    "VirtualScroll's action is being missed repeatedly being handled.\n\
-                    Note that to handle an action, you must call `VirtualScroll::will_handle_action` with the action."
-                );
-                // In release mode, re-send the action, which will hopefully get things unstuck.
-                self.action_handled = true;
-            }
-            self.missed_actions_count += 1;
         }
     }
 
@@ -939,6 +902,142 @@ mod tests {
 
     use super::*;
 
+    fn next_fetch(harness: &mut TestHarness<VirtualScroll>) -> VirtualScrollFetchAction {
+        loop {
+            let (action, _) = harness
+                .pop_action::<VirtualScrollAction>()
+                .unwrap()
+                .unwrap();
+            if let VirtualScrollAction::Fetch(action) = action {
+                return action;
+            }
+        }
+    }
+
+    #[test]
+    fn range_differences_match_set_membership() {
+        for a_start in 0..8 {
+            for a_end in a_start..8 {
+                for b_start in 0..8 {
+                    for b_end in b_start..8 {
+                        let a = a_start..a_end;
+                        let b = b_start..b_end;
+                        let expected = a.clone().filter(|idx| !b.contains(idx)).collect::<Vec<_>>();
+                        assert_eq!(range_difference(&a, &b).collect::<Vec<_>>(), expected);
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            range_difference(
+                &(usize::MAX - 3..usize::MAX),
+                &(usize::MAX - 2..usize::MAX - 1)
+            )
+            .collect::<Vec<_>>(),
+            vec![usize::MAX - 3, usize::MAX - 1],
+        );
+    }
+
+    #[test]
+    fn fetch_identity_rejects_wrong_widget_and_replay() {
+        let make_harness = || {
+            TestHarness::create_with_size(
+                test_property_set(),
+                VirtualScroll::new(0, 100).prepare(),
+                (100, 200),
+            )
+        };
+        let mut first = make_harness();
+        let mut second = make_harness();
+        let action = next_fetch(&mut first);
+        let other = next_fetch(&mut second);
+        assert_eq!(action.old_active(), other.old_active());
+        assert_eq!(action.target(), other.target());
+
+        second
+            .edit_root_widget(|mut scroll| {
+                assert!(VirtualScroll::begin_fetch(&mut scroll, &action).is_none());
+                assert!(scroll.widget.is_pending_fetch(&other));
+            })
+            .unwrap();
+
+        first
+            .edit_root_widget(|mut scroll| {
+                assert!(VirtualScroll::begin_fetch(&mut scroll, &other).is_none());
+                let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &action).unwrap();
+                for idx in action.added() {
+                    assert!(fetch.add_child(idx, Label::new(idx.to_string()).prepare().erased()));
+                }
+                assert!(VirtualScroll::begin_fetch(&mut scroll, &action).is_none());
+            })
+            .unwrap();
+
+        // A distinct widget may have the exact same ranges, but its own request
+        // must still be usable after rejection of the foreign one.
+        second
+            .edit_root_widget(|mut scroll| {
+                let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &other).unwrap();
+                for idx in other.added() {
+                    assert!(fetch.add_child(idx, Label::new(idx.to_string()).prepare().erased()));
+                }
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn pending_fetch_survives_redraws_and_is_invalidated_by_shrink() {
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            VirtualScroll::new(0, 100).prepare(),
+            (100, 200),
+        );
+        let old = next_fetch(&mut harness);
+        assert!(old.target().end > 1);
+        for _ in 0..20 {
+            harness
+                .edit_root_widget(|mut scroll| scroll.ctx.request_render())
+                .unwrap();
+            let _ = harness.redraw();
+            assert!(harness.root_widget().unwrap().is_pending_fetch(&old));
+        }
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::set_len(&mut scroll, 1);
+                assert!(!scroll.widget.is_pending_fetch(&old));
+                assert!(VirtualScroll::begin_fetch(&mut scroll, &old).is_none());
+            })
+            .unwrap();
+        let new = next_fetch(&mut harness);
+        assert_eq!(new.target(), &(0..1));
+        harness
+            .edit_root_widget(|mut scroll| {
+                let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &new).unwrap();
+                assert!(!fetch.add_child(1, Label::new("invalid").prepare().erased()));
+                assert!(fetch.add_child(0, Label::new("valid").prepare().erased()));
+                assert!(!fetch.remove_child(0));
+            })
+            .unwrap();
+        assert_eq!(harness.root_widget().unwrap().len(), 1);
+
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::set_len(&mut scroll, 100);
+                assert!(VirtualScroll::begin_fetch(&mut scroll, &old).is_none());
+            })
+            .unwrap();
+        let grown = next_fetch(&mut harness);
+        harness
+            .edit_root_widget(|mut scroll| {
+                assert!(VirtualScroll::begin_fetch(&mut scroll, &old).is_none());
+                assert!(scroll.widget.is_pending_fetch(&grown));
+                let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &grown).unwrap();
+                for idx in grown.added() {
+                    assert!(fetch.add_child(idx, Label::new(idx.to_string()).prepare().erased()));
+                }
+            })
+            .unwrap();
+    }
+
     #[test]
     fn delayed_driver_can_revisit_stashed_items_and_duplicate_add_preserves_identity() {
         let mut harness = TestHarness::create_with_size(
@@ -948,37 +1047,21 @@ mod tests {
         );
         let id = harness.root_id();
         drive_to_fixpoint(&mut harness, id, |action, mut scroll| {
-            VirtualScroll::will_handle_action(&mut scroll, &action);
-            for idx in action
-                .old_active
-                .clone()
-                .filter(|idx| !action.target.contains(idx))
-            {
-                VirtualScroll::remove_child(&mut scroll, idx);
+            let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &action).unwrap();
+            for idx in action.removed() {
+                assert!(fetch.remove_child(idx));
             }
-            for idx in action
-                .target
-                .clone()
-                .filter(|idx| !action.old_active.contains(idx))
-            {
-                VirtualScroll::add_child(
-                    &mut scroll,
-                    idx,
-                    Label::new(idx.to_string()).prepare().erased(),
-                );
+            for idx in action.added() {
+                assert!(fetch.add_child(idx, Label::new(idx.to_string()).prepare().erased()));
+                if idx == 0 {
+                    let original = fetch.scroll.widget.items[&idx].id();
+                    assert!(!fetch.add_child(idx, Label::new("duplicate").prepare().erased()));
+                    assert_eq!(fetch.scroll.widget.items[&idx].id(), original);
+                    assert!(!fetch.remove_child(idx));
+                }
             }
         });
         let original = harness.root_widget().unwrap().items[&0].id();
-        harness
-            .edit_root_widget(|mut scroll| {
-                VirtualScroll::add_child(
-                    &mut scroll,
-                    0,
-                    Label::new("duplicate").prepare().erased(),
-                );
-            })
-            .unwrap();
-        assert_eq!(harness.root_widget().unwrap().items[&0].id(), original);
 
         // Leave the fetch request queued while the viewport jumps away and
         // back. The original item remains registered across both layouts.
@@ -1012,23 +1095,20 @@ mod tests {
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (100, 200));
         let virtual_scroll_id = harness.root_id();
         fn driver(action: VirtualScrollFetchAction, mut scroll: WidgetMut<'_, VirtualScroll>) {
-            VirtualScroll::will_handle_action(&mut scroll, &action);
-            for idx in action.old_active.clone() {
-                if !action.target.contains(&idx) {
-                    VirtualScroll::remove_child(&mut scroll, idx);
-                }
+            let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &action).unwrap();
+            for idx in action.removed() {
+                let _ = fetch.remove_child(idx);
             }
-            for idx in action.target {
-                if !action.old_active.contains(&idx) {
-                    VirtualScroll::add_child(
-                        &mut scroll,
+            for idx in action.added() {
+                assert!(
+                    fetch.add_child(
                         idx,
                         NewWidget::new(
                             Label::new(format!("{idx}")).with_style(StyleProperty::FontSize(30.)),
                         )
                         .erased(),
-                    );
-                }
+                    )
+                );
             }
         }
 
@@ -1055,21 +1135,21 @@ mod tests {
         let virtual_scroll_id = harness.root_id();
         let driver = |action: VirtualScrollFetchAction,
                       mut scroll: WidgetMut<'_, VirtualScroll>| {
-            VirtualScroll::will_handle_action(&mut scroll, &action);
-            for idx in action.old_active.clone() {
-                if !action.target.contains(&idx) {
-                    VirtualScroll::remove_child(&mut scroll, idx);
-                }
+            let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &action).unwrap();
+            for idx in action.removed() {
+                let _ = fetch.remove_child(idx);
             }
-            for idx in action.target {
-                if !action.old_active.contains(&idx) && idx % step == remainder {
-                    VirtualScroll::add_child(
-                        &mut scroll,
-                        idx,
-                        NewWidget::new(
-                            Label::new(format!("{idx}")).with_style(StyleProperty::FontSize(30.)),
+            for idx in action.added() {
+                if idx % step == remainder {
+                    assert!(
+                        fetch.add_child(
+                            idx,
+                            NewWidget::new(
+                                Label::new(format!("{idx}"))
+                                    .with_style(StyleProperty::FontSize(30.)),
+                            )
+                            .erased(),
                         )
-                        .erased(),
                     );
                 }
             }
@@ -1103,21 +1183,21 @@ mod tests {
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (100, 200));
         let virtual_scroll_id = harness.root_id();
         fn driver(action: VirtualScrollFetchAction, mut scroll: WidgetMut<'_, VirtualScroll>) {
-            VirtualScroll::will_handle_action(&mut scroll, &action);
-            for idx in action.old_active.clone() {
-                if !action.target.contains(&idx) {
-                    VirtualScroll::remove_child(&mut scroll, idx);
-                }
+            let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &action).unwrap();
+            for idx in action.removed() {
+                let _ = fetch.remove_child(idx);
             }
-            for idx in action.target {
-                if !action.old_active.contains(&idx) && idx < 5 {
-                    VirtualScroll::add_child(
-                        &mut scroll,
-                        idx,
-                        NewWidget::new(
-                            Label::new(format!("{idx}")).with_style(StyleProperty::FontSize(30.)),
+            for idx in action.added() {
+                if idx < 5 {
+                    assert!(
+                        fetch.add_child(
+                            idx,
+                            NewWidget::new(
+                                Label::new(format!("{idx}"))
+                                    .with_style(StyleProperty::FontSize(30.)),
+                            )
+                            .erased(),
                         )
-                        .erased(),
                     );
                 }
             }
@@ -1144,27 +1224,24 @@ mod tests {
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (100, 200));
         let virtual_scroll_id = harness.root_id();
         fn driver(action: VirtualScrollFetchAction, mut scroll: WidgetMut<'_, VirtualScroll>) {
-            VirtualScroll::will_handle_action(&mut scroll, &action);
-            for idx in action.old_active.clone() {
-                if !action.target.contains(&idx) {
-                    VirtualScroll::remove_child(&mut scroll, idx);
-                }
+            let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &action).unwrap();
+            for idx in action.removed() {
+                let _ = fetch.remove_child(idx);
             }
-            for idx in action.target {
-                if !action.old_active.contains(&idx) {
-                    assert!(
-                        idx < MAX,
-                        "Virtual Scroll controller should never request an invalid id. Requested {idx}"
-                    );
-                    VirtualScroll::add_child(
-                        &mut scroll,
+            for idx in action.added() {
+                assert!(
+                    idx < MAX,
+                    "Virtual Scroll controller should never request an invalid id. Requested {idx}"
+                );
+                assert!(
+                    fetch.add_child(
                         idx,
                         NewWidget::new(
                             Label::new(idx.to_string()).with_style(StyleProperty::FontSize(30.)),
                         )
                         .erased(),
-                    );
-                }
+                    )
+                );
             }
         }
 
@@ -1232,11 +1309,12 @@ mod tests {
                 "Only widget in tree should give action"
             );
             if let Some(old_active) = old_active.take() {
-                assert_eq!(action.old_active, old_active);
+                assert_eq!(action.old_active(), &old_active);
             }
-            old_active = Some(action.target.clone());
+            old_active = Some(action.target().clone());
             assert_ne!(
-                action.target, action.old_active,
+                action.target(),
+                action.old_active(),
                 "Shouldn't have sent an update if the target hasn't changed"
             );
 
