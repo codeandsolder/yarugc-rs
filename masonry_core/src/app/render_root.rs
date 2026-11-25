@@ -19,9 +19,10 @@ use crate::app::VisualLayerPlan;
 use crate::app::layer_stack::LayerStack;
 use crate::core::{
     AccessCtx, AccessEvent, BrushIndex, CursorIcon, DefaultProperties, ErasedAction, FromDynWidget,
-    Handled, Ime, LayerType, NewWidget, PointerEvent, PropertyArena, PropertyStack,
-    PropertyStackId, ResizeDirection, TextEvent, Widget, WidgetArena, WidgetArenaNode, WidgetId,
-    WidgetMut, WidgetPod, WidgetRef, WidgetState, WidgetTag, WidgetTagInner, WindowEvent,
+    Handled, Ime, LayerType, NewWidget, PointerButton, PointerEvent, PointerInfo, PropertyArena,
+    PropertyStack, PropertyStackId, ResizeDirection, TextEvent, Widget, WidgetArena,
+    WidgetArenaNode, WidgetId, WidgetMut, WidgetPod, WidgetRef, WidgetState, WidgetTag,
+    WidgetTagInner, WindowEvent,
 };
 use crate::imaging::record::Scene;
 use crate::passes::accessibility::run_accessibility_pass;
@@ -66,6 +67,20 @@ pub struct RenderRoot {
 
     /// The widget tree; stores widgets and their states.
     pub(crate) widget_arena: WidgetArena,
+}
+
+/// The pointer and button that initiated a captured interaction.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PointerPress {
+    pub pointer: PointerInfo,
+    pub button: Option<PointerButton>,
+}
+
+/// Single captured interaction, including the initiating press.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PointerCapture {
+    pub target: WidgetId,
+    pub press: PointerPress,
 }
 
 /// State shared between passes.
@@ -119,8 +134,8 @@ pub(crate) struct RenderRootState {
     /// List of ancestors of the currently active widget.
     pub(crate) active_path: Vec<WidgetId>,
 
-    /// Widget that currently has pointer capture.
-    pub(crate) pointer_capture_target: Option<WidgetId>,
+    /// The widget and initiating press that currently own pointer capture.
+    pub(crate) pointer_capture: Option<PointerCapture>,
 
     /// Current cursor icon.
     pub(crate) cursor_icon: CursorIcon,
@@ -340,7 +355,7 @@ impl RenderRoot {
                 scroll_request_targets: Vec::new(),
                 hovered_path: Vec::new(),
                 active_path: Vec::new(),
-                pointer_capture_target: None,
+                pointer_capture: None,
                 cursor_icon: CursorIcon::Default,
                 font_context: FontContext {
                     collection: Collection::new(CollectionOptions {
@@ -906,7 +921,7 @@ impl RenderRoot {
 
     /// Returns the [`WidgetId`] of the widget which [captures pointer events](crate::doc::masonry_concepts#pointer-capture).
     pub const fn pointer_capture_target(&self) -> Option<WidgetId> {
-        self.global_state.pointer_capture_target
+        self.global_state.pointer_capture_target()
     }
 
     /// Sets the [focused widget](crate::doc::masonry_concepts#text-focus)
@@ -1092,6 +1107,13 @@ macro_rules! root_flag_accessors {
 }
 
 impl RenderRootState {
+    pub(crate) const fn pointer_capture_target(&self) -> Option<WidgetId> {
+        match self.pointer_capture {
+            Some(capture) => Some(capture.target),
+            None => None,
+        }
+    }
+
     root_flag_accessors!(window_focused, set_window_focused, WindowFocused);
     root_flag_accessors!(is_ime_active, set_is_ime_active, IsImeActive);
     root_flag_accessors!(needs_pointer_pass, set_needs_pointer_pass, NeedsPointerPass);

@@ -3,7 +3,7 @@
 
 use tracing::{info_span, trace};
 
-use crate::app::{RenderRoot, RenderRootSignal};
+use crate::app::{PointerPress, RenderRoot, RenderRootSignal};
 use crate::core::keyboard::{Key, KeyState, NamedKey};
 use crate::core::{
     AccessEvent, EventCtx, Handled, Ime, PointerButtonEvent, PointerEvent, PointerGestureEvent,
@@ -11,7 +11,7 @@ use crate::core::{
     WidgetId,
 };
 use crate::dpi::{LogicalPosition, PhysicalPosition};
-use crate::passes::update::find_next_focusable;
+use crate::passes::update::{find_next_focusable, run_update_pointer_pass};
 use crate::passes::{enter_span, merge_state_up};
 
 // --- MARK: HELPERS
@@ -20,7 +20,7 @@ fn get_pointer_target(
     pointer_pos: Option<LogicalPosition<f64>>,
 ) -> Option<WidgetId> {
     // See the [pointer capture documentation](../doc/06_masonry_concepts.md#pointer-capture).
-    if let Some(capture_target) = root.global_state.pointer_capture_target
+    if let Some(capture_target) = root.global_state.pointer_capture_target()
         && root.widget_arena.has(capture_target)
     {
         return Some(capture_target);
@@ -72,7 +72,7 @@ fn run_event_pass<E>(
     target: Option<WidgetId>,
     event: &E,
     skip_if_disabled: bool,
-    allow_pointer_capture: bool,
+    pointer_press: Option<PointerPress>,
     pass_fn: impl FnMut(&mut dyn Widget, &mut EventCtx<'_>, &mut PropertiesMut<'_>, &E),
     trace: bool,
 ) -> Handled {
@@ -107,7 +107,7 @@ fn run_event_pass<E>(
                 children: node.children.reborrow_mut(),
                 property_arena: &root.property_arena,
                 target: original_target,
-                allow_pointer_capture,
+                pointer_press,
                 is_handled: false,
             };
             let widget = &mut *node.item.widget;
@@ -139,6 +139,29 @@ fn run_event_pass<E>(
     Handled::from(is_handled)
 }
 
+impl PointerPress {
+    // Capture owns a single pointer/button interaction. Identity-free cancellation
+    // is a window-wide synthetic cancel; an unrelated contact is not.
+    fn accepts_event(self, event: &PointerEvent) -> bool {
+        let same_pointer = |pointer: &PointerInfo| match self.pointer.pointer_id {
+            Some(id) => pointer.pointer_id == Some(id),
+            None => *pointer == self.pointer,
+        };
+        match event {
+            PointerEvent::Down(_) => false,
+            PointerEvent::Up(release) => {
+                same_pointer(&release.pointer) && self.button == release.button
+            }
+            PointerEvent::Cancel(pointer) => pointer.pointer_id.is_none() || same_pointer(pointer),
+            PointerEvent::Move(PointerUpdate { pointer, .. })
+            | PointerEvent::Scroll(PointerScrollEvent { pointer, .. })
+            | PointerEvent::Gesture(PointerGestureEvent { pointer, .. })
+            | PointerEvent::Enter(pointer)
+            | PointerEvent::Leave(pointer) => same_pointer(pointer),
+        }
+    }
+}
+
 // --- MARK: POINTER_EVENT
 fn capture_layer_pointer_events(root: &mut RenderRoot, event: &PointerEvent) {
     let layer_ids = root.layer_root_ids();
@@ -157,7 +180,7 @@ fn capture_layer_pointer_events(root: &mut RenderRoot, event: &PointerEvent) {
                 children: layer_root.children.reborrow_mut(),
                 property_arena: &root.property_arena,
                 target: layer_id,
-                allow_pointer_capture: false,
+                pointer_press: None,
                 is_handled: false,
             };
             let mut props = PropertiesMut {
@@ -184,12 +207,26 @@ pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEv
         pointer_event_short_name(event)
     );
 
+    if let Some(capture) = root.global_state.pointer_capture
+        && !capture.press.accepts_event(event)
+    {
+        return Handled::No;
+    }
+
     let event_pos = try_event_position(event).map(|p| p.to_logical(root.global_state.scale_factor));
 
-    if event_pos != root.global_state.last_mouse_pos {
-        root.global_state.last_mouse_pos = event_pos;
-    }
+    let position_changed = event_pos != root.global_state.last_mouse_pos;
+    root.global_state.last_mouse_pos = event_pos;
     root.global_state.set_needs_pointer_pass(true);
+
+    // A release may arrive at a different location without an intervening Move
+    // (notably on touch devices). Click handlers must see the release position.
+    if position_changed
+        && root.global_state.pointer_capture.is_some()
+        && matches!(event, PointerEvent::Up(_))
+    {
+        run_update_pointer_pass(root);
+    }
 
     if root.global_state.inspector_state.is_picking_widget
         && matches!(event, PointerEvent::Move(..))
@@ -247,7 +284,13 @@ pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEv
         target_widget_id,
         event,
         skip_if_disabled,
-        matches!(event, PointerEvent::Down { .. }),
+        match event {
+            PointerEvent::Down(press) => Some(PointerPress {
+                pointer: press.pointer,
+                button: press.button,
+            }),
+            _ => None,
+        },
         |widget, ctx, props, event| {
             widget.on_pointer_event(ctx, props, event);
         },
@@ -255,10 +298,12 @@ pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEv
     );
 
     if matches!(event, PointerEvent::Up { .. } | PointerEvent::Cancel(..)) {
-        // Automatically release the pointer on pointer up or leave. If a widget holds the capture,
+        // Only the initiating release or an applicable cancel can reach this point.
+        // If a widget holds the capture,
         // it is notified of the pointer event before the capture is released, so it knows it is
         // about to lose the pointer.
-        root.global_state.pointer_capture_target = None;
+        root.global_state.pointer_capture = None;
+        root.global_state.set_needs_pointer_pass(true);
     }
 
     if !is_very_frequent(event) {
@@ -310,7 +355,7 @@ pub(crate) fn run_on_text_event_pass(root: &mut RenderRoot, event: &TextEvent) -
         target,
         event,
         skip_if_disabled,
-        false,
+        None,
         |widget, ctx, props, event| {
             widget.on_text_event(ctx, props, event);
         },
@@ -393,7 +438,7 @@ pub(crate) fn run_on_access_event_pass(
             Some(target),
             event,
             true,
-            false,
+            None,
             |widget, ctx, props, event| {
                 widget.on_access_event(ctx, props, event);
             },

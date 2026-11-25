@@ -15,4 +15,4 @@ pub use tracing_backend::{
 };
 pub use visual_layers::{VisualLayer, VisualLayerKind, VisualLayerPlan};
 
-pub(crate) use render_root::{MutateCallback, RenderRootState};
+pub(crate) use render_root::{MutateCallback, PointerCapture, PointerPress, RenderRootState};

@@ -864,10 +864,10 @@ pub(crate) fn run_update_pointer_pass(root: &mut RenderRoot) {
     }
 
     // Release pointer capture if target can no longer hold it.
-    if let Some(id) = root.global_state.pointer_capture_target
+    if let Some(id) = root.global_state.pointer_capture_target()
         && !root.is_still_interactive(id)
     {
-        // The event pass will set pointer_capture_target to None.
+        // The event pass will clear the captured interaction.
         run_on_pointer_event_pass(root, &dummy_pointer_cancel());
     }
 
@@ -875,7 +875,7 @@ pub(crate) fn run_update_pointer_pass(root: &mut RenderRoot) {
     // "Active path" means the widget which is considered active, and all its parents.
     let prev_active_path = std::mem::take(&mut root.global_state.active_path);
     let prev_active_widget = prev_active_path.first().copied();
-    let next_active_widget = root.global_state.pointer_capture_target;
+    let next_active_widget = root.global_state.pointer_capture_target();
     let next_active_path = get_id_path(root, next_active_widget);
 
     update_path_status(
@@ -893,7 +893,7 @@ pub(crate) fn run_update_pointer_pass(root: &mut RenderRoot) {
             .map(|widget| widget.id())
     });
     // If the pointer is captured, it can either hover its capture target or nothing.
-    if let Some(capture_target) = root.global_state.pointer_capture_target
+    if let Some(capture_target) = root.global_state.pointer_capture_target()
         && next_hovered_widget != Some(capture_target)
     {
         if is_ancestor_of(root, capture_target, next_hovered_widget) {
@@ -931,7 +931,7 @@ pub(crate) fn run_update_pointer_pass(root: &mut RenderRoot) {
     // capture target, even when not hovered.
     let icon_source = root
         .global_state
-        .pointer_capture_target
+        .pointer_capture_target()
         .or(next_hovered_widget);
 
     let new_icon = icon_source

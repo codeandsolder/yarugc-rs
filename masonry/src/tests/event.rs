@@ -6,7 +6,9 @@ use std::assert_matches;
 use accesskit::{ActionRequest, TreeId};
 
 use crate::core::keyboard::{Key, NamedKey};
-use crate::core::pointer::{PointerEvent, PointerInfo, PointerType};
+use crate::core::pointer::{
+    PointerButton, PointerButtonEvent, PointerEvent, PointerInfo, PointerType,
+};
 use crate::core::{
     AccessEvent, NewWidget, PointerId, PointerState, PointerUpdate, TextEvent, Update, Widget,
     WidgetTag,
@@ -18,7 +20,7 @@ use crate::testing::{
     ModularWidget, Record, TestHarness, TestWidgetExt, assert_any, assert_debug_panics, assert_none,
 };
 use crate::theme::test_property_set;
-use crate::widgets::{Button, Flex, SizedBox, TextArea};
+use crate::widgets::{Button, ButtonPress, Flex, SizedBox, TextArea};
 
 // POINTER EVENTS
 
@@ -127,6 +129,87 @@ fn pointer_capture_and_cancel() {
         pointer_type: PointerType::default(),
     }));
     assert_eq!(harness.pointer_capture_target_id(), None);
+}
+
+#[test]
+fn pointer_capture_is_owned_by_the_initiating_pointer_and_button() {
+    let mut harness =
+        TestHarness::create(test_property_set(), Button::with_text("capture").prepare());
+    let id = harness.root_id();
+    harness.mouse_move_to(id).unwrap();
+    harness.mouse_button_press(Some(PointerButton::Primary));
+    assert_eq!(harness.pointer_capture_target_id(), Some(id));
+
+    // A mouse chord cannot replace the initiating button or produce a click.
+    harness.mouse_button_press(Some(PointerButton::Secondary));
+    harness.mouse_button_release(Some(PointerButton::Secondary));
+    assert_eq!(harness.pointer_capture_target_id(), Some(id));
+    assert!(harness.pop_action::<ButtonPress>().unwrap().is_none());
+
+    // An unrelated touch cannot steal capture, move its hover position,
+    // terminate the press, or generate a click.
+    let other = PointerInfo {
+        pointer_id: PointerId::new(42),
+        persistent_device_id: None,
+        pointer_type: PointerType::Touch,
+    };
+    let event = PointerButtonEvent {
+        pointer: other,
+        button: Some(PointerButton::Primary),
+        state: PointerState {
+            position: PhysicalPosition::new(-100.0, -100.0),
+            ..PointerState::default()
+        },
+    };
+    harness.process_pointer_event(&PointerEvent::Down(event.clone()));
+    harness.process_pointer_event(&PointerEvent::Move(PointerUpdate {
+        pointer: other,
+        current: event.state.clone(),
+        coalesced: vec![],
+        predicted: vec![],
+    }));
+    harness.process_pointer_event(&PointerEvent::Up(event));
+    harness.process_pointer_event(&PointerEvent::Cancel(other));
+    assert_eq!(harness.pointer_capture_target_id(), Some(id));
+    assert!(harness.get_widget_with_id(id).unwrap().ctx().is_hovered());
+    assert!(harness.pop_action::<ButtonPress>().unwrap().is_none());
+
+    harness.mouse_button_release(Some(PointerButton::Primary));
+    assert_eq!(harness.pointer_capture_target_id(), None);
+    assert_eq!(
+        harness.pop_action::<ButtonPress>().unwrap(),
+        Some((
+            ButtonPress {
+                button: Some(PointerButton::Primary)
+            },
+            id
+        )),
+    );
+}
+
+#[test]
+fn pointer_release_uses_current_position_without_intervening_move() {
+    let mut harness =
+        TestHarness::create(test_property_set(), Button::with_text("capture").prepare());
+    let id = harness.root_id();
+    harness.mouse_move_to(id).unwrap();
+    harness.mouse_button_press(Some(PointerButton::Primary));
+
+    harness.process_pointer_event(&PointerEvent::Up(PointerButtonEvent {
+        pointer: PointerInfo {
+            pointer_id: Some(PointerId::PRIMARY),
+            persistent_device_id: None,
+            pointer_type: PointerType::Mouse,
+        },
+        button: Some(PointerButton::Primary),
+        state: PointerState {
+            position: PhysicalPosition::new(-100.0, -100.0),
+            ..PointerState::default()
+        },
+    }));
+    assert_eq!(harness.pointer_capture_target_id(), None);
+    assert!(harness.pop_action::<ButtonPress>().unwrap().is_none());
+    assert!(!harness.get_widget_with_id(id).unwrap().ctx().is_hovered());
 }
 
 #[test]

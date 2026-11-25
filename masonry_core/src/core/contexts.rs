@@ -18,7 +18,7 @@ use parley::{FontContext, LayoutContext};
 use tracing::{trace, warn};
 use tree_arena::{ArenaMutList, ArenaRef, ArenaRefList};
 
-use crate::app::{MutateCallback, RenderRootSignal, RenderRootState};
+use crate::app::{MutateCallback, PointerCapture, PointerPress, RenderRootSignal, RenderRootState};
 use crate::core::{
     AllowRawMut, BrushIndex, ClassSet, ErasedAction, FromDynWidget, LayerType, NewWidget,
     PaintLayerMode, PropertiesMut, PropertiesRef, PropertyArena, PropertyCache, ResizeDirection,
@@ -100,7 +100,7 @@ pub struct EventCtx<'a> {
     pub(crate) children: ArenaMutList<'a, WidgetArenaNode>,
     pub(crate) property_arena: &'a PropertyArena,
     pub(crate) target: WidgetId,
-    pub(crate) allow_pointer_capture: bool,
+    pub(crate) pointer_press: Option<PointerPress>,
     pub(crate) is_handled: bool,
 }
 
@@ -417,14 +417,15 @@ impl EventCtx<'_> {
     /// events. Events that are not marked as handled by the capturing widget, bubble up to the
     /// widget's ancestors, ignoring their border-boxes as well.
     ///
-    /// The pointer cannot be captured by multiple widgets at the same time. If a widget has
-    /// captured the pointer and another widget captures it, the first widget loses the pointer
-    /// capture.
+    /// A window supports one captured interaction at a time. During capture,
+    /// unrelated pointers and button presses or releases are ignored. An ancestor
+    /// may take over capture while handling the same initiating Down event.
     ///
     /// # Releasing the pointer
     ///
     /// Any widget can [`release`] the pointer during any event.
-    /// The pointer is automatically released after handling of a [`Up`] or [`Cancel`] event completes.
+    /// The pointer is automatically released after the initiating button is released
+    /// or the captured pointer is cancelled.
     /// A widget holding the pointer capture will be the target of these events.
     ///
     /// If pointer capture is lost for external reasons (the widget is disabled, the window lost focus,
@@ -438,12 +439,12 @@ impl EventCtx<'_> {
     #[track_caller]
     pub fn capture_pointer(&mut self) {
         let id = self.widget_id();
-        if !self.allow_pointer_capture {
+        let Some(press) = self.pointer_press else {
             debug_panic!("capture_pointer - '{id}': event does not allow pointer capture");
             return;
-        }
+        };
         // TODO: plumb pointer capture through to platform (through winit)
-        self.global_state.pointer_capture_target = Some(id);
+        self.global_state.pointer_capture = Some(PointerCapture { target: id, press });
         self.global_state.set_needs_pointer_pass(true);
     }
 
@@ -453,15 +454,15 @@ impl EventCtx<'_> {
     /// [`capture_pointer`]: EventCtx::capture_pointer
     pub fn release_pointer(&mut self) {
         let id = self.widget_id();
-        if self.global_state.pointer_capture_target.is_none() {
+        if self.global_state.pointer_capture_target().is_none() {
             warn!("release_pointer - '{id}': no widget is captured");
             return;
         }
-        if self.global_state.pointer_capture_target != Some(self.widget_state.id) {
+        if self.global_state.pointer_capture_target() != Some(self.widget_state.id) {
             warn!("release_pointer - '{id}': widget does not have pointer capture");
             return;
         }
-        self.global_state.pointer_capture_target = None;
+        self.global_state.pointer_capture = None;
         self.global_state.set_needs_pointer_pass(true);
     }
 
@@ -1407,7 +1408,7 @@ impl_context_method!(
         /// [captured]: crate::doc::masonry_concepts#pointer-capture
         #[must_use = "Check whether this widget captures the pointer."]
         pub fn is_pointer_capture_target(&self) -> bool {
-            self.global_state.pointer_capture_target == Some(self.widget_state.id)
+            self.global_state.pointer_capture_target() == Some(self.widget_state.id)
         }
 
         /// The [text focus] status of a widget.
@@ -1446,7 +1447,7 @@ impl_context_method!(
         /// [pointer capture]: crate::doc::masonry_concepts#pointer-capture
         #[must_use = "Use the pointer capture target if present."]
         pub const fn pointer_capture_target_id(&self) -> Option<WidgetId> {
-            self.global_state.pointer_capture_target
+            self.global_state.pointer_capture_target()
         }
 
         /// The widget, if any, which has [text focus].

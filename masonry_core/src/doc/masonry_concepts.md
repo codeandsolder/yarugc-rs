@@ -59,8 +59,7 @@ The hovered status of the capturing widget will be updated, meaning a widget tha
 - The pointer's cursor icon will be updated as if the pointer stayed over the capturing widget.
 - If the widget loses pointer capture for some reason (e.g. the pointer is disconnected), the widget will get a [`Cancel`] event.
 
-Masonry should guarantee that pointers can only be captured by one widget at a time.
-Masonry should force the widget to lose pointer capture when some events occur; not just "mouse leave", but also `Tab` being pressed, the window losing focus, the widget being disabled, etc.
+Masonry supports one captured interaction per window. Capture is associated with the initiating pointer and button. Unrelated contacts and button events cannot change the active capture or hover state. The matching release, pointer cancellation, explicit release, window focus loss, or loss of widget interactivity ends capture.
 
 Examples of use cases for pointer capture include selecting text, dragging a slider, or long-pressing a button.
 
