@@ -45,60 +45,14 @@ fn dummy_pointer_cancel() -> PointerEvent {
     })
 }
 
-fn run_targeted_update_pass(
+// Construct the same update context for single-node and ancestor-chain passes.
+fn update_widget(
     root: &mut RenderRoot,
-    target: Option<WidgetId>,
-    mut pass_fn: impl FnMut(&mut dyn Widget, &mut UpdateCtx<'_>, &mut PropertiesMut<'_>),
-) {
-    let mut current_id = target;
-    while let Some(widget_id) = current_id {
-        let parent_id = root.widget_arena.parent_of(widget_id);
-        let Some(node) = root.widget_arena.nodes.find_mut(widget_id) else {
-            break;
-        };
-
-        let children = node.children;
-        let widget = &mut *node.item.widget;
-        let state = &mut node.item.state;
-        let properties = &mut node.item.properties;
-        let class_set = &node.item.class_set;
-        let stack = root
-            .property_arena
-            .get(state.property_stack_id, widget.type_id());
-
-        let mut ctx = UpdateCtx {
-            global_state: &mut root.global_state,
-            widget_state: state,
-            children,
-            ancestors: None,
-            property_arena: &root.property_arena,
-        };
-        let mut props = PropertiesMut {
-            local: properties,
-            default_map: root
-                .property_arena
-                .default_properties
-                .for_widget(widget.type_id()),
-            stack,
-            class_set,
-        };
-        pass_fn(widget, &mut ctx, &mut props);
-
-        merge_state_up(&mut root.widget_arena, widget_id);
-        current_id = parent_id;
-    }
-}
-
-fn run_single_update_pass(
-    root: &mut RenderRoot,
-    target: Option<WidgetId>,
-    mut pass_fn: impl FnMut(&mut dyn Widget, &mut UpdateCtx<'_>, &mut PropertiesMut<'_>),
-) {
-    let Some(target) = target else {
-        return;
-    };
+    target: WidgetId,
+    pass_fn: &mut impl FnMut(&mut dyn Widget, &mut UpdateCtx<'_>, &mut PropertiesMut<'_>),
+) -> bool {
     let Some(node) = root.widget_arena.nodes.find_mut(target) else {
-        return;
+        return false;
     };
 
     let children = node.children;
@@ -127,7 +81,36 @@ fn run_single_update_pass(
         class_set,
     };
     pass_fn(widget, &mut ctx, &mut props);
+    true
+}
 
+fn run_targeted_update_pass(
+    root: &mut RenderRoot,
+    target: Option<WidgetId>,
+    mut pass_fn: impl FnMut(&mut dyn Widget, &mut UpdateCtx<'_>, &mut PropertiesMut<'_>),
+) {
+    let mut current_id = target;
+    while let Some(widget_id) = current_id {
+        let parent_id = root.widget_arena.parent_of(widget_id);
+        if !update_widget(root, widget_id, &mut pass_fn) {
+            break;
+        }
+        merge_state_up(&mut root.widget_arena, widget_id);
+        current_id = parent_id;
+    }
+}
+
+fn run_single_update_pass(
+    root: &mut RenderRoot,
+    target: Option<WidgetId>,
+    mut pass_fn: impl FnMut(&mut dyn Widget, &mut UpdateCtx<'_>, &mut PropertiesMut<'_>),
+) {
+    let Some(target) = target else {
+        return;
+    };
+    if !update_widget(root, target, &mut pass_fn) {
+        return;
+    }
     let mut current_id = Some(target);
     while let Some(widget_id) = current_id {
         merge_state_up(&mut root.widget_arena, widget_id);
