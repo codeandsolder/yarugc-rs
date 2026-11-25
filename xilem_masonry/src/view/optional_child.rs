@@ -26,37 +26,28 @@ pub(super) trait OptionalChildParent: Widget + FromDynWidget {
     fn clear(element: &mut WidgetMut<'_, Self>);
 }
 
-impl OptionalChildParent for widgets::Badged {
-    fn get<'a, W: Widget + FromDynWidget + ?Sized>(
-        element: &'a mut WidgetMut<'_, Self>,
-    ) -> Option<WidgetMut<'a, W>> {
-        Self::badge_mut(element)
-    }
+macro_rules! impl_optional_parent {
+    ($parent:ty, $get:ident, $set:ident, $clear:ident) => {
+        impl OptionalChildParent for $parent {
+            fn get<'a, W: Widget + FromDynWidget + ?Sized>(
+                element: &'a mut WidgetMut<'_, Self>,
+            ) -> Option<WidgetMut<'a, W>> {
+                Self::$get(element)
+            }
 
-    fn set(element: &mut WidgetMut<'_, Self>, child: NewWidget<dyn Widget>) {
-        Self::set_badge(element, child);
-    }
+            fn set(element: &mut WidgetMut<'_, Self>, child: NewWidget<dyn Widget>) {
+                Self::$set(element, child);
+            }
 
-    fn clear(element: &mut WidgetMut<'_, Self>) {
-        Self::clear_badge(element);
-    }
+            fn clear(element: &mut WidgetMut<'_, Self>) {
+                Self::$clear(element);
+            }
+        }
+    };
 }
 
-impl OptionalChildParent for widgets::Divider {
-    fn get<'a, W: Widget + FromDynWidget + ?Sized>(
-        element: &'a mut WidgetMut<'_, Self>,
-    ) -> Option<WidgetMut<'a, W>> {
-        Self::content_mut(element)
-    }
-
-    fn set(element: &mut WidgetMut<'_, Self>, child: NewWidget<dyn Widget>) {
-        Self::set_content(element, child);
-    }
-
-    fn clear(element: &mut WidgetMut<'_, Self>) {
-        Self::clear_content(element);
-    }
-}
+impl_optional_parent!(widgets::Badged, badge_mut, set_badge, clear_badge);
+impl_optional_parent!(widgets::Divider, content_mut, set_content, clear_content);
 
 impl<T> OptionalChildState<T> {
     pub(super) fn build<State: 'static, Action, V: WidgetView<State, Action, ViewState = T>>(

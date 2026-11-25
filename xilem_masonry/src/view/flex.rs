@@ -290,23 +290,7 @@ pub struct FlexElementMut<'w> {
     idx: usize,
 }
 
-struct FlexSplice<'w, 's> {
-    idx: usize,
-    element: WidgetMut<'w, widgets::Flex>,
-    scratch: &'s mut AppendVec<FlexElement>,
-}
-
-impl<'w, 's> FlexSplice<'w, 's> {
-    fn new(element: WidgetMut<'w, widgets::Flex>, scratch: &'s mut AppendVec<FlexElement>) -> Self {
-        debug_assert!(scratch.is_empty());
-        Self {
-            idx: 0,
-            element,
-            scratch,
-        }
-    }
-}
-
+type FlexSplice<'w, 's> = super::CollectionSplice<'w, 's, widgets::Flex, FlexElement>;
 impl_indexed_element!(FlexElement, FlexElementMut);
 
 impl<W: Widget + FromDynWidget + ?Sized> SuperElement<Pod<W>, ViewCtx> for FlexElement {

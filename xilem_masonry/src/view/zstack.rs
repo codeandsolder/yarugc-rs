@@ -267,26 +267,7 @@ where
 
 // MARK: Splice
 
-/// An implementation of [`ElementSplice`] for `ZStackElement`.
-pub struct ZStackSplice<'w, 's> {
-    idx: usize,
-    element: WidgetMut<'w, widgets::ZStack>,
-    scratch: &'s mut AppendVec<ZStackElement>,
-}
-
-impl<'w, 's> ZStackSplice<'w, 's> {
-    const fn new(
-        element: WidgetMut<'w, widgets::ZStack>,
-        scratch: &'s mut AppendVec<ZStackElement>,
-    ) -> Self {
-        Self {
-            idx: 0,
-            element,
-            scratch,
-        }
-    }
-}
-
+type ZStackSplice<'w, 's> = super::CollectionSplice<'w, 's, widgets::ZStack, ZStackElement>;
 impl ElementSplice<ZStackElement> for ZStackSplice<'_, '_> {
     collection_splice_insert!(ZStack, ZStackElement, widget, element => element.alignment);
 

@@ -93,30 +93,5 @@ where
         }
     }
 
-    fn teardown(
-        &self,
-        (): &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
-    ) {
-        ctx.teardown_action_source(element.ctx.widget_id());
-    }
-
-    fn message(
-        &self,
-        (): &mut Self::ViewState,
-        message: &mut MessageCtx,
-        _element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        debug_assert!(
-            message.remaining_path().is_empty(),
-            "id path should be empty in Switch::message"
-        );
-        let Some(switched) = message.take_message::<SwitchToggled>() else {
-            tracing::error!("Wrong message type in Switch::message, got {message:?}.");
-            return MessageResult::Stale;
-        };
-        MessageResult::Action((self.callback)(app_state, switched.0))
-    }
+    toggle_action_lifecycle!(SwitchToggled);
 }

@@ -235,21 +235,5 @@ pub struct IndexedStackElementMut<'w> {
 }
 
 // Used for manipulating the ViewSequence.
-struct IndexedStackSplice<'w, 's> {
-    idx: usize,
-    element: WidgetMut<'w, widgets::IndexedStack>,
-    scratch: &'s mut AppendVec<IndexedStackElement>,
-}
-
-impl<'w, 's> IndexedStackSplice<'w, 's> {
-    const fn new(
-        element: WidgetMut<'w, widgets::IndexedStack>,
-        scratch: &'s mut AppendVec<IndexedStackElement>,
-    ) -> Self {
-        Self {
-            idx: 0,
-            element,
-            scratch,
-        }
-    }
-}
+type IndexedStackSplice<'w, 's> =
+    super::CollectionSplice<'w, 's, widgets::IndexedStack, IndexedStackElement>;

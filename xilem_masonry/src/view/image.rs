@@ -42,83 +42,12 @@ pub struct Image {
 }
 
 impl Image {
-    // Because this method is image-specific, we don't add it to the Style trait.
-    /// Specify the object fit.
-    #[must_use = "Use the returned value."]
-    pub fn fit<State: 'static, Action: 'static>(
-        self,
-        fill: ObjectFit,
-    ) -> Prop<ObjectFit, Self, State, Action> {
-        self.prop(fill)
-    }
-
-    /// Specifies whether the image is decorative, meaning it doesn't have meaningful content
-    /// and is only for visual presentation.
-    ///
-    /// If `is_decorative` is `true`, the image will be ignored by screen readers.
-    pub const fn decorative(mut self, is_decorative: bool) -> Self {
-        self.decorative = is_decorative;
-        self
-    }
-
-    /// Set the text that will describe the image to screen readers.
-    ///
-    /// Users are encouraged to set alt text for the image.
-    /// If possible, the alt-text should succinctly describe what the image represents.
-    ///
-    /// If the image is decorative users should set alt text to `""`.
-    /// If it's too hard to describe through text, the alt text should be left unset.
-    /// This allows accessibility clients to know that there is no accessible description of the image content.
-    pub fn alt_text(mut self, alt_text: impl Into<ArcStr>) -> Self {
-        self.alt_text = Some(alt_text.into());
-        self
-    }
+    image_view_builders!(alt_text);
 }
-impl ViewMarker for Image {}
-impl<State: 'static, Action> View<State, Action, ViewCtx> for Image {
-    type Element = Pod<widgets::Image>;
-    type ViewState = ();
-
-    fn build(&self, _ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
-        let mut image = widgets::Image::new(self.brush.clone()).decorative(self.decorative);
-        if let Some(alt_text) = &self.alt_text {
-            image = image.with_alt_text(alt_text.clone());
-        }
-        (Pod::new(image), ())
-    }
-
-    fn rebuild(
-        &self,
-        prev: &Self,
-        (): &mut Self::ViewState,
-        _: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-        _: &mut State,
-    ) {
-        if prev.brush != self.brush {
-            widgets::Image::set_brush(&mut element, self.brush.clone());
-        }
-        if self.decorative != prev.decorative {
-            widgets::Image::set_decorative(&mut element, self.decorative);
-        }
-        if self.alt_text != prev.alt_text {
-            widgets::Image::set_alt_text(&mut element, self.alt_text.clone());
-        }
-    }
-
-    fn teardown(&self, (): &mut Self::ViewState, _: &mut ViewCtx, _: Mut<'_, Self::Element>) {}
-
-    fn message(
-        &self,
-        (): &mut Self::ViewState,
-        message: &mut MessageCtx,
-        _: Mut<'_, Self::Element>,
-        _: &mut State,
-    ) -> MessageResult<Action> {
-        tracing::error!(
-            ?message,
-            "Message arrived in Image::message, but Image doesn't consume any messages, this is a bug."
-        );
-        MessageResult::Stale
-    }
-}
+image_view_lifecycle!(
+    Image,
+    Image,
+    brush,
+    set_brush,
+    |prev: &ImageBrush, next: &ImageBrush| prev != next
+);

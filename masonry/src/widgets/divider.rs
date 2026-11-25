@@ -143,6 +143,136 @@ struct LineLayout {
     dashes: SmallVec<[f64; 4]>,
 }
 
+/// Normalizes a divider dash pattern for both native and declarative builders.
+#[doc(hidden)]
+#[must_use = "Use the normalized dash pattern."]
+pub fn normalize_divider_dash_pattern(dash_pattern: &[Length]) -> SmallVec<[Length; 2]> {
+    let mut dash_pattern = SmallVec::from_slice(dash_pattern);
+    // Paint code assumes an even number for simplicity of implementation.
+    let len = dash_pattern.len();
+    if len == 1 {
+        dash_pattern.push(dash_pattern[0]);
+    } else if len > 0 && !len.is_multiple_of(2) {
+        debug_panic!(
+            "The divider dash pattern must have an even number of lengths. Received {len}"
+        );
+        dash_pattern.pop();
+    }
+    dash_pattern
+}
+
+/// Shared style configuration methods for native and declarative dividers.
+#[macro_export]
+macro_rules! divider_style_builders {
+    () => {
+        /// Returns `self` with the given line `thickness`.
+        #[must_use = "Use the returned value."]
+        pub const fn thickness(mut self, thickness: $crate::layout::Length) -> Self {
+            self.thickness = Some(thickness);
+            self
+        }
+
+        /// Returns `self` with the line thickness set to hairline, i.e. 1 device pixel.
+        #[must_use = "Use the returned value."]
+        pub const fn hairline(mut self) -> Self {
+            self.thickness = None;
+            self
+        }
+
+        /// Returns `self` with the given `dash_fit`.
+        #[must_use = "Use the returned value."]
+        pub const fn dash_fit(mut self, dash_fit: $crate::widgets::DashFit) -> Self {
+            self.dash_fit = dash_fit;
+            self
+        }
+
+        /// Returns `self` with the given `dash_pattern`.
+        ///
+        /// The pattern defines the lengths of dashes in alternating on/off order.
+        /// * `10` - 10px dashes and 10px gaps
+        /// * `10, 5` - 10px dashes with 5px gaps
+        /// * `10, 5, 20, 30` - 10 px dash, 5px gap, 20px dash, 30px gap
+        ///
+        /// The pattern can be even longer and in any case will repeat to fill the whole divider space.
+        ///
+        /// The pattern must contain an even number of lengths. With exceptions for zero and one, where
+        /// zero lengths means a solid line and one length will be used for both the dash and the gap.
+        /// When given any other uneven number of the lengths, the last length will be ignored.
+        ///
+        /// # Panics
+        ///
+        /// Panics if `dash_pattern` contains an uneven number of entries of 3 or more
+        /// and debug assertions are enabled.
+        #[must_use = "Use the configured value."]
+        pub fn dash_pattern(mut self, dash_pattern: &[$crate::layout::Length]) -> Self {
+            self.dash_pattern = $crate::widgets::normalize_divider_dash_pattern(dash_pattern);
+            self
+        }
+
+        /// Returns `self` with the given `cap` used both for start and end.
+        ///
+        /// Use [`start_cap`] or [`end_cap`] to set different edge caps.
+        ///
+        /// Defaults to [`Cap::Butt`].
+        ///
+        /// [`start_cap`]: Self::start_cap
+        /// [`end_cap`]: Self::end_cap
+        #[must_use = "Use the returned value."]
+        pub const fn cap(mut self, cap: $crate::kurbo::Cap) -> Self {
+            self.start_cap = cap;
+            self.end_cap = cap;
+            self
+        }
+
+        /// Returns `self` with the given starting `cap`.
+        ///
+        /// Use [`cap`] to set the cap for both the start and the end.
+        ///
+        /// Defaults to [`Cap::Butt`].
+        ///
+        /// [`cap`]: Self::cap
+        #[must_use = "Use the returned value."]
+        pub const fn start_cap(mut self, cap: $crate::kurbo::Cap) -> Self {
+            self.start_cap = cap;
+            self
+        }
+
+        /// Returns `self` with the given ending `cap`.
+        ///
+        /// Use [`cap`] to set the cap for both the start and the end.
+        ///
+        /// Defaults to [`Cap::Butt`].
+        ///
+        /// [`cap`]: Self::cap
+        #[must_use = "Use the returned value."]
+        pub const fn end_cap(mut self, cap: $crate::kurbo::Cap) -> Self {
+            self.end_cap = cap;
+            self
+        }
+
+        /// Returns `self` with the given content `placement`.
+        ///
+        /// Defaults to [`Placement::Center`].
+        #[must_use = "Use the returned value."]
+        pub const fn placement(mut self, placement: $crate::widgets::Placement) -> Self {
+            self.placement = placement;
+            self
+        }
+
+        /// Returns `self` with the given `pad`.
+        ///
+        /// This `pad` determines the amount of space between the divider line and the content.
+        /// It does nothing when there is no content.
+        ///
+        /// The default value is 5px.
+        #[must_use = "Use the returned value."]
+        pub const fn pad(mut self, pad: $crate::layout::Length) -> Self {
+            self.pad = pad;
+            self
+        }
+    };
+}
+
 // --- MARK: BUILDERS
 impl Divider {
     /// Creates a new [`Divider`] parallel with the given `axis`.
@@ -174,110 +304,7 @@ impl Divider {
         Self::new(Axis::Vertical)
     }
 
-    /// Returns `self` with the given line `thickness`.
-    #[must_use = "Use the returned value."]
-    pub const fn thickness(mut self, thickness: Length) -> Self {
-        self.thickness = Some(thickness);
-        self
-    }
-
-    /// Returns `self` with the line thickness set to hairline, i.e. 1 device pixel.
-    #[must_use = "Use the returned value."]
-    pub const fn hairline(mut self) -> Self {
-        self.thickness = None;
-        self
-    }
-
-    /// Returns `self` with the given `dash_fit`.
-    #[must_use = "Use the returned value."]
-    pub const fn dash_fit(mut self, dash_fit: DashFit) -> Self {
-        self.dash_fit = dash_fit;
-        self
-    }
-
-    /// Returns `self` with the given `dash_pattern`.
-    ///
-    /// The pattern defines the lengths of dashes in alternating on/off order.
-    /// * `10` - 10px dashes and 10px gaps
-    /// * `10, 5` - 10px dashes with 5px gaps
-    /// * `10, 5, 20, 30` - 10 px dash, 5px gap, 20px dash, 30px gap
-    ///
-    /// The pattern can be even longer and in any case will repeat to fill the whole divider space.
-    ///
-    /// The pattern must contain an even number of lengths. With exceptions for zero and one, where
-    /// zero lengths means a solid line and one length will be used for both the dash and the gap.
-    /// When given any other uneven number of the lengths, the last length will be ignored.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `dash_pattern` contains an uneven number of entries of 3 or more
-    /// and debug assertions are enabled.
-    #[must_use = "Use the configured value."]
-    pub fn dash_pattern(mut self, dash_pattern: &[Length]) -> Self {
-        let mut dash_pattern = SmallVec::from_slice(dash_pattern);
-        // Paint code assumes an even number for simplicity of implementation.
-        let len = dash_pattern.len();
-        if len == 1 {
-            dash_pattern.push(dash_pattern[0]);
-        } else if len > 0 && !len.is_multiple_of(2) {
-            debug_panic!(
-                "The divider dash pattern must have an even number of lengths. Received {len}"
-            );
-            dash_pattern.pop();
-        }
-        self.dash_pattern = dash_pattern;
-        self
-    }
-
-    /// Returns `self` with the given `cap` used both for start and end.
-    ///
-    /// Use [`start_cap`] or [`end_cap`] to set different edge caps.
-    ///
-    /// Defaults to [`Cap::Butt`].
-    ///
-    /// [`start_cap`]: Self::start_cap
-    /// [`end_cap`]: Self::end_cap
-    #[must_use = "Use the returned value."]
-    pub const fn cap(mut self, cap: Cap) -> Self {
-        self.start_cap = cap;
-        self.end_cap = cap;
-        self
-    }
-
-    /// Returns `self` with the given starting `cap`.
-    ///
-    /// Use [`cap`] to set the cap for both the start and the end.
-    ///
-    /// Defaults to [`Cap::Butt`].
-    ///
-    /// [`cap`]: Self::cap
-    #[must_use = "Use the returned value."]
-    pub const fn start_cap(mut self, cap: Cap) -> Self {
-        self.start_cap = cap;
-        self
-    }
-
-    /// Returns `self` with the given ending `cap`.
-    ///
-    /// Use [`cap`] to set the cap for both the start and the end.
-    ///
-    /// Defaults to [`Cap::Butt`].
-    ///
-    /// [`cap`]: Self::cap
-    #[must_use = "Use the returned value."]
-    pub const fn end_cap(mut self, cap: Cap) -> Self {
-        self.end_cap = cap;
-        self
-    }
-
-    /// Returns `self` with the given content `placement`.
-    ///
-    /// Defaults to [`Placement::Center`].
-    #[must_use = "Use the returned value."]
-    pub const fn placement(mut self, placement: Placement) -> Self {
-        self.placement = placement;
-        self
-    }
+    crate::divider_style_builders!();
 
     /// Returns `self` with the given `content`.
     ///
@@ -298,18 +325,6 @@ impl Divider {
     #[must_use = "Use the configured value."]
     pub fn label(self, text: impl Into<ArcStr>) -> Self {
         self.content(Label::new(text).prepare())
-    }
-
-    /// Returns `self` with the given `pad`.
-    ///
-    /// This `pad` determines the amount of space between the divider line and the content.
-    /// It does nothing when there is no content.
-    ///
-    /// The default value is 5px.
-    #[must_use = "Use the returned value."]
-    pub const fn pad(mut self, pad: Length) -> Self {
-        self.pad = pad;
-        self
     }
 }
 
@@ -350,18 +365,7 @@ impl Divider {
     ///
     /// [`dash_pattern`]: Self::dash_pattern
     pub fn set_dash_pattern(this: &mut WidgetMut<'_, Self>, dash_pattern: &[Length]) {
-        let mut dash_pattern = SmallVec::from_slice(dash_pattern);
-        // Paint code assumes an even number for simplicity of implementation.
-        let len = dash_pattern.len();
-        if len == 1 {
-            dash_pattern.push(dash_pattern[0]);
-        } else if len > 0 && !len.is_multiple_of(2) {
-            debug_panic!(
-                "The divider dash pattern must have an even number of lengths. Received {len}"
-            );
-            dash_pattern.pop();
-        }
-        this.widget.dash_pattern = dash_pattern;
+        this.widget.dash_pattern = normalize_divider_dash_pattern(dash_pattern);
         this.ctx.request_layout();
     }
 

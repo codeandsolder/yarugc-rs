@@ -406,25 +406,7 @@ pub struct GridElementMut<'w> {
 }
 
 // Used for manipulating the ViewSequence.
-struct GridSplice<'w, 's> {
-    idx: usize,
-    element: WidgetMut<'w, widgets::Grid>,
-    scratch: &'s mut AppendVec<GridElement>,
-}
-
-impl<'w, 's> GridSplice<'w, 's> {
-    const fn new(
-        element: WidgetMut<'w, widgets::Grid>,
-        scratch: &'s mut AppendVec<GridElement>,
-    ) -> Self {
-        Self {
-            idx: 0,
-            element,
-            scratch,
-        }
-    }
-}
-
+type GridSplice<'w, 's> = super::CollectionSplice<'w, 's, widgets::Grid, GridElement>;
 /// A `WidgetView` that can be used within a [`Grid`] [`View`]
 pub struct GridItem<V, State, Action> {
     view: V,
