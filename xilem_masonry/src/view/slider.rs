@@ -42,6 +42,7 @@ where
 
 impl<State, Action, F> Slider<State, Action, F> {
     /// Sets the stepping interval of the slider.
+    #[must_use = "Use the configured view."]
     pub fn step(mut self, step: f64) -> Self {
         if step > 0.0 {
             self.step = Some(step);
@@ -49,7 +50,8 @@ impl<State, Action, F> Slider<State, Action, F> {
         self
     }
     /// Sets whether the slider is disabled.
-    pub fn disabled(mut self, disabled: bool) -> Self {
+    #[must_use = "Use the configured view."]
+    pub const fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
@@ -67,12 +69,12 @@ where
 
     fn build(&self, ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
         (
-            ctx.with_action_widget(|ctx| {
+            ctx.with_action_widget({
                 let mut widget = widgets::Slider::new(self.min, self.max, self.value);
                 if let Some(step) = self.step {
                     widget = widget.with_step(step);
                 }
-                let mut pod = ctx.create_pod(widget);
+                let mut pod = Pod::new(widget);
                 pod.new_widget.options.disabled = self.disabled;
                 pod
             }),
@@ -91,10 +93,10 @@ where
         if prev.disabled != self.disabled {
             element.ctx.set_disabled(self.disabled);
         }
-        if prev.value != self.value {
+        if prev.value.to_bits() != self.value.to_bits() {
             widgets::Slider::set_value(&mut element, self.value);
         }
-        if prev.min != self.min || prev.max != self.max {
+        if prev.min.to_bits() != self.min.to_bits() || prev.max.to_bits() != self.max.to_bits() {
             widgets::Slider::set_range(&mut element, self.min, self.max);
         }
         if prev.step != self.step {
@@ -108,7 +110,7 @@ where
         ctx: &mut ViewCtx,
         element: Mut<'_, Self::Element>,
     ) {
-        ctx.teardown_action_source(element);
+        ctx.teardown_action_source(element.ctx.widget_id());
     }
 
     fn message(
@@ -122,15 +124,13 @@ where
             tracing::warn!("Got unexpected id path in Slider::message");
             return MessageResult::Stale;
         }
-        match message.take_message::<SliderMoved>() {
-            Some(value) => MessageResult::Action((self.on_change)(app_state, value.value)),
-            None => {
-                tracing::error!(
-                    "Wrong message type in Slider::message: {message:?}, expected {}",
-                    std::any::type_name::<SliderMoved>(),
-                );
-                MessageResult::Stale
-            }
-        }
+        let Some(value) = message.take_message::<SliderMoved>() else {
+            tracing::error!(
+                "Wrong message type in Slider::message: {message:?}, expected {}",
+                std::any::type_name::<SliderMoved>(),
+            );
+            return MessageResult::Stale;
+        };
+        MessageResult::Action((self.on_change)(app_state, value.value))
     }
 }

@@ -153,7 +153,7 @@ macro_rules! action_child_teardown {
                     View::<State, Action, _>::teardown(&self.$field, view_state, ctx, child);
                 }
             });
-            ctx.teardown_action_source(element);
+            ctx.teardown_action_source(element.ctx.widget_id());
         }
     };
 }
@@ -231,6 +231,7 @@ mod grid;
 mod image;
 mod indexed_stack;
 mod label;
+mod optional_child;
 mod portal;
 mod progress_bar;
 mod prop;

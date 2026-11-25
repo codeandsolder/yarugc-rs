@@ -19,7 +19,7 @@ use crate::{Pod, ViewCtx, WidgetView};
 /// Transformations apply in order.
 /// That is, calling [`rotate`](Transformed::rotate) then [`translate`](Transformed::translate)
 /// will move the rotated widget.
-pub fn transformed<Child, State, Action>(child: Child) -> Transformed<Child, State, Action>
+pub const fn transformed<Child, State, Action>(child: Child) -> Transformed<Child, State, Action>
 where
     Child: WidgetView<State, Action>,
     State: 'static,
@@ -39,7 +39,7 @@ pub struct Transformed<V, State, Action> {
 }
 
 impl<V, State, Action> Transformed<V, State, Action> {
-    #[must_use]
+    #[must_use = "Use the transformed view."]
     /// Rotate the widget by `radians` radians about the origin of its natural location.
     pub fn rotate(mut self, radians: f64) -> Self {
         self.transform = self.transform.then_rotate(radians);
@@ -47,27 +47,27 @@ impl<V, State, Action> Transformed<V, State, Action> {
     }
 
     /// Scale the widget by `uniform` in each axis.
-    #[must_use]
+    #[must_use = "Use the transformed view."]
     pub fn scale(mut self, uniform: f64) -> Self {
         self.transform = self.transform.then_scale(uniform);
         self
     }
 
-    #[must_use]
+    #[must_use = "Use the transformed view."]
     /// Scale the widget by the given amount in each (2d) axis.
     pub fn scale_non_uniform(mut self, x: f64, y: f64) -> Self {
         self.transform = self.transform.then_scale_non_uniform(x, y);
         self
     }
 
-    #[must_use]
+    #[must_use = "Use the transformed view."]
     /// Displace the widget by `v` from its natural location.
     pub fn translate(mut self, v: impl Into<Vec2>) -> Self {
         self.transform = self.transform.then_translate(v.into());
         self
     }
 
-    #[must_use]
+    #[must_use = "Use the transformed view."]
     /// Apply an arbitrary 2d transform to the widget.
     pub fn transform(mut self, v: impl Into<Affine>) -> Self {
         self.transform *= v.into();

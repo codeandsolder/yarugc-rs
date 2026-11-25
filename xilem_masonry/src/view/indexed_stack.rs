@@ -76,7 +76,7 @@ pub struct IndexedStack<Seq, State, Action = ()> {
 impl<Seq, State, Action> IndexedStack<Seq, State, Action> {
     /// Set the active item for this stack.
     #[track_caller]
-    pub fn active(mut self, active: usize) -> Self {
+    pub const fn active(mut self, active: usize) -> Self {
         // TODO: validate this against the sequence. Currently,
         // the sequence has no way to get the length.
         self.active_child = active;
@@ -121,7 +121,7 @@ where
             widget = widget.with(element.child.new_widget);
         }
         widget = widget.with_active_child(self.active_child);
-        let pod = ctx.create_pod(widget);
+        let pod = Pod::new(widget);
         (
             pod,
             IndexedStackState {
@@ -242,7 +242,7 @@ struct IndexedStackSplice<'w, 's> {
 }
 
 impl<'w, 's> IndexedStackSplice<'w, 's> {
-    fn new(
+    const fn new(
         element: WidgetMut<'w, widgets::IndexedStack>,
         scratch: &'s mut AppendVec<IndexedStackElement>,
     ) -> Self {

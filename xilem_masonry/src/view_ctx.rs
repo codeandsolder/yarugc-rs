@@ -5,7 +5,7 @@ use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use masonry::core::{FromDynWidget, Property, Widget, WidgetId, WidgetMut};
+use masonry::core::{FromDynWidget, Property, Widget, WidgetId};
 
 use crate::Pod;
 use crate::core::{Environment, RawProxy, ViewId, ViewPathTracker};
@@ -46,22 +46,16 @@ impl ViewCtx {
     /// Returns the list of ids of [`WidgetView`](crate::WidgetView)s that must be traversed to get the widget with the given id.
     ///
     /// Only applies to widgets on which [`Self::record_action_source`] was called.
+    #[must_use = "Use the returned value."]
     pub fn get_id_path(&self, widget_id: WidgetId) -> Option<&Vec<ViewId>> {
         self.widget_map.get(&widget_id)
-    }
-
-    // TODO - Remove?
-    /// Wrapper around [`Pod::new()`].
-    pub fn create_pod<W: Widget + FromDynWidget>(&mut self, widget: W) -> Pod<W> {
-        Pod::new(widget)
     }
 
     /// Helper method which passes through the returned `Pod` and passes its id to [`Self::record_action_source`].
     pub fn with_action_widget<W: Widget + FromDynWidget + ?Sized>(
         &mut self,
-        f: impl FnOnce(&mut Self) -> Pod<W>,
+        value: Pod<W>,
     ) -> Pod<W> {
-        let value = f(self);
         self.record_action_source(value.new_widget.id());
         value
     }
@@ -73,14 +67,18 @@ impl ViewCtx {
     }
 
     /// Removes this widget's id path from the routing map.
-    pub fn teardown_action_source<W: Widget + FromDynWidget + ?Sized>(
-        &mut self,
-        widget: WidgetMut<'_, W>,
-    ) {
-        self.widget_map.remove(&widget.ctx.widget_id());
+    pub fn teardown_action_source(&mut self, widget: WidgetId) {
+        self.widget_map.remove(&widget);
+    }
+
+    // Drop routing entries for a removed subtree, including any orphaned widget.
+    pub(crate) fn remove_action_sources_under_current_path(&mut self) {
+        self.widget_map
+            .retain(|_, path| !path.starts_with(&self.id_path));
     }
 
     /// Returns a reference to the app's tokio runtime.
+    #[must_use = "Use the returned value."]
     pub fn runtime(&self) -> &tokio::runtime::Runtime {
         &self.runtime
     }
@@ -106,6 +104,7 @@ impl ViewCtx {
     /// Checks if the property `P` of the widget with the given id has changed during this rebuild.
     ///
     /// This is used to avoid bugs when multiple `Prop` views are stacked on the same widget.
+    #[must_use = "Use the returned value."]
     pub fn prop_has_changed<P: Property>(&self, id: WidgetId) -> bool {
         self.props_changed.contains(&(id, TypeId::of::<P>()))
     }
@@ -113,6 +112,7 @@ impl ViewCtx {
     /// Checks if the transform of the widget with the given id has changed during this rebuild.
     ///
     /// This is used to avoid bugs when multiple `Transformed` views are stacked on the same widget.
+    #[must_use = "Use the returned value."]
     pub fn transform_has_changed(&self, id: WidgetId) -> bool {
         self.transforms_changed.contains(&id)
     }
@@ -132,6 +132,7 @@ impl ViewCtx {
     }
 
     /// Returns an event queue to which [`SendMessage`](crate::core::SendMessage)s can be submitted.
+    #[must_use = "Use the returned value."]
     pub fn proxy(&self) -> Arc<dyn RawProxy + 'static> {
         self.proxy.clone()
     }

@@ -121,7 +121,7 @@ impl<State: 'static, Action: 'static> TextInput<State, Action> {
     /// Set the text's color.
     ///
     /// This overwrites the default `ContentColor` property for the inner `TextArea` widget.
-    pub fn text_color(mut self, color: Color) -> Self {
+    pub const fn text_color(mut self, color: Color) -> Self {
         self.text_color = Some(color);
         self
     }
@@ -129,6 +129,7 @@ impl<State: 'static, Action: 'static> TextInput<State, Action> {
     /// Set the insertion caret's color.
     ///
     /// This overwrites the default `CaretColor` property for the inner `TextArea` widget.
+    #[must_use = "Use the returned value."]
     pub fn caret_color(self, color: Color) -> Prop<CaretColor, Self, State, Action> {
         self.prop(CaretColor { color })
     }
@@ -136,6 +137,7 @@ impl<State: 'static, Action: 'static> TextInput<State, Action> {
     /// Set the selection's color.
     ///
     /// This overwrites the default `SelectionColor` property for the inner `TextArea` widget.
+    #[must_use = "Use the returned value."]
     pub fn selection_color(self, color: Color) -> Prop<SelectionColor, Self, State, Action> {
         self.prop(SelectionColor { color })
     }
@@ -147,25 +149,26 @@ impl<State: 'static, Action: 'static> TextInput<State, Action> {
     }
 
     /// Set the [`PlaceholderColor`] property, which sets the color of the text shown when the input is empty.
+    #[must_use = "Use the returned value."]
     pub fn placeholder_color(self, color: Color) -> Prop<PlaceholderColor, Self, State, Action> {
         self.prop(PlaceholderColor::new(color))
     }
 
     /// Set the [text alignment](https://en.wikipedia.org/wiki/Typographic_alignment) of the text.
-    pub fn text_alignment(mut self, text_alignment: TextAlign) -> Self {
+    pub const fn text_alignment(mut self, text_alignment: TextAlign) -> Self {
         self.text_alignment = text_alignment;
         self
     }
 
     /// Sets text size.
     #[doc(alias = "font_size")]
-    pub fn text_size(mut self, text_size: f32) -> Self {
+    pub const fn text_size(mut self, text_size: f32) -> Self {
         self.text_size = text_size;
         self
     }
 
     /// Sets font weight.
-    pub fn weight(mut self, weight: FontWeight) -> Self {
+    pub const fn weight(mut self, weight: FontWeight) -> Self {
         self.weight = weight;
         self
     }
@@ -183,7 +186,7 @@ impl<State: 'static, Action: 'static> TextInput<State, Action> {
     ///
     /// See also [`on_enter`](Self::on_enter), which provides a callback for enter
     /// being used for submitting.
-    pub fn insert_newline(mut self, insert_newline: InsertNewline) -> Self {
+    pub const fn insert_newline(mut self, insert_newline: InsertNewline) -> Self {
         self.insert_newline = insert_newline;
         self
     }
@@ -210,7 +213,7 @@ impl<State: 'static, Action: 'static> TextInput<State, Action> {
     }
 
     /// Set the disabled state of the widget.
-    pub fn disabled(mut self, disabled: bool) -> Self {
+    pub const fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
@@ -226,7 +229,7 @@ impl<State: 'static, Action: 'static> TextInput<State, Action> {
     ///    opportunities in the text, they will be taken.
     ///
     /// The default value is true (i.e. clipping is enabled).
-    pub fn clip(mut self, clip: bool) -> Self {
+    pub const fn clip(mut self, clip: bool) -> Self {
         self.clip = clip;
         self
     }
@@ -263,7 +266,7 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for TextInput
         let id = text_input.area_pod().id();
         ctx.record_action_source(id);
 
-        let mut pod = ctx.create_pod(text_input);
+        let mut pod = Pod::new(text_input);
         pod.new_widget.options.disabled = self.disabled;
         (pod, ())
     }
@@ -271,7 +274,7 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for TextInput
     fn rebuild(
         &self,
         prev: &Self,
-        _: &mut Self::ViewState,
+        (): &mut Self::ViewState,
         _ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
         _: &mut State,
@@ -315,7 +318,7 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for TextInput
             widgets::TextArea::reset_text(&mut text_area, &self.contents);
         }
 
-        if prev.text_size != self.text_size {
+        if prev.text_size.to_bits() != self.text_size.to_bits() {
             widgets::TextArea::insert_style(
                 &mut text_area,
                 StyleProperty::FontSize(self.text_size),
@@ -337,16 +340,16 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for TextInput
 
     fn teardown(
         &self,
-        _: &mut Self::ViewState,
+        (): &mut Self::ViewState,
         ctx: &mut ViewCtx,
         element: Mut<'_, Self::Element>,
     ) {
-        ctx.teardown_action_source(element);
+        ctx.teardown_action_source(element.ctx.widget_id());
     }
 
     fn message(
         &self,
-        _: &mut Self::ViewState,
+        (): &mut Self::ViewState,
         message: &mut MessageCtx,
         _: Mut<'_, Self::Element>,
         app_state: &mut State,
@@ -355,30 +358,24 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for TextInput
             message.remaining_path().is_empty(),
             "id path should be empty in TextInput::message"
         );
-        match message.take_message::<TextAction>() {
-            Some(action) => match *action {
-                TextAction::Changed(text) => {
-                    MessageResult::Action((self.on_changed)(app_state, text))
-                }
-                TextAction::Entered(text) if self.on_enter.is_some() => {
-                    MessageResult::Action((self.on_enter.as_ref().unwrap())(app_state, text))
-                }
-
-                TextAction::Entered(_) => {
-                    tracing::error!("Textbox::message: on_enter is not set");
-                    MessageResult::Stale
-                }
-                TextAction::Cancelled if self.on_cancel.is_some() => {
-                    let text = self.contents.clone();
-                    MessageResult::Action((self.on_cancel.as_ref().unwrap())(app_state, text))
-                }
-
-                TextAction::Cancelled => MessageResult::Stale,
-            },
-            None => {
-                tracing::error!(?message, "Wrong message type in TextInput::message");
-                MessageResult::Stale
-            }
+        let Some(action) = message.take_message::<TextAction>() else {
+            tracing::error!(?message, "Wrong message type in TextInput::message");
+            return MessageResult::Stale;
+        };
+        match *action {
+            TextAction::Changed(text) => MessageResult::Action((self.on_changed)(app_state, text)),
+            TextAction::Entered(text) => self
+                .on_enter
+                .as_ref()
+                .map_or(MessageResult::Stale, |callback| {
+                    MessageResult::Action(callback(app_state, text))
+                }),
+            TextAction::Cancelled => self
+                .on_cancel
+                .as_ref()
+                .map_or(MessageResult::Stale, |callback| {
+                    MessageResult::Action(callback(app_state, self.contents.clone()))
+                }),
         }
     }
 }

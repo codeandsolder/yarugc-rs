@@ -52,7 +52,7 @@ pub struct Switch<State, Action, F> {
 
 impl<State, Action, F> Switch<State, Action, F> {
     /// Set the disabled state of the widget.
-    pub fn disabled(mut self, disabled: bool) -> Self {
+    pub const fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
@@ -69,8 +69,8 @@ where
     type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
-        let element = ctx.with_action_widget(|ctx| {
-            let mut pod = ctx.create_pod(widgets::Switch::new(self.on));
+        let element = ctx.with_action_widget({
+            let mut pod = Pod::new(widgets::Switch::new(self.on));
             pod.new_widget.options.disabled = self.disabled;
             pod
         });
@@ -99,7 +99,7 @@ where
         ctx: &mut ViewCtx,
         element: Mut<'_, Self::Element>,
     ) {
-        ctx.teardown_action_source(element);
+        ctx.teardown_action_source(element.ctx.widget_id());
     }
 
     fn message(
@@ -113,12 +113,10 @@ where
             message.remaining_path().is_empty(),
             "id path should be empty in Switch::message"
         );
-        match message.take_message::<SwitchToggled>() {
-            Some(switched) => MessageResult::Action((self.callback)(app_state, switched.0)),
-            None => {
-                tracing::error!("Wrong message type in Switch::message, got {message:?}.");
-                MessageResult::Stale
-            }
-        }
+        let Some(switched) = message.take_message::<SwitchToggled>() else {
+            tracing::error!("Wrong message type in Switch::message, got {message:?}.");
+            return MessageResult::Stale;
+        };
+        MessageResult::Action((self.callback)(app_state, switched.0))
     }
 }

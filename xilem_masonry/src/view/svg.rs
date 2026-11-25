@@ -16,7 +16,7 @@ use crate::{Pod, ViewCtx, WidgetView};
 ///
 /// By default, the SVG will be scaled to fully fit within the container ([`ObjectFit::Contain`]).
 /// To configure this, call [`fit`](Svg::fit) on the returned value.
-pub fn svg(tree: Arc<Tree>) -> Svg {
+pub const fn svg(tree: Arc<Tree>) -> Svg {
     Svg {
         tree,
         decorative: false,
@@ -34,6 +34,7 @@ pub struct Svg {
 
 impl Svg {
     /// Specify the object fit.
+    #[must_use = "Use the returned value."]
     pub fn fit<State: 'static, Action: 'static>(
         self,
         fill: ObjectFit,
@@ -45,7 +46,7 @@ impl Svg {
     /// and is only for visual presentation.
     ///
     /// If `is_decorative` is `true`, the SVG will be ignored by screen readers.
-    pub fn decorative(mut self, is_decorative: bool) -> Self {
+    pub const fn decorative(mut self, is_decorative: bool) -> Self {
         self.decorative = is_decorative;
         self
     }
@@ -68,12 +69,12 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for Svg {
     type Element = Pod<widgets::Svg>;
     type ViewState = ();
 
-    fn build(&self, ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
+    fn build(&self, _ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
         let mut svg = widgets::Svg::new(self.tree.clone()).decorative(self.decorative);
         if let Some(alt_text) = &self.alt_text {
             svg = svg.with_alt_text(alt_text.clone());
         }
-        (ctx.create_pod(svg), ())
+        (Pod::new(svg), ())
     }
 
     fn rebuild(

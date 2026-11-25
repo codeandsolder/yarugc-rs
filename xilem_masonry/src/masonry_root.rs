@@ -13,7 +13,7 @@ pub struct MasonryRoot<State: 'static> {
     pub(crate) root_widget_view: Box<AnyWidgetView<State, ()>>,
 }
 
-pub(crate) type MasonryRootState = <Box<AnyWidgetView<(), ()>> as View<(), (), ViewCtx>>::ViewState;
+type MasonryRootState = <Box<AnyWidgetView<(), ()>> as View<(), (), ViewCtx>>::ViewState;
 
 /// A wrapper type around [`Passthrough`] for implementing [`ViewElement`].
 pub struct InitialRootWidget(pub Pod<Passthrough>);

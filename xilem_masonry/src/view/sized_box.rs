@@ -58,13 +58,13 @@ pub struct SizedBox<V, State, Action = ()> {
 
 impl<V, State, Action> SizedBox<V, State, Action> {
     /// Set container's width.
-    pub fn fixed_width(mut self, width: Length) -> Self {
+    pub const fn fixed_width(mut self, width: Length) -> Self {
         self.width = Some(width);
         self
     }
 
     /// Set container's height.
-    pub fn fixed_height(mut self, height: Length) -> Self {
+    pub const fn fixed_height(mut self, height: Length) -> Self {
         self.height = Some(height);
         self
     }
@@ -86,7 +86,7 @@ where
             .raw_width(self.width)
             .raw_height(self.height);
 
-        (ctx.create_pod(widget), child_state)
+        (Pod::new(widget), child_state)
     }
 
     fn rebuild(

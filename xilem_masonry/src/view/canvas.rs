@@ -74,12 +74,14 @@ where
 
     fn build(&self, ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
         (
-            ctx.with_action_widget(|ctx| {
-                let widget = match &self.alt_text {
-                    Some(alt_text) => widgets::Canvas::default().with_alt_text(alt_text.clone()),
-                    None => widgets::Canvas::default(),
-                };
-                ctx.create_pod(widget)
+            ctx.with_action_widget({
+                let widget = self
+                    .alt_text
+                    .as_ref()
+                    .map_or_else(widgets::Canvas::default, |alt_text| {
+                        widgets::Canvas::default().with_alt_text(alt_text.clone())
+                    });
+                Pod::new(widget)
             }),
             (),
         )
@@ -114,12 +116,11 @@ where
             message.remaining_path().is_empty(),
             "id path should be empty in Canvas::message"
         );
-        match message.take_message::<CanvasSizeChanged>() {
-            Some(_) => MessageResult::RequestRebuild,
-            None => {
-                tracing::error!("Wrong message type in Canvas::message, got {message:?}.");
-                MessageResult::Stale
-            }
+        if message.take_message::<CanvasSizeChanged>().is_some() {
+            MessageResult::RequestRebuild
+        } else {
+            tracing::error!("Wrong message type in Canvas::message, got {message:?}.");
+            MessageResult::Stale
         }
     }
 }

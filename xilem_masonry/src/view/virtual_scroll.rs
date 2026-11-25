@@ -1,12 +1,10 @@
 // Copyright 2025 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::ops::Range;
 
-use masonry::core::{Widget, WidgetPod};
-use masonry::util::debug_panic;
 use masonry::widgets;
 
 use crate::core::{MessageCtx, MessageResult, Mut, View, ViewId, ViewMarker, ViewPathTracker};
@@ -14,11 +12,14 @@ use crate::{Pod, ViewCtx, WidgetView};
 
 pub use widgets::ScrollDirection;
 
+/// Default function-pointer handler for a virtual scroll without a custom scroll callback.
+pub type ScrollHandler<State, Action> = fn(&mut State, Range<usize>) -> MessageResult<Action>;
+
 /// The view type for [`virtual_scroll`].
 ///
 /// See its documentation for details.
 pub struct VirtualScroll<State, Action, ChildrenViews, F, G> {
-    phantom: PhantomData<fn() -> (WidgetPod<dyn Widget>, State, Action, ChildrenViews)>,
+    phantom: PhantomData<fn(State, ChildrenViews) -> Action>,
     func: F,
     anchor_index: Option<usize>,
     len: usize,
@@ -58,13 +59,7 @@ pub struct VirtualScroll<State, Action, ChildrenViews, F, G> {
 pub fn virtual_scroll<State, Action, ChildrenViews, F>(
     len: usize,
     func: F,
-) -> VirtualScroll<
-    State,
-    Action,
-    ChildrenViews,
-    F,
-    impl Fn(&mut State, Range<usize>) -> MessageResult<Action> + Send + Sync + 'static,
->
+) -> VirtualScroll<State, Action, ChildrenViews, F, ScrollHandler<State, Action>>
 where
     ChildrenViews: WidgetView<State, Action>,
     F: Fn(&mut State, usize) -> ChildrenViews + 'static,
@@ -93,13 +88,7 @@ where
 /// For full details, see the documentation on the [view type](VirtualScroll).
 pub fn unlimited_virtual_scroll<State, Action, ChildrenViews, F>(
     func: F,
-) -> VirtualScroll<
-    State,
-    Action,
-    ChildrenViews,
-    F,
-    impl Fn(&mut State, Range<usize>) -> MessageResult<Action> + Send + Sync + 'static,
->
+) -> VirtualScroll<State, Action, ChildrenViews, F, ScrollHandler<State, Action>>
 where
     ChildrenViews: WidgetView<State, Action>,
     F: Fn(&mut State, usize) -> ChildrenViews + 'static,
@@ -123,21 +112,24 @@ impl<State, Action, ChildrenViews, F, G> VirtualScroll<State, Action, ChildrenVi
     /// Jumps to the child with the specified index.
     ///
     /// Sets the top of the child to the start position of viewport.
-    pub fn jump_to(mut self, anchor_index: Option<usize>) -> Self {
+    #[must_use = "Use the configured view."]
+    pub const fn jump_to(mut self, anchor_index: Option<usize>) -> Self {
         self.anchor_index = anchor_index;
         self
     }
 
     /// Sets the points (as ratios of width) where the first item starts and
     /// the last item ends in the viewport.
-    pub fn start_end(mut self, start_at: f64, end_at: f64) -> Self {
+    #[must_use = "Use the configured view."]
+    pub const fn start_end(mut self, start_at: f64, end_at: f64) -> Self {
         self.start_at = start_at;
         self.end_at = end_at;
         self
     }
 
     /// Sets the direction of scrolling.
-    pub fn direction(mut self, direction: ScrollDirection) -> Self {
+    #[must_use = "Use the configured view."]
+    pub const fn direction(mut self, direction: ScrollDirection) -> Self {
         self.direction = direction;
         self
     }
@@ -145,7 +137,8 @@ impl<State, Action, ChildrenViews, F, G> VirtualScroll<State, Action, ChildrenVi
     /// Sets if the view is in the process of scrolling.
     ///
     /// Helps with animated scrolls where pixel-snapping and font-hinting should be turned off.
-    pub fn scrolling(mut self, scrolling: bool) -> Self {
+    #[must_use = "Use the configured view."]
+    pub const fn scrolling(mut self, scrolling: bool) -> Self {
         self.scrolling = scrolling;
         self
     }
@@ -169,11 +162,11 @@ impl<State, Action, ChildrenViews, F, G> VirtualScroll<State, Action, ChildrenVi
 }
 
 mod private {
-    use std::{collections::HashMap, ops::Range};
+    use std::{collections::BTreeMap, ops::Range};
 
-    use super::*;
+    use super::{MessageResult, widgets};
 
-    pub(super) fn do_nothing<State: 'static + 'static, Action>(
+    pub(super) const fn do_nothing<State: 'static, Action>(
         _: &mut State,
         _: Range<usize>,
     ) -> MessageResult<Action> {
@@ -186,12 +179,14 @@ mod private {
     )]
     pub struct VirtualScrollState<View, State> {
         pub(super) pending_action: Option<widgets::VirtualScrollFetchAction>,
-        pub(super) children: HashMap<usize, ChildState<View, State>>,
+        pub(super) children: BTreeMap<usize, ChildState<View, State>>,
+        pub(super) next_generation: u64,
     }
 
     pub(super) struct ChildState<View, State> {
         pub(super) view: View,
         pub(super) state: State,
+        pub(super) generation: u64,
     }
 }
 
@@ -200,13 +195,52 @@ const fn view_id_for_index(idx: usize) -> ViewId {
     ViewId::new(idx as _)
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "VirtualList mandates it, however it should not be an issue in practice"
-)]
-/// Get the index stored in the view id.
-const fn index_for_view_id(id: ViewId) -> usize {
-    id.routing_id() as _
+// An index identifies the slot; a separate generation identifies its incarnation.
+fn with_child_path<R>(
+    ctx: &mut ViewCtx,
+    idx: usize,
+    generation: u64,
+    f: impl FnOnce(&mut ViewCtx) -> R,
+) -> R {
+    ctx.with_id(view_id_for_index(idx), |ctx| {
+        ctx.with_id(ViewId::new(generation), f)
+    })
+}
+
+impl<State, Action, ChildrenViews, F, G> VirtualScroll<State, Action, ChildrenViews, F, G>
+where
+    State: 'static,
+    ChildrenViews: WidgetView<State, Action>,
+    F: Fn(&mut State, usize) -> ChildrenViews,
+{
+    fn rebuild_loaded(
+        &self,
+        state: &mut private::VirtualScrollState<ChildrenViews, ChildrenViews::ViewState>,
+        ctx: &mut ViewCtx,
+        element: &mut masonry::core::WidgetMut<'_, widgets::VirtualScroll>,
+        app_state: &mut State,
+    ) {
+        for (&idx, child) in &mut state.children {
+            self.rebuild_child(idx, child, ctx, element, app_state);
+        }
+    }
+
+    fn rebuild_child(
+        &self,
+        idx: usize,
+        child: &mut private::ChildState<ChildrenViews, ChildrenViews::ViewState>,
+        ctx: &mut ViewCtx,
+        element: &mut masonry::core::WidgetMut<'_, widgets::VirtualScroll>,
+        app_state: &mut State,
+    ) {
+        let next = (self.func)(app_state, idx);
+        with_child_path(ctx, idx, child.generation, |ctx| {
+            if let Some(widget) = widgets::VirtualScroll::child_mut(element, idx) {
+                next.rebuild(&child.view, &mut child.state, ctx, widget, app_state);
+                child.view = next;
+            }
+        });
+    }
 }
 
 impl<State, Action, ChildrenViews, F, G> ViewMarker
@@ -240,7 +274,8 @@ where
             pod,
             private::VirtualScrollState {
                 pending_action: None,
-                children: HashMap::default(),
+                children: BTreeMap::default(),
+                next_generation: 0,
             },
         )
     }
@@ -264,12 +299,12 @@ where
             widgets::VirtualScroll::set_len(&mut element, self.len);
         }
 
-        let start_at = self.start_at != prev.start_at;
+        let start_at = self.start_at.to_bits() != prev.start_at.to_bits();
         if start_at {
             widgets::VirtualScroll::set_start(&mut element, self.start_at);
         }
 
-        let end_at = self.end_at != prev.end_at;
+        let end_at = self.end_at.to_bits() != prev.end_at.to_bits();
         if end_at {
             widgets::VirtualScroll::set_end(&mut element, self.end_at);
         }
@@ -284,100 +319,47 @@ where
             widgets::VirtualScroll::set_scrolling(&mut element, self.scrolling);
         }
 
-        // TODO: This code should be moved into `Self::message` once it becomes possible to
-        // make a build/rebuild/teardown context there.
-        //
-        // This is because we could now be requesting items which are outside the claimed "valid range".
-        // Naïvely, one might expect this to be impossible (because we only request rebuild, so the `app_logic` isn't ran)
-        // However, even in these cases, things like `lens` will still generate a new view, so it's conceivable that
-        // the valid range has changed. As such, we document the possibility of these requests above.
-        if let Some(pending_action) = view_state.pending_action.take() {
-            widgets::VirtualScroll::will_handle_action(&mut element, &pending_action);
-            // Teardown the old items
-            for idx in pending_action.old_active().clone() {
-                if !pending_action.target().contains(&idx) {
-                    let Some(mut child_state) = view_state.children.remove(&idx) else {
-                        debug_panic!(
-                            "Tried to remove {idx} from virtual scroll {pending_action:?}, but it wasn't already present."
-                        );
-                        continue;
-                    };
-                    ctx.with_id(view_id_for_index(idx), |ctx| {
-                        if let Some(child_element) =
-                            widgets::VirtualScroll::child_mut(&mut element, idx)
-                        {
-                            child_state
-                                .view
-                                .teardown(&mut child_state.state, ctx, child_element);
-                        }
-                        widgets::VirtualScroll::remove_child(&mut element, idx);
-                    });
+        if let Some(action) = view_state.pending_action.take() {
+            widgets::VirtualScroll::will_handle_action(&mut element, &action);
+            for idx in action.old_active().clone() {
+                if !action.target().contains(&idx) {
+                    if let Some(mut child) = view_state.children.remove(&idx) {
+                        with_child_path(ctx, idx, child.generation, |ctx| {
+                            if let Some(child_element) =
+                                widgets::VirtualScroll::child_mut(&mut element, idx)
+                            {
+                                child.view.teardown(&mut child.state, ctx, child_element);
+                            } else {
+                                ctx.remove_action_sources_under_current_path();
+                            }
+                        });
+                    }
+                    widgets::VirtualScroll::remove_child(&mut element, idx);
                 }
             }
-            // Build all new items. Whilst we're here, rebuild all the others.
-            // This avoids needing to carefully track which ones we just built.
-            for idx in pending_action.target().clone() {
+            // Preserve index order for both new and retained child callbacks.
+            for idx in action.target().clone() {
                 if let Some(child) = view_state.children.get_mut(&idx) {
-                    debug_assert!(
-                        pending_action.old_active().contains(&idx),
-                        "{idx} was asked to be removed in {pending_action:?}, but wasn't already present."
-                    );
-                    let next_child = (self.func)(app_state, idx);
-                    // Rebuild this existing item
-                    ctx.with_id(view_id_for_index(idx), |ctx| {
-                        let Some(child_element) =
-                            widgets::VirtualScroll::child_mut(&mut element, idx)
-                        else {
-                            return;
-                        };
-                        next_child.rebuild(
-                            &child.view,
-                            &mut child.state,
-                            ctx,
-                            child_element,
-                            app_state,
-                        );
-                        child.view = next_child;
-                    });
-                } else {
-                    let new_child = (self.func)(app_state, idx);
-                    // Build the new item
-                    ctx.with_id(view_id_for_index(idx), |ctx| {
-                        let (new_element, child_state) = new_child.build(ctx, app_state);
-                        widgets::VirtualScroll::add_child(
-                            &mut element,
-                            idx,
-                            new_element.new_widget.erased(),
-                        );
-                        view_state.children.insert(
-                            idx,
-                            private::ChildState {
-                                view: new_child,
-                                state: child_state,
-                            },
-                        )
-                    });
+                    self.rebuild_child(idx, child, ctx, &mut element, app_state);
+                    continue;
                 }
+                let view = (self.func)(app_state, idx);
+                let generation = view_state.next_generation;
+                view_state.next_generation = generation.wrapping_add(1);
+                let (child, state) =
+                    with_child_path(ctx, idx, generation, |ctx| view.build(ctx, app_state));
+                widgets::VirtualScroll::add_child(&mut element, idx, child.new_widget.erased());
+                view_state.children.insert(
+                    idx,
+                    private::ChildState {
+                        view,
+                        state,
+                        generation,
+                    },
+                );
             }
         } else {
-            // Rebuild all existing items
-            for (&idx, child) in &mut view_state.children {
-                let next_child = (self.func)(app_state, idx);
-                ctx.with_id(view_id_for_index(idx), |ctx| {
-                    let Some(child_element) = widgets::VirtualScroll::child_mut(&mut element, idx)
-                    else {
-                        return;
-                    };
-                    next_child.rebuild(
-                        &child.view,
-                        &mut child.state,
-                        ctx,
-                        child_element,
-                        app_state,
-                    );
-                    child.view = next_child;
-                });
-            }
+            self.rebuild_loaded(view_state, ctx, &mut element, app_state);
         }
         debug_assert_eq!(
             element.widget.len(),
@@ -393,15 +375,15 @@ where
         mut element: Mut<'_, Self::Element>,
     ) {
         for (&idx, child) in &mut view_state.children {
-            ctx.with_id(view_id_for_index(idx), |ctx| {
-                let Some(child_element) = widgets::VirtualScroll::child_mut(&mut element, idx)
-                else {
-                    return;
-                };
-                child.view.teardown(&mut child.state, ctx, child_element);
+            with_child_path(ctx, idx, child.generation, |ctx| {
+                if let Some(child_element) = widgets::VirtualScroll::child_mut(&mut element, idx) {
+                    child.view.teardown(&mut child.state, ctx, child_element);
+                } else {
+                    ctx.remove_action_sources_under_current_path();
+                }
             });
         }
-        ctx.teardown_action_source(element);
+        ctx.teardown_action_source(element.ctx.widget_id());
     }
 
     fn message(
@@ -412,28 +394,21 @@ where
         app_state: &mut State,
     ) -> MessageResult<Action> {
         if let Some(first) = message.take_first() {
-            let child_idx = index_for_view_id(first);
-            let target = view_state.children.get_mut(&child_idx);
-            // TODO: Unfortunately, this isn't robust, because the message might be trying to reach a previous child.
-            // We definitely don't want an O(n) storage of data for previous generations, but using a u64 generation
-            // can never reasonably overflow (i.e. we should use two viewids here).
-            if let Some(target) = target {
-                let Some(child_element) =
-                    widgets::VirtualScroll::child_mut(&mut element, child_idx)
-                else {
-                    return MessageResult::Stale;
-                };
-                let result =
-                    target
-                        .view
-                        .message(&mut target.state, message, child_element, app_state);
-                return result;
-            } else {
-                tracing::error!(
-                    "Message sent to unloaded view in `VirtualScroll::message`: {message:?}"
-                );
+            let Ok(idx) = usize::try_from(first.routing_id()) else {
+                return MessageResult::Stale;
+            };
+            let Some(target) = view_state.children.get_mut(&idx) else {
+                return MessageResult::Stale;
+            };
+            if message.take_first() != Some(ViewId::new(target.generation)) {
                 return MessageResult::Stale;
             }
+            let Some(child) = widgets::VirtualScroll::child_mut(&mut element, idx) else {
+                return MessageResult::Stale;
+            };
+            return target
+                .view
+                .message(&mut target.state, message, child, app_state);
         }
         if let Some(action) = message.take_message::<widgets::VirtualScrollAction>() {
             match *action {

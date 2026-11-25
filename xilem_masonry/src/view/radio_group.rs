@@ -37,7 +37,7 @@ use masonry::widgets;
 ///    }),
 /// )))
 /// ```
-pub fn radio_group<State, Action, V>(child: V) -> RadioGroup<V>
+pub const fn radio_group<State, Action, V>(child: V) -> RadioGroup<V>
 where
     State: 'static,
     Action: 'static,
@@ -68,7 +68,7 @@ where
         let (child, child_state) = self.child.build(ctx, app_state);
         let widget = widgets::RadioGroup::new(child.new_widget);
 
-        (ctx.create_pod(widget), child_state)
+        (Pod::new(widget), child_state)
     }
 
     single_child_view_lifecycle!(RadioGroup, child, rebuild);

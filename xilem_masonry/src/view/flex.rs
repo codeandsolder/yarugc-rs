@@ -131,19 +131,19 @@ pub struct Flex<Seq, State, Action = ()> {
 
 impl<Seq, State, Action> Flex<Seq, State, Action> {
     /// Set the flex direction (see [`Axis`]).
-    pub fn direction(mut self, axis: Axis) -> Self {
+    pub const fn direction(mut self, axis: Axis) -> Self {
         self.axis = axis;
         self
     }
 
     /// Set the children's [`CrossAxisAlignment`].
-    pub fn cross_axis_alignment(mut self, axis: CrossAxisAlignment) -> Self {
+    pub const fn cross_axis_alignment(mut self, axis: CrossAxisAlignment) -> Self {
         self.cross_axis_alignment = axis;
         self
     }
 
     /// Set the children's [`MainAxisAlignment`].
-    pub fn main_axis_alignment(mut self, axis: MainAxisAlignment) -> Self {
+    pub const fn main_axis_alignment(mut self, axis: MainAxisAlignment) -> Self {
         self.main_axis_alignment = axis;
         self
     }
@@ -215,7 +215,7 @@ where
                 FlexElement::FlexSpacer(flex) => widget.with_spacer(flex),
             }
         }
-        let pod = ctx.create_pod(widget);
+        let pod = Pod::new(widget);
         let state = FlexState {
             seq_state,
             scratch: elements,
@@ -554,7 +554,7 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for FlexSpacer {
     fn rebuild(
         &self,
         prev: &Self,
-        _: &mut Self::ViewState,
+        (): &mut Self::ViewState,
         _: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
         _: &mut State,
@@ -575,15 +575,15 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for FlexSpacer {
                         *flex,
                     ));
                 }
-            };
+            }
         }
     }
 
-    fn teardown(&self, _: &mut Self::ViewState, _: &mut ViewCtx, _: Mut<'_, Self::Element>) {}
+    fn teardown(&self, (): &mut Self::ViewState, _: &mut ViewCtx, _: Mut<'_, Self::Element>) {}
 
     fn message(
         &self,
-        _: &mut Self::ViewState,
+        (): &mut Self::ViewState,
         message: &mut MessageCtx,
         _: Mut<'_, Self::Element>,
         _: &mut State,
@@ -617,7 +617,8 @@ impl FlexSpacer {
     /// # }
     ///
     /// ```
-    pub fn into_any_flex<State, Action>(self) -> AnyFlexChild<State, Action> {
+    #[must_use = "Use the returned value."]
+    pub const fn into_any_flex<State, Action>(self) -> AnyFlexChild<State, Action> {
         AnyFlexChild::Spacer(self)
     }
 }
@@ -692,14 +693,11 @@ where
     ) {
         match (prev, self) {
             (Self::Item(prev), Self::Item(this)) => {
+                let Some(inner) = view_state.inner.as_mut() else {
+                    return;
+                };
                 ctx.with_id(ViewId::new(view_state.generation), |ctx| {
-                    this.rebuild(
-                        prev,
-                        view_state.inner.as_mut().unwrap(),
-                        ctx,
-                        element,
-                        app_state,
-                    );
+                    this.rebuild(prev, inner, ctx, element, app_state);
                 });
             }
             (Self::Spacer(prev), Self::Spacer(this)) => {
@@ -708,14 +706,17 @@ where
             (Self::Item(prev_flex_item), Self::Spacer(new_spacer)) => {
                 // Run teardown with the old path
                 ctx.with_id(ViewId::new(view_state.generation), |ctx| {
-                    prev_flex_item.teardown(
-                        view_state.inner.as_mut().unwrap(),
-                        ctx,
-                        FlexElementMut {
-                            parent: element.parent.reborrow_mut(),
-                            idx: element.idx,
-                        },
-                    );
+                    if let Some(inner) = view_state.inner.as_mut() {
+                        prev_flex_item.teardown(
+                            inner,
+                            ctx,
+                            FlexElementMut {
+                                parent: element.parent.reborrow_mut(),
+                                idx: element.idx,
+                            },
+                        );
+                    }
+                    ctx.remove_action_sources_under_current_path();
                 });
                 // The Flex item view has just been destroyed, teardown the old view
                 // We increment the generation only on the falling edge (new item `FlexSpacer`) by convention
@@ -744,7 +745,7 @@ where
                         ));
                     }
                     FlexElement::Child(_, _) => unreachable!(),
-                };
+                }
             }
             (Self::Spacer(prev_spacer), Self::Item(new_flex_item)) => {
                 View::<(), (), ViewCtx>::teardown(
@@ -783,7 +784,12 @@ where
     ) {
         match self {
             Self::Item(flex_item) => {
-                flex_item.teardown(view_state.inner.as_mut().unwrap(), ctx, element);
+                ctx.with_id(ViewId::new(view_state.generation), |ctx| {
+                    if let Some(inner) = view_state.inner.as_mut() {
+                        flex_item.teardown(inner, ctx, element);
+                    }
+                    ctx.remove_action_sources_under_current_path();
+                });
             }
             Self::Spacer(spacer) => {
                 View::<(), (), ViewCtx>::teardown(spacer, &mut (), ctx, element);
@@ -798,24 +804,17 @@ where
         element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let start = message
-            .take_first()
-            .expect("Id path has elements for AnyFlexChild");
+        let Some(start) = message.take_first() else {
+            return MessageResult::Stale;
+        };
         if start.routing_id() != view_state.generation {
             // The message was sent to a previous edition of the inner value
             return MessageResult::Stale;
         }
-        let Self::Item(flex_item) = self else {
-            unreachable!(
-                "this should be unreachable as the generation was increased on the falling edge"
-            )
+        let (Self::Item(flex_item), Some(inner)) = (self, view_state.inner.as_mut()) else {
+            return MessageResult::Stale;
         };
 
-        flex_item.message(
-            view_state.inner.as_mut().unwrap(),
-            message,
-            element,
-            app_state,
-        )
+        flex_item.message(inner, message, element, app_state)
     }
 }

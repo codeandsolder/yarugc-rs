@@ -25,7 +25,7 @@ pub use masonry::properties::ObjectFit;
 /// for discussion.
 pub fn image(image: impl Into<ImageBrush>) -> Image {
     Image {
-        image: image.into(),
+        brush: image.into(),
         decorative: false,
         alt_text: None,
     }
@@ -36,7 +36,7 @@ pub fn image(image: impl Into<ImageBrush>) -> Image {
 /// See `image`'s docs for more details.
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct Image {
-    image: ImageBrush,
+    brush: ImageBrush,
     decorative: bool,
     alt_text: Option<ArcStr>,
 }
@@ -44,6 +44,7 @@ pub struct Image {
 impl Image {
     // Because this method is image-specific, we don't add it to the Style trait.
     /// Specify the object fit.
+    #[must_use = "Use the returned value."]
     pub fn fit<State: 'static, Action: 'static>(
         self,
         fill: ObjectFit,
@@ -55,7 +56,7 @@ impl Image {
     /// and is only for visual presentation.
     ///
     /// If `is_decorative` is `true`, the image will be ignored by screen readers.
-    pub fn decorative(mut self, is_decorative: bool) -> Self {
+    pub const fn decorative(mut self, is_decorative: bool) -> Self {
         self.decorative = is_decorative;
         self
     }
@@ -78,12 +79,12 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for Image {
     type Element = Pod<widgets::Image>;
     type ViewState = ();
 
-    fn build(&self, ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
-        let mut image = widgets::Image::new(self.image.clone()).decorative(self.decorative);
+    fn build(&self, _ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
+        let mut image = widgets::Image::new(self.brush.clone()).decorative(self.decorative);
         if let Some(alt_text) = &self.alt_text {
             image = image.with_alt_text(alt_text.clone());
         }
-        (ctx.create_pod(image), ())
+        (Pod::new(image), ())
     }
 
     fn rebuild(
@@ -94,8 +95,8 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for Image {
         mut element: Mut<'_, Self::Element>,
         _: &mut State,
     ) {
-        if prev.image != self.image {
-            widgets::Image::set_brush(&mut element, self.image.clone());
+        if prev.brush != self.brush {
+            widgets::Image::set_brush(&mut element, self.brush.clone());
         }
         if self.decorative != prev.decorative {
             widgets::Image::set_decorative(&mut element, self.decorative);

@@ -44,7 +44,7 @@ impl<V, State, Action> Portal<V, State, Action> {
     /// - When it is `true`, the [`Portal`]'s width will be passed down as an upper bound
     ///   on the width of the child. There will be no horizontal scrollbar and
     ///   the mouse wheel can't be used to horizontally scroll either.
-    pub fn constrain_horizontal(mut self, constrain_horizontal: bool) -> Self {
+    pub const fn constrain_horizontal(mut self, constrain_horizontal: bool) -> Self {
         self.constrain_horizontal = constrain_horizontal;
         self
     }
@@ -57,7 +57,7 @@ impl<V, State, Action> Portal<V, State, Action> {
     /// - When it is `true`, the [`Portal`]'s height will be passed down as an upper bound
     ///   on the height of the child. There will be no vertical scrollbar and
     ///   the mouse wheel can't be used to vertically scroll either.
-    pub fn constrain_vertical(mut self, constrain_vertical: bool) -> Self {
+    pub const fn constrain_vertical(mut self, constrain_vertical: bool) -> Self {
         self.constrain_vertical = constrain_vertical;
         self
     }
@@ -65,7 +65,7 @@ impl<V, State, Action> Portal<V, State, Action> {
     /// Sets whether the child must fill the view.
     ///
     /// If `true`, the child size is guaranteed to be at least the size of the portal.
-    pub fn must_fill(mut self, must_fill: bool) -> Self {
+    pub const fn must_fill(mut self, must_fill: bool) -> Self {
         self.must_fill = must_fill;
         self
     }
@@ -85,7 +85,7 @@ where
         // The Portal `View` doesn't get any messages directly (yet - scroll events?), so doesn't need to
         // use ctx.with_id.
         let (child, child_state) = self.child.build(ctx, app_state);
-        let widget_pod = ctx.create_pod(
+        let widget_pod = Pod::new(
             widgets::Portal::new(child.new_widget)
                 .constrain_horizontal(self.constrain_horizontal)
                 .constrain_vertical(self.constrain_vertical)

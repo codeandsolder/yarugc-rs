@@ -33,22 +33,16 @@ pub fn worker<F, H, M, S, V, State, Action, Fut>(
     init_future: F,
     store_sender: S,
     on_response: H,
-) -> Worker<
-    State,
-    Action,
-    F,
-    H,
-    M,
-    impl Fn(&mut State, &mut Environment, UnboundedSender<V>) -> bool + 'static,
-    V,
->
+) -> impl View<State, Action, ViewCtx, Element = NoElement>
 where
-    F: Fn(MessageProxy<M>, UnboundedReceiver<V>) -> Fut,
+    F: Fn(MessageProxy<M>, UnboundedReceiver<V>) -> Fut + 'static,
     Fut: Future<Output = ()> + Send + 'static,
     S: Fn(&mut State, UnboundedSender<V>) + 'static,
     H: Fn(&mut State, M) -> Action + 'static,
     M: AnyDebug + Send + 'static,
     State: 'static,
+    Action: 'static,
+    V: Send + 'static,
 {
     const {
         assert!(
@@ -78,23 +72,17 @@ pub fn env_worker<F, H, M, S, V, Res, State, Action, Fut>(
     init_future: F,
     store_sender: S,
     on_response: H,
-) -> Worker<
-    State,
-    Action,
-    F,
-    H,
-    M,
-    impl Fn(&mut State, &mut Environment, UnboundedSender<V>) -> bool + 'static,
-    V,
->
+) -> impl View<State, Action, ViewCtx, Element = NoElement>
 where
-    F: Fn(MessageProxy<M>, UnboundedReceiver<V>) -> Fut,
+    F: Fn(MessageProxy<M>, UnboundedReceiver<V>) -> Fut + 'static,
     Fut: Future<Output = ()> + Send + 'static,
     S: Fn(&mut State, &mut Res, UnboundedSender<V>) + 'static,
     H: Fn(&mut State, M) -> Action + 'static,
     M: AnyDebug + Send + 'static,
     Res: Resource,
     State: 'static,
+    Action: 'static,
+    V: Send + 'static,
 {
     const {
         assert!(
@@ -127,23 +115,17 @@ pub fn worker_raw<M, V, S, F, H, State, Action, Fut>(
     init_future: F,
     store_sender: S,
     on_response: H,
-) -> Worker<
-    State,
-    Action,
-    F,
-    H,
-    M,
-    impl Fn(&mut State, &mut Environment, UnboundedSender<V>) -> bool + 'static,
-    V,
->
+) -> impl View<State, Action, ViewCtx, Element = NoElement>
 where
     // TODO(DJMcNab): Accept app_state here
-    F: Fn(MessageProxy<M>, UnboundedReceiver<V>) -> Fut,
+    F: Fn(MessageProxy<M>, UnboundedReceiver<V>) -> Fut + 'static,
     Fut: Future<Output = ()> + Send + 'static,
     S: Fn(&mut State, UnboundedSender<V>) + 'static,
     H: Fn(&mut State, M) -> Action + 'static,
     M: AnyDebug + Send + 'static,
     State: 'static,
+    Action: 'static,
+    V: Send + 'static,
 {
     Worker {
         init_future,
@@ -212,7 +194,7 @@ where
         }
     }
 
-    fn teardown(&self, handle: &mut Self::ViewState, _: &mut ViewCtx, _: Mut<'_, Self::Element>) {
+    fn teardown(&self, handle: &mut Self::ViewState, _: &mut ViewCtx, (): Mut<'_, Self::Element>) {
         if let Some(handle) = handle.take() {
             handle.abort();
         }

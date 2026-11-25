@@ -34,7 +34,7 @@ use crate::{Pod, TextAlign, ViewCtx};
 /// ```
 pub fn label(label: impl Into<ArcStr>) -> Label {
     Label {
-        label: label.into(),
+        text: label.into(),
         text_alignment: TextAlign::default(),
         text_size: masonry::theme::TEXT_SIZE_NORMAL,
         weight: FontWeight::NORMAL,
@@ -46,12 +46,12 @@ pub fn label(label: impl Into<ArcStr>) -> Label {
     }
 }
 
-/// The [`View`] created by [`label`] from a text which `impl Into<`[`ArcStr`]`>`.
+/// The [`View`] created by [`label`] from text convertible to [`ArcStr`].
 ///
 /// See `label` documentation for more context.
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct Label {
-    label: ArcStr,
+    text: ArcStr,
     text_alignment: TextAlign,
     text_size: f32,
     weight: FontWeight,
@@ -65,45 +65,45 @@ pub struct Label {
 
 impl Label {
     /// Sets text alignment: `Start`, `Middle`, `End` or `Justified`.
-    pub fn text_alignment(mut self, text_alignment: TextAlign) -> Self {
+    pub const fn text_alignment(mut self, text_alignment: TextAlign) -> Self {
         self.text_alignment = text_alignment;
         self
     }
 
     /// Sets text size.
     #[doc(alias = "font_size")]
-    pub fn text_size(mut self, text_size: f32) -> Self {
+    pub const fn text_size(mut self, text_size: f32) -> Self {
         self.text_size = text_size;
         self
     }
 
     /// Sets font weight.
-    pub fn weight(mut self, weight: FontWeight) -> Self {
+    pub const fn weight(mut self, weight: FontWeight) -> Self {
         self.weight = weight;
         self
     }
 
     /// Sets whether [hinting](https://en.wikipedia.org/wiki/Font_hinting) will be used for this label.
-    pub fn enable_hinting(mut self, enable_hinting: bool) -> Self {
+    pub const fn enable_hinting(mut self, enable_hinting: bool) -> Self {
         self.enable_hinting = enable_hinting;
         self
     }
 
     /// Sets line height.
-    pub fn line_height(mut self, line_height: LineHeight) -> Self {
+    pub const fn line_height(mut self, line_height: LineHeight) -> Self {
         self.line_height = line_height;
         self
     }
 
     /// Sets font tracking width.
     #[doc(alias = "tracking")]
-    pub fn letter_spacing(mut self, letter_spacing: f32) -> Self {
+    pub const fn letter_spacing(mut self, letter_spacing: f32) -> Self {
         self.letter_spacing = letter_spacing;
         self
     }
 
     /// Sets word spacing width.
-    pub fn word_spacing(mut self, word_spacing: f32) -> Self {
+    pub const fn word_spacing(mut self, word_spacing: f32) -> Self {
         self.word_spacing = word_spacing;
         self
     }
@@ -132,9 +132,9 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for Label {
     type Element = Pod<widgets::Label>;
     type ViewState = ();
 
-    fn build(&self, ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
-        let pod = ctx.create_pod(
-            widgets::Label::new(self.label.clone())
+    fn build(&self, _ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
+        let pod = Pod::new(
+            widgets::Label::new(self.text.clone())
                 .with_text_alignment(self.text_alignment)
                 .with_style(StyleProperty::FontSize(self.text_size))
                 .with_style(StyleProperty::FontWeight(self.weight))
@@ -155,13 +155,13 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for Label {
         mut element: Mut<'_, Self::Element>,
         _: &mut State,
     ) {
-        if prev.label != self.label {
-            widgets::Label::set_text(&mut element, self.label.clone());
+        if prev.text != self.text {
+            widgets::Label::set_text(&mut element, self.text.clone());
         }
         if prev.text_alignment != self.text_alignment {
             widgets::Label::set_text_alignment(&mut element, self.text_alignment);
         }
-        if prev.text_size != self.text_size {
+        if prev.text_size.to_bits() != self.text_size.to_bits() {
             widgets::Label::insert_style(&mut element, StyleProperty::FontSize(self.text_size));
         }
         if prev.weight != self.weight {
@@ -170,13 +170,13 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for Label {
         if prev.line_height != self.line_height {
             widgets::Label::insert_style(&mut element, StyleProperty::LineHeight(self.line_height));
         }
-        if prev.letter_spacing != self.letter_spacing {
+        if prev.letter_spacing.to_bits() != self.letter_spacing.to_bits() {
             widgets::Label::insert_style(
                 &mut element,
                 StyleProperty::LetterSpacing(self.letter_spacing),
             );
         }
-        if prev.word_spacing != self.word_spacing {
+        if prev.word_spacing.to_bits() != self.word_spacing.to_bits() {
             widgets::Label::insert_style(
                 &mut element,
                 StyleProperty::WordSpacing(self.word_spacing),

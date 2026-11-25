@@ -53,38 +53,38 @@ impl<State, Action> Prose<State, Action> {
     /// Set the text's color.
     ///
     /// This overwrites the default `ContentColor` property for the inner `TextArea` widget.
-    pub fn text_color(mut self, color: Color) -> Self {
+    pub const fn text_color(mut self, color: Color) -> Self {
         self.text_color = Some(color);
         self
     }
 
     /// Set the [text alignment](https://en.wikipedia.org/wiki/Typographic_alignment) of the text.
-    pub fn text_alignment(mut self, text_alignment: TextAlign) -> Self {
+    pub const fn text_alignment(mut self, text_alignment: TextAlign) -> Self {
         self.text_alignment = text_alignment;
         self
     }
 
     /// Set the font size of the text.
     #[doc(alias = "font_size")]
-    pub fn text_size(mut self, text_size: f32) -> Self {
+    pub const fn text_size(mut self, text_size: f32) -> Self {
         self.text_size = text_size;
         self
     }
 
     /// Set how the text is broken when the content is too wide for its container.
-    pub fn line_break_mode(mut self, line_break_mode: LineBreaking) -> Self {
+    pub const fn line_break_mode(mut self, line_break_mode: LineBreaking) -> Self {
         self.line_break_mode = line_break_mode;
         self
     }
 
     /// Sets font weight.
-    pub fn weight(mut self, weight: FontWeight) -> Self {
+    pub const fn weight(mut self, weight: FontWeight) -> Self {
         self.weight = weight;
         self
     }
 }
 
-fn line_break_clips(linebreaking: LineBreaking) -> bool {
+const fn line_break_clips(linebreaking: LineBreaking) -> bool {
     matches!(linebreaking, LineBreaking::Clip | LineBreaking::WordWrap)
 }
 
@@ -93,7 +93,7 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for Prose<Sta
     type Element = Pod<widgets::Prose>;
     type ViewState = ();
 
-    fn build(&self, ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
+    fn build(&self, _ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
         let text_area = widgets::TextArea::new_immutable(&self.content)
             .with_text_alignment(self.text_alignment)
             .with_style(StyleProperty::FontSize(self.text_size))
@@ -108,7 +108,7 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for Prose<Sta
         }
         let text_area = NewWidget::new(text_area).with_props(props);
 
-        let pod = ctx.create_pod(
+        let pod = Pod::new(
             widgets::Prose::from_text_area(text_area)
                 .with_clip(line_break_clips(self.line_break_mode)),
         );
@@ -141,7 +141,7 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for Prose<Sta
         if prev.text_alignment != self.text_alignment {
             widgets::TextArea::set_text_alignment(&mut text_area, self.text_alignment);
         }
-        if prev.text_size != self.text_size {
+        if prev.text_size.to_bits() != self.text_size.to_bits() {
             widgets::TextArea::insert_style(
                 &mut text_area,
                 StyleProperty::FontSize(self.text_size),

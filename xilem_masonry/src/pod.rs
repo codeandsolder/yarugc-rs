@@ -47,6 +47,7 @@ impl<W: Widget + FromDynWidget + ?Sized> Pod<W> {
     ///
     /// Convert a `Pod` pointing to a widget of a specific concrete type
     /// `Pod` pointing to a `dyn Widget`.
+    #[must_use = "Use the returned value."]
     pub fn erased(self) -> Pod<dyn Widget> {
         Pod {
             new_widget: self.new_widget.erased(),

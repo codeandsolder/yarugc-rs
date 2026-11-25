@@ -150,7 +150,7 @@ pub struct Button<State, Action, F, V> {
 
 impl<State, Action, F, V> Button<State, Action, F, V> {
     /// Set the disabled state of the widget.
-    pub fn disabled(mut self, disabled: bool) -> Self {
+    pub const fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
@@ -159,7 +159,7 @@ impl<State, Action, F, V> Button<State, Action, F, V> {
 /// Use a distinctive number here, to be able to catch bugs.
 /// In case the generational-id view path in `View::Message` leads to the wrong view.
 /// This is a randomly generated 32 bit number - 3502359742 in decimal.
-const BUTTON_CONTENT_VIEW_ID: ViewId = ViewId::new(0xd0c1c4be);
+const BUTTON_CONTENT_VIEW_ID: ViewId = ViewId::new(0xd0c1_c4be);
 
 impl<State, Action, F, V> ViewMarker for Button<State, Action, F, V> {}
 impl<F, V, State, Action> View<State, Action, ViewCtx> for Button<State, Action, F, V>
@@ -177,8 +177,8 @@ where
             View::<State, Action, _>::build(&self.child, ctx, app_state)
         });
         (
-            ctx.with_action_widget(|ctx| {
-                let mut pod = ctx.create_pod(widgets::Button::new(child.new_widget));
+            ctx.with_action_widget({
+                let mut pod = Pod::new(widgets::Button::new(child.new_widget));
                 pod.new_widget.options.disabled = self.disabled;
                 pod
             }),
@@ -229,17 +229,17 @@ where
                 self.child
                     .message(view_state, message, child_element, app_state)
             }
-            None => match message.take_message::<ButtonPress>() {
-                Some(press) => (self.callback)(app_state, press.button),
-                None => {
+            None => {
+                let Some(press) = message.take_message::<ButtonPress>() else {
                     // TODO: Panic?
                     tracing::error!(
                         "Wrong message type in Button::message: {message:?} expected {}",
                         type_name::<ButtonPress>()
                     );
-                    MessageResult::Stale
-                }
-            },
+                    return MessageResult::Stale;
+                };
+                (self.callback)(app_state, press.button)
+            }
             _ => {
                 tracing::warn!("Got unexpected id path in Button::message");
                 MessageResult::Stale

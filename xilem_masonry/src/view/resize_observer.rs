@@ -81,16 +81,15 @@ pub struct ResizeObserver<V, F, State, Action = ()> {
 
 // Use a distinctive number here, to be able to catch bugs.
 /// This is a randomly generated 32 bit number - 2850384319 in decimal.
-const RESIZE_OBSERVER_CONTENT_VIEW_ID: ViewId = ViewId::new(0xa9e569bf);
+const RESIZE_OBSERVER_CONTENT_VIEW_ID: ViewId = ViewId::new(0xa9e5_69bf);
 
 impl<V, F, State, Action> ViewMarker for ResizeObserver<V, F, State, Action> {}
 impl<V, F, State, Action> View<State, Action, ViewCtx> for ResizeObserver<V, F, State, Action>
 where
     State: 'static,
     Action: 'static,
-    F: 'static,
     V: WidgetView<State, Action>,
-    F: Fn(&mut State, Size) -> Action,
+    F: Fn(&mut State, Size) -> Action + 'static,
 {
     type Element = Pod<widgets::ResizeObserver>;
     type ViewState = V::ViewState;
@@ -100,7 +99,7 @@ where
             self.inner.build(ctx, app_state)
         });
         (
-            ctx.with_action_widget(|_| {
+            ctx.with_action_widget({
                 let widget = widgets::ResizeObserver::new(child.new_widget);
                 Pod::new_with_props(widget, Dimensions::MAX)
             }),
@@ -148,12 +147,13 @@ where
                 self.inner
                     .message(view_state, message, child_element, app_state)
             }
-            None => match message.take_message::<LayoutChanged>() {
-                Some(_) => MessageResult::Action((self.on_resize)(
-                    app_state,
-                    element.ctx.content_box().size(),
-                )),
-                None => {
+            None => {
+                if message.take_message::<LayoutChanged>().is_some() {
+                    MessageResult::Action((self.on_resize)(
+                        app_state,
+                        element.ctx.content_box().size(),
+                    ))
+                } else {
                     // TODO: Panic?
                     tracing::error!(
                         "Wrong message type in ResizeObserver::message: {message:?} expected {}",
@@ -161,7 +161,7 @@ where
                     );
                     MessageResult::Stale
                 }
-            },
+            }
             _ => {
                 tracing::warn!(
                     ?message,

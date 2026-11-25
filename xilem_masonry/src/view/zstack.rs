@@ -32,7 +32,7 @@ use crate::{Pod, ViewCtx, WidgetView};
 ///     ))
 /// }
 /// ```
-pub fn zstack<State: 'static, Action, Seq: ZStackSequence<State, Action>>(
+pub const fn zstack<State: 'static, Action, Seq: ZStackSequence<State, Action>>(
     sequence: Seq,
 ) -> ZStack<Seq> {
     ZStack {
@@ -93,7 +93,7 @@ where
         for child in elements.drain() {
             widget = widget.with(child.widget.new_widget, child.alignment);
         }
-        let pod = ctx.create_pod(widget);
+        let pod = Pod::new(widget);
         (
             pod,
             ZStackState {
@@ -275,7 +275,7 @@ pub struct ZStackSplice<'w, 's> {
 }
 
 impl<'w, 's> ZStackSplice<'w, 's> {
-    fn new(
+    const fn new(
         element: WidgetMut<'w, widgets::ZStack>,
         scratch: &'s mut AppendVec<ZStackElement>,
     ) -> Self {

@@ -59,6 +59,7 @@ pub fn grid<State: 'static, Action, Seq: GridSequence<State, Action>>(
 /// Helper function for quickly creating `n` tracks with the given `size`.
 ///
 /// Analogous to CSS `repeat(n, size)`.
+#[must_use = "Use the returned value."]
 pub fn repeat_tracks(n: usize, size: GridTrackSize) -> impl GridTracks {
     hidden::CloneTracks(std::iter::repeat_n(size, n))
 }
@@ -220,7 +221,7 @@ where
         for element in elements.drain() {
             widget = widget.with(element.child.new_widget, element.params);
         }
-        let pod = ctx.create_pod(widget);
+        let pod = Pod::new(widget);
         (
             pod,
             GridState {
@@ -412,7 +413,10 @@ struct GridSplice<'w, 's> {
 }
 
 impl<'w, 's> GridSplice<'w, 's> {
-    fn new(element: WidgetMut<'w, widgets::Grid>, scratch: &'s mut AppendVec<GridElement>) -> Self {
+    const fn new(
+        element: WidgetMut<'w, widgets::Grid>,
+        scratch: &'s mut AppendVec<GridElement>,
+    ) -> Self {
         Self {
             idx: 0,
             element,
