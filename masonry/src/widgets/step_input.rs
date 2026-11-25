@@ -554,15 +554,8 @@ impl<T: Steppable> StepInput<T> {
     ///
     /// Panics if `base` is less than `min` or greater than `max` and debug assertions are enabled.
     pub fn set_base(this: &mut WidgetMut<'_, Self>, base: T) {
-        let modified = this.widget.set_base_impl(base);
-        if modified {
-            let display_value = this.widget.display_value(base);
-            if let Some(label) = this.widget.label.as_mut() {
-                this.ctx.mutate_child_later(label, move |mut label| {
-                    Label::set_text(&mut label, display_value);
-                });
-                this.ctx.request_layout();
-            }
+        if this.widget.set_base_impl(base) {
+            Self::refresh_display(this);
         }
     }
 
@@ -578,9 +571,11 @@ impl<T: Steppable> StepInput<T> {
             debug_panic!("set_step: `step` >= `T::min_step` assert failed");
             return;
         }
-        this.widget.step = step;
-        // The step changing means we also need to rebase and reset ticks
-        Self::set_base(this, this.widget.value);
+        if this.widget.step != step {
+            this.widget.step = step;
+            // Only a changed step requires resetting the tick origin.
+            Self::set_base(this, this.widget.value);
+        }
     }
 
     /// Set a new `snap` value.
@@ -613,18 +608,24 @@ impl<T: Steppable> StepInput<T> {
             debug_panic!("set_bounds: `min` <= `max` assert failed");
             return;
         }
-        this.widget.min = min;
-        this.widget.max = max;
-        // Make sure the base value and the active value are within bounds.
-        // If not, just rebase at the boundary.
-        if this.widget.base < min || this.widget.value < min {
-            Self::set_base(this, min);
-        } else if this.widget.base > max || this.widget.value > max {
-            Self::set_base(this, max);
-        } else {
-            // All good, but still need to calculate new tick bounds
-            this.widget.calculate_tick_bounds();
+        let widget = &mut this.widget;
+        if widget.min == min && widget.max == max {
+            return;
         }
+        widget.min = min;
+        widget.max = max;
+        let value = Self::clamp_value(widget.value, min, max);
+        // Preserve the selected value when the previous tick origin leaves the
+        // range. Only clamp the selection itself when it is out of bounds.
+        if widget.base < min || widget.base > max || value != widget.value {
+            widget.set_base_impl(value);
+        } else {
+            widget.calculate_tick_bounds();
+            if widget.ticks < widget.min_ticks || widget.ticks > widget.max_ticks {
+                widget.set_base_impl(value);
+            }
+        }
+        Self::refresh_display(this);
     }
 
     /// Set a new `wrap` value.
@@ -632,8 +633,11 @@ impl<T: Steppable> StepInput<T> {
     /// Wrap determines whether the values should form an infinite circle,
     /// where increasing above `max` results in `min` and
     /// decreasing below `min` results in `max`.
-    pub const fn set_wrap(this: &mut WidgetMut<'_, Self>, wrap: bool) {
-        this.widget.wrap = wrap;
+    pub fn set_wrap(this: &mut WidgetMut<'_, Self>, wrap: bool) {
+        if this.widget.wrap != wrap {
+            this.widget.wrap = wrap;
+            this.ctx.request_accessibility_update();
+        }
     }
 
     /// Set a new custom `display` function.
@@ -649,14 +653,17 @@ impl<T: Steppable> StepInput<T> {
         F: Fn(StepState<T>) -> String + 'static,
     {
         this.widget.display = Some(Box::new(display));
-        // Refresh the displayed value too
+        Self::refresh_display(this);
+    }
+
+    fn refresh_display(this: &mut WidgetMut<'_, Self>) {
         let display_value = this.widget.display_value(this.widget.value);
-        if let Some(label) = this.widget.label.as_mut() {
-            this.ctx.mutate_child_later(label, move |mut label| {
-                Label::set_text(&mut label, display_value);
-            });
-            this.ctx.request_layout();
+        if let Some(label) = &this.widget.label
+            && let Some(mut label) = this.ctx.get_mut(label.id())
+        {
+            Label::set_text(&mut label, display_value);
         }
+        this.ctx.request_accessibility_update();
     }
 }
 
@@ -783,8 +790,8 @@ impl<T: Steppable> StepInput<T> {
             ctx.mutate_child_later(label, move |mut label| {
                 Label::set_text(&mut label, display_value);
             });
-            ctx.request_layout();
         }
+        ctx.request_accessibility_update();
         ctx.submit_action::<A>(Step { value: self.value });
     }
 
@@ -844,7 +851,7 @@ impl<T: Steppable> StepInput<T> {
         self.max_ticks = Self::steps_to_positive_ticks(max_steps);
     }
 
-    /// Sets a new `base` value and returns `true` if it actually changed anything.
+    /// Rebases the tick origin and returns whether the requested value was valid.
     ///
     /// # Panics
     ///
@@ -1144,19 +1151,15 @@ impl<T: Steppable> Widget for StepInput<T> {
         _props: &mut PropertiesMut<'_>,
         event: &AccessEvent,
     ) {
-        // TODO: Should we support ctrl/cmd snap modifier here?
-
-        let mut value_changed = false;
-
-        match event.action {
-            Action::Increment => {
-                value_changed = self.next_step();
-            }
-            Action::Decrement => {
-                value_changed = self.prev_step();
-            }
-            _ => (),
+        if ctx.target() != ctx.widget_id() {
+            return;
         }
+        let value_changed = match event.action {
+            Action::Increment => self.next_step(),
+            Action::Decrement => self.prev_step(),
+            _ => return,
+        };
+        ctx.set_handled();
 
         // If the value was changed, we need to handle it
         if value_changed {
@@ -1170,6 +1173,9 @@ impl<T: Steppable> Widget for StepInput<T> {
         _props: &mut PropertiesMut<'_>,
         event: &TextEvent,
     ) {
+        if !ctx.is_focus_target() {
+            return;
+        }
         match event {
             TextEvent::Keyboard(ke) => {
                 let mut value_changed = false;
@@ -1200,6 +1206,7 @@ impl<T: Steppable> Widget for StepInput<T> {
                     }
                     Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowDown) => {
                         if ke.state.is_down() {
+                            ctx.set_handled();
                             value_changed = if snap {
                                 self.prev_snap()
                             } else {
@@ -1209,6 +1216,7 @@ impl<T: Steppable> Widget for StepInput<T> {
                     }
                     Key::Named(NamedKey::ArrowRight | NamedKey::ArrowUp) => {
                         if ke.state.is_down() {
+                            ctx.set_handled();
                             value_changed = if snap {
                                 self.next_snap()
                             } else {
@@ -1218,16 +1226,23 @@ impl<T: Steppable> Widget for StepInput<T> {
                     }
                     Key::Named(NamedKey::Home) => {
                         if ke.state.is_down() {
-                            value_changed = self.set_base_impl(self.min);
+                            ctx.set_handled();
+                            let previous = self.value;
+                            self.set_base_impl(self.min);
+                            value_changed = self.value != previous;
                         }
                     }
                     Key::Named(NamedKey::End) => {
                         if ke.state.is_down() {
-                            value_changed = self.set_base_impl(self.max);
+                            ctx.set_handled();
+                            let previous = self.value;
+                            self.set_base_impl(self.max);
+                            value_changed = self.value != previous;
                         }
                     }
                     _ => match ke.code {
                         Code::NumpadSubtract if ke.state.is_down() => {
+                            ctx.set_handled();
                             value_changed = if snap {
                                 self.prev_snap()
                             } else {
@@ -1235,6 +1250,7 @@ impl<T: Steppable> Widget for StepInput<T> {
                             }
                         }
                         Code::NumpadAdd if ke.state.is_down() => {
+                            ctx.set_handled();
                             value_changed = if snap {
                                 self.next_snap()
                             } else {
@@ -1271,12 +1287,16 @@ impl<T: Steppable> Widget for StepInput<T> {
                 self.drag_start = Some(pos);
                 ctx.capture_pointer();
                 ctx.request_focus();
+                ctx.set_handled();
 
                 // TODO: Lock and hide the pointer during a slide.
                 //       https://github.com/linebender/xilem/issues/850
             }
             PointerEvent::Move(pu) => {
                 self.handle_pointer_move(ctx, pu);
+                if ctx.is_pointer_capture_target() {
+                    ctx.set_handled();
+                }
             }
             PointerEvent::Cancel(_pi) => {
                 self.slide_last = None;
@@ -1284,12 +1304,16 @@ impl<T: Steppable> Widget for StepInput<T> {
                 ctx.request_paint_only();
             }
             // We only care about primary button and touch
-            PointerEvent::Up(pbe) if pbe.button.is_none_or(|btn| btn == PointerButton::Primary) => {
+            PointerEvent::Up(pbe)
+                if ctx.is_pointer_capture_target()
+                    && pbe.button.is_none_or(|btn| btn == PointerButton::Primary) =>
+            {
+                ctx.set_handled();
                 // Regular click handling happens only if:
                 // * There is no slide in progress
                 // * The button was previously pressed down on us (active)
                 // * The pointer is still on us (hovered)
-                if self.slide_last.is_none() && ctx.is_active() && ctx.is_hovered() {
+                if self.drag_start.is_some() && self.slide_last.is_none() && ctx.is_hovered() {
                     let content_box_center_x = ctx.content_box().center().x;
                     let local_x = ctx.local_position(pbe.state.position).x;
 
@@ -1367,6 +1391,7 @@ impl<T: Steppable> Widget for StepInput<T> {
                 let display_value = self.display_value(self.value);
                 self.label = Some(
                     Label::new(display_value)
+                        .accessibility_hidden(true)
                         .prepare()
                         .with_props(*color)
                         .into_pod(),
@@ -1380,7 +1405,15 @@ impl<T: Steppable> Widget for StepInput<T> {
                 }
                 ctx.request_paint_only();
             }
-            Update::DisabledChanged(_) | Update::HoveredChanged(_) => {
+            Update::DisabledChanged(true)
+            | Update::StashedChanged(true)
+            | Update::FocusChanged(false) => {
+                self.slide_last = None;
+                self.drag_start = None;
+                self.gearing = SlideGearing::default();
+                ctx.request_paint_only();
+            }
+            Update::DisabledChanged(false) | Update::HoveredChanged(_) => {
                 ctx.request_paint_only();
             }
             _ => (),
@@ -1525,8 +1558,14 @@ impl<T: Steppable> Widget for StepInput<T> {
         // NOTE: Can't set numeric value/min/max/step because AccessKit only seems to support f64.
 
         node.set_value(self.display_value(self.value));
-        node.add_action(Action::Increment);
-        node.add_action(Action::Decrement);
+        if self.min < self.max {
+            if self.wrap || self.value < self.max {
+                node.add_action(Action::Increment);
+            }
+            if self.wrap || self.value > self.min {
+                node.add_action(Action::Decrement);
+            }
+        }
 
         // TODO: Add support for SetValue when we gain edit support.
         //       Not trivial, because the value needs to satisfy all rules.
@@ -1538,10 +1577,6 @@ impl<T: Steppable> Widget for StepInput<T> {
     }
 
     fn accepts_focus(&self) -> bool {
-        true
-    }
-
-    fn accepts_text_input(&self) -> bool {
         true
     }
 
@@ -1947,6 +1982,90 @@ mod tests {
     use crate::testing::{TestHarness, assert_render_snapshot};
     use crate::theme::test_property_set;
     use crate::widgets::Flex;
+
+    #[test]
+    fn model_updates_preserve_selection_and_refresh_display() {
+        let widget = StepInput::new(0, 2, 0, 10)
+            .with_display(|state| {
+                format!(
+                    "{}: {}..={} / {}",
+                    state.value, state.min, state.max, state.step
+                )
+            })
+            .prepare();
+        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (240, 40));
+        let id = harness.root_id();
+        harness.focus_on(Some(id));
+        for value in [2, 4] {
+            harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::ArrowRight)));
+            assert_eq!(
+                harness.pop_action::<Step<i32>>().unwrap(),
+                Some((Step { value }, id))
+            );
+        }
+        harness
+            .edit_root_widget(|mut widget| {
+                StepInput::set_bounds(&mut widget, 3, 8);
+                StepInput::set_step(&mut widget, 3);
+            })
+            .unwrap();
+        let _ = harness.redraw();
+        let widget = harness.root_widget().unwrap();
+        assert_eq!(
+            widget.value, 4,
+            "a new range must retain an already valid selection"
+        );
+        let label_id = widget.label.as_ref().unwrap().id();
+        let label = harness
+            .get_widget_with_id(label_id)
+            .unwrap()
+            .downcast::<Label>()
+            .unwrap();
+        assert_eq!(label.text().as_ref(), "4: 3..=8 / 3");
+        assert_eq!(
+            harness.access_node(id).unwrap().data().value(),
+            Some("4: 3..=8 / 3")
+        );
+        assert!(
+            harness.pop_action_erased().is_none(),
+            "model updates do not emit user actions"
+        );
+
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::ArrowRight)));
+        assert_eq!(
+            harness.pop_action::<Step<i32>>().unwrap(),
+            Some((Step { value: 7 }, id))
+        );
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::End)));
+        assert_eq!(
+            harness.pop_action::<Step<i32>>().unwrap(),
+            Some((Step { value: 8 }, id))
+        );
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::End)));
+        assert!(
+            harness.pop_action_erased().is_none(),
+            "repeated endpoint activation is a no-op"
+        );
+        let _ = harness.redraw();
+        assert!(
+            !harness
+                .access_node(id)
+                .unwrap()
+                .data()
+                .supports_action(Action::Increment)
+        );
+        harness
+            .edit_root_widget(|mut widget| StepInput::set_wrap(&mut widget, true))
+            .unwrap();
+        let _ = harness.redraw();
+        assert!(
+            harness
+                .access_node(id)
+                .unwrap()
+                .data()
+                .supports_action(Action::Increment)
+        );
+    }
 
     #[test]
     fn constants() {
