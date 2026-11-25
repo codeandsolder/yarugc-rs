@@ -95,7 +95,7 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for Image {
         _: &mut State,
     ) {
         if prev.image != self.image {
-            widgets::Image::set_image_data(&mut element, self.image.clone());
+            widgets::Image::set_brush(&mut element, self.image.clone());
         }
         if self.decorative != prev.decorative {
             widgets::Image::set_decorative(&mut element, self.decorative);

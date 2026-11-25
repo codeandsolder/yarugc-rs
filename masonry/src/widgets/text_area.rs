@@ -458,6 +458,229 @@ pub enum TextAction {
     // TODO: TextCursor changed, ImeChanged
 }
 
+impl<const EDITABLE: bool> TextArea<EDITABLE> {
+    fn navigate_key(
+        &mut self,
+        ctx: &mut EventCtx<'_>,
+        key: &Key,
+        shift: bool,
+        action_mod: bool,
+    ) -> bool {
+        let (fctx, lctx) = ctx.text_contexts();
+        let mut drv = self.editor.driver(fctx, lctx);
+        match key {
+            Key::Named(NamedKey::ArrowLeft) => {
+                if action_mod {
+                    if shift {
+                        drv.select_word_left();
+                    } else {
+                        drv.move_word_left();
+                    }
+                } else if shift {
+                    drv.select_left();
+                } else {
+                    drv.move_left();
+                }
+            }
+            Key::Named(NamedKey::ArrowRight) => {
+                if action_mod {
+                    if shift {
+                        drv.select_word_right();
+                    } else {
+                        drv.move_word_right();
+                    }
+                } else if shift {
+                    drv.select_right();
+                } else {
+                    drv.move_right();
+                }
+            }
+            Key::Named(NamedKey::ArrowUp) => {
+                if shift {
+                    drv.select_up();
+                } else {
+                    drv.move_up();
+                }
+            }
+            Key::Named(NamedKey::ArrowDown) => {
+                if shift {
+                    drv.select_down();
+                } else {
+                    drv.move_down();
+                }
+            }
+            Key::Named(NamedKey::Home) => {
+                if action_mod {
+                    if shift {
+                        drv.select_to_text_start();
+                    } else {
+                        drv.move_to_text_start();
+                    }
+                } else if shift {
+                    drv.select_to_line_start();
+                } else {
+                    drv.move_to_line_start();
+                }
+            }
+            Key::Named(NamedKey::End) => {
+                if action_mod {
+                    if shift {
+                        drv.select_to_text_end();
+                    } else {
+                        drv.move_to_text_end();
+                    }
+                } else if shift {
+                    drv.select_to_line_end();
+                } else {
+                    drv.move_to_line_end();
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    fn edit_key(
+        &mut self,
+        ctx: &mut EventCtx<'_>,
+        key: &Key,
+        shift: bool,
+        action_mod: bool,
+    ) -> Option<bool> {
+        let (fctx, lctx) = ctx.text_contexts();
+        let mut edited = false;
+        match key {
+            // Cut
+            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+            Key::Character(x) if EDITABLE && action_mod && x.as_str().eq_ignore_ascii_case("x") => {
+                if let Some(text) = self.editor.selected_text()
+                    && !text.is_empty()
+                {
+                    let text = text.to_string();
+                    self.editor.driver(fctx, lctx).delete_selection();
+                    edited = true;
+                    ctx.set_clipboard(text);
+                }
+            }
+            // Copy
+            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+            Key::Character(c) if action_mod && c.as_str().eq_ignore_ascii_case("c") => {
+                if let Some(text) = self.editor.selected_text()
+                    && !text.is_empty()
+                {
+                    ctx.set_clipboard(text.to_string());
+                }
+            }
+            Key::Character(a) if action_mod && a.as_str().eq_ignore_ascii_case("a") => {
+                let mut drv = self.editor.driver(fctx, lctx);
+
+                if shift {
+                    drv.collapse_selection();
+                } else {
+                    drv.select_all();
+                }
+            }
+            Key::Named(NamedKey::Delete) if EDITABLE => {
+                let mut drv = self.editor.driver(fctx, lctx);
+                if action_mod {
+                    drv.delete_word();
+                } else {
+                    drv.delete();
+                }
+
+                edited = true;
+            }
+            Key::Named(NamedKey::Backspace) if EDITABLE => {
+                let mut drv = self.editor.driver(fctx, lctx);
+                if action_mod {
+                    drv.backdelete_word();
+                } else {
+                    drv.backdelete();
+                }
+
+                edited = true;
+            }
+            Key::Character(sp) if EDITABLE && sp.as_str() == " " => {
+                self.editor
+                    .driver(fctx, lctx)
+                    .insert_or_replace_selection(" ");
+                edited = true;
+            }
+            Key::Named(NamedKey::Enter) => {
+                let insert_newline = match self.insert_newline {
+                    InsertNewline::OnEnter => true,
+                    InsertNewline::OnShiftEnter => shift,
+                    InsertNewline::Never => false,
+                };
+                if insert_newline {
+                    let (fctx, lctx) = ctx.text_contexts();
+                    self.editor
+                        .driver(fctx, lctx)
+                        .insert_or_replace_selection("\n");
+                    edited = true;
+                } else {
+                    ctx.submit_action::<TextAction>(TextAction::Entered(self.text().to_string()));
+                }
+            }
+
+            Key::Named(NamedKey::Tab) => {
+                // Intentionally do nothing so that tabbing from a TextInput/Prose works.
+                // Note that this doesn't allow input of the tab character; we need to be more clever here at some point
+                return None;
+            }
+            Key::Named(NamedKey::Escape) => {
+                ctx.submit_action::<TextAction>(TextAction::Cancelled);
+            }
+            Key::Character(text) if EDITABLE => {
+                self.editor
+                    .driver(fctx, lctx)
+                    .insert_or_replace_selection(text);
+                edited = true;
+            }
+            _ => {
+                // Do nothing, don't set as handled.
+                return None;
+            }
+        }
+        Some(edited)
+    }
+
+    fn handle_keyboard(&mut self, ctx: &mut EventCtx<'_>, key_event: &crate::core::KeyboardEvent) {
+        if key_event.state != KeyState::Down || self.editor.is_composing() {
+            return;
+        }
+        let (shift, action_mod) = (
+            key_event.modifiers.shift(),
+            if cfg!(target_os = "macos") {
+                key_event.modifiers.meta()
+            } else {
+                key_event.modifiers.ctrl()
+            },
+        );
+        let edited = if self.navigate_key(ctx, &key_event.key, shift, action_mod) {
+            false
+        } else if let Some(edited) = self.edit_key(ctx, &key_event.key, shift, action_mod) {
+            edited
+        } else {
+            return;
+        };
+        ctx.set_handled();
+        let new_generation = self.editor.generation();
+        if new_generation != self.rendered_generation {
+            if edited {
+                ctx.submit_action::<TextAction>(TextAction::Changed(
+                    self.text().into_iter().collect(),
+                ));
+                ctx.request_layout();
+            } else {
+                ctx.request_render();
+                ctx.set_ime_area(self.ime_area());
+            }
+            self.rendered_generation = new_generation;
+        }
+    }
+}
+
 // --- MARK: IMPL WIDGET
 impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
     type Action = TextAction;
@@ -581,205 +804,7 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
         ctx.request_anim_frame();
 
         match event {
-            TextEvent::Keyboard(key_event) => {
-                if key_event.state != KeyState::Down || self.editor.is_composing() {
-                    return;
-                }
-                let (shift, action_mod) = (
-                    key_event.modifiers.shift(),
-                    if cfg!(target_os = "macos") {
-                        key_event.modifiers.meta()
-                    } else {
-                        key_event.modifiers.ctrl()
-                    },
-                );
-                let (fctx, lctx) = ctx.text_contexts();
-                // Whether the text was changed.
-                let mut edited = false;
-                match &key_event.key {
-                    // Cut
-                    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-                    Key::Character(x)
-                        if EDITABLE && action_mod && x.as_str().eq_ignore_ascii_case("x") =>
-                    {
-                        if let Some(text) = self.editor.selected_text()
-                            && !text.is_empty()
-                        {
-                            let text = text.to_string();
-                            self.editor.driver(fctx, lctx).delete_selection();
-                            edited = true;
-                            ctx.set_clipboard(text);
-                        }
-                    }
-                    // Copy
-                    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-                    Key::Character(c) if action_mod && c.as_str().eq_ignore_ascii_case("c") => {
-                        if let Some(text) = self.editor.selected_text()
-                            && !text.is_empty()
-                        {
-                            ctx.set_clipboard(text.to_string());
-                        }
-                    }
-                    Key::Character(a) if action_mod && a.as_str().eq_ignore_ascii_case("a") => {
-                        let mut drv = self.editor.driver(fctx, lctx);
-
-                        if shift {
-                            drv.collapse_selection();
-                        } else {
-                            drv.select_all();
-                        }
-                    }
-                    Key::Named(NamedKey::ArrowLeft) => {
-                        let mut drv = self.editor.driver(fctx, lctx);
-                        if action_mod {
-                            if shift {
-                                drv.select_word_left();
-                            } else {
-                                drv.move_word_left();
-                            }
-                        } else if shift {
-                            drv.select_left();
-                        } else {
-                            drv.move_left();
-                        }
-                    }
-                    Key::Named(NamedKey::ArrowRight) => {
-                        let mut drv = self.editor.driver(fctx, lctx);
-                        if action_mod {
-                            if shift {
-                                drv.select_word_right();
-                            } else {
-                                drv.move_word_right();
-                            }
-                        } else if shift {
-                            drv.select_right();
-                        } else {
-                            drv.move_right();
-                        }
-                    }
-                    Key::Named(NamedKey::ArrowUp) => {
-                        let mut drv = self.editor.driver(fctx, lctx);
-                        if shift {
-                            drv.select_up();
-                        } else {
-                            drv.move_up();
-                        }
-                    }
-                    Key::Named(NamedKey::ArrowDown) => {
-                        let mut drv = self.editor.driver(fctx, lctx);
-                        if shift {
-                            drv.select_down();
-                        } else {
-                            drv.move_down();
-                        }
-                    }
-                    Key::Named(NamedKey::Home) => {
-                        let mut drv = self.editor.driver(fctx, lctx);
-                        if action_mod {
-                            if shift {
-                                drv.select_to_text_start();
-                            } else {
-                                drv.move_to_text_start();
-                            }
-                        } else if shift {
-                            drv.select_to_line_start();
-                        } else {
-                            drv.move_to_line_start();
-                        }
-                    }
-                    Key::Named(NamedKey::End) => {
-                        let mut drv = self.editor.driver(fctx, lctx);
-                        if action_mod {
-                            if shift {
-                                drv.select_to_text_end();
-                            } else {
-                                drv.move_to_text_end();
-                            }
-                        } else if shift {
-                            drv.select_to_line_end();
-                        } else {
-                            drv.move_to_line_end();
-                        }
-                    }
-                    Key::Named(NamedKey::Delete) if EDITABLE => {
-                        let mut drv = self.editor.driver(fctx, lctx);
-                        if action_mod {
-                            drv.delete_word();
-                        } else {
-                            drv.delete();
-                        }
-
-                        edited = true;
-                    }
-                    Key::Named(NamedKey::Backspace) if EDITABLE => {
-                        let mut drv = self.editor.driver(fctx, lctx);
-                        if action_mod {
-                            drv.backdelete_word();
-                        } else {
-                            drv.backdelete();
-                        }
-
-                        edited = true;
-                    }
-                    Key::Character(sp) if EDITABLE && sp.as_str() == " " => {
-                        self.editor
-                            .driver(fctx, lctx)
-                            .insert_or_replace_selection(" ");
-                        edited = true;
-                    }
-                    Key::Named(NamedKey::Enter) => {
-                        let insert_newline = match self.insert_newline {
-                            InsertNewline::OnEnter => true,
-                            InsertNewline::OnShiftEnter => shift,
-                            InsertNewline::Never => false,
-                        };
-                        if insert_newline {
-                            let (fctx, lctx) = ctx.text_contexts();
-                            self.editor
-                                .driver(fctx, lctx)
-                                .insert_or_replace_selection("\n");
-                            edited = true;
-                        } else {
-                            ctx.submit_action::<Self::Action>(TextAction::Entered(
-                                self.text().to_string(),
-                            ));
-                        }
-                    }
-
-                    Key::Named(NamedKey::Tab) => {
-                        // Intentionally do nothing so that tabbing from a TextInput/Prose works.
-                        // Note that this doesn't allow input of the tab character; we need to be more clever here at some point
-                        return;
-                    }
-                    Key::Named(NamedKey::Escape) => {
-                        ctx.submit_action::<Self::Action>(TextAction::Cancelled);
-                    }
-                    Key::Character(text) if EDITABLE => {
-                        self.editor
-                            .driver(fctx, lctx)
-                            .insert_or_replace_selection(text);
-                        edited = true;
-                    }
-                    _ => {
-                        // Do nothing, don't set as handled.
-                        return;
-                    }
-                }
-                ctx.set_handled();
-                let new_generation = self.editor.generation();
-                if new_generation != self.rendered_generation {
-                    if edited {
-                        ctx.submit_action::<Self::Action>(TextAction::Changed(
-                            self.text().into_iter().collect(),
-                        ));
-                        ctx.request_layout();
-                    } else {
-                        ctx.request_render();
-                        ctx.set_ime_area(self.ime_area());
-                    }
-                    self.rendered_generation = new_generation;
-                }
-            }
+            TextEvent::Keyboard(key_event) => self.handle_keyboard(ctx, key_event),
 
             TextEvent::WindowFocusChange(_) => {
                 // To use a different selection color when unfocused.
