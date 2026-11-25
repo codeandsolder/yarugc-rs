@@ -67,6 +67,10 @@ fn view(state: &mut State) -> impl DomFragment<State> + use<> {
                     element.dispatch_event(&event).unwrap_throw();
                 }),
             html::div(state.count).id("count"),
+            html::div(())
+                .id("cascade")
+                .style(style("margin", if state.phase < 2 { "4px" } else { "8px" }))
+                .style(style("margin-left", "21px")),
             html::button("request")
                 .id("request")
                 .on_click(|state: &mut State, _| {

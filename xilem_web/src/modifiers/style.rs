@@ -126,23 +126,15 @@ pub struct Styles {
     idx: usize,
 }
 
-fn set_style(element: &web_sys::Element, name: &str, value: &str) {
+fn style_declaration(element: &web_sys::Element) -> Option<web_sys::CssStyleDeclaration> {
     if let Some(el) = element.dyn_ref::<web_sys::HtmlElement>() {
-        el.style().set_property(name, value).unwrap_throw();
+        Some(el.style())
     } else if let Some(el) = element.dyn_ref::<web_sys::SvgElement>() {
-        el.style().set_property(name, value).unwrap_throw();
-    } else if let Some(el) = element.dyn_ref::<web_sys::MathMlElement>() {
-        el.style().set_property(name, value).unwrap_throw();
-    }
-}
-
-fn remove_style(element: &web_sys::Element, name: &str) {
-    if let Some(el) = element.dyn_ref::<web_sys::HtmlElement>() {
-        el.style().remove_property(name).unwrap_throw();
-    } else if let Some(el) = element.dyn_ref::<web_sys::SvgElement>() {
-        el.style().remove_property(name).unwrap_throw();
-    } else if let Some(el) = element.dyn_ref::<web_sys::MathMlElement>() {
-        el.style().remove_property(name).unwrap_throw();
+        Some(el.style())
+    } else {
+        element
+            .dyn_ref::<web_sys::MathMlElement>()
+            .map(web_sys::MathMlElement::style)
     }
 }
 
@@ -160,30 +152,29 @@ impl Styles {
     /// Applies potential changes of the inline styles of an element to the underlying DOM node.
     pub fn apply_changes(this: Modifier<'_, Self>, element: &web_sys::Element) {
         let Modifier { modifier, flags } = this;
-        if flags.in_hydration() {
+        if flags.in_hydration() || (!flags.was_created() && modifier.updated.is_empty()) {
             return;
-        } else if flags.was_created() {
-            for modifier in &modifier.modifiers {
-                match modifier {
-                    StyleModifier::Remove(name) => remove_style(element, name),
-                    StyleModifier::Set(name, value) => set_style(element, name, value),
+        }
+        let Some(style) = style_declaration(element) else {
+            modifier.updated.clear();
+            return;
+        };
+
+        // CSS shorthands and longhands can overlap. A change to one name can
+        // affect any later modifier, even one whose value did not change.
+        // Remove changed/deleted properties first, then replay in view order
+        // exactly as on initial creation. Unchanged elements do no DOM work.
+        for (name, ()) in modifier.updated.drain() {
+            style.remove_property(&name).unwrap_throw();
+        }
+        for entry in &modifier.modifiers {
+            match entry {
+                StyleModifier::Remove(name) => {
+                    style.remove_property(name).unwrap_throw();
                 }
-            }
-        } else if !modifier.updated.is_empty() {
-            for entry in modifier.modifiers.iter().rev() {
-                match entry {
-                    StyleModifier::Remove(name) if modifier.updated.remove(name).is_some() => {
-                        remove_style(element, name);
-                    }
-                    StyleModifier::Set(name, value) if modifier.updated.remove(name).is_some() => {
-                        set_style(element, name, value);
-                    }
-                    _ => {}
+                StyleModifier::Set(name, value) => {
+                    style.set_property(name, value).unwrap_throw();
                 }
-            }
-            // if there's any remaining key in updated, it means these are deleted keys
-            for (name, ()) in modifier.updated.drain() {
-                remove_style(element, &name);
             }
         }
         debug_assert!(modifier.updated.is_empty());
