@@ -122,7 +122,7 @@ impl SliderState {
     ///
     /// Invalid configurations panic with debug assertions enabled. In release
     /// mode they produce a fixed zero-valued slider. For externally supplied
-    /// values use [Self::try_new] and handle validation errors.
+    /// values use [`Self::try_new`] and handle validation errors.
     #[must_use = "Use the configured slider state."]
     pub fn new(min: f64, max: f64, value: f64, step: Option<f64>) -> Self {
         Self::try_new(min, max, value, step).unwrap_or_else(|error| {
@@ -154,7 +154,7 @@ impl SliderState {
         } else {
             // Halve before subtracting when finite opposite-sign bounds have
             // a difference larger than the greatest finite float.
-            (self.value * 0.5 - self.min * 0.5) / (self.max * 0.5 - self.min * 0.5)
+            self.min.mul_add(-0.5, self.value * 0.5) / self.min.mul_add(-0.5, self.max * 0.5)
         }
     }
 
@@ -176,6 +176,18 @@ impl SliderState {
         (value.rem_euclid(step) - self.min.rem_euclid(step)).rem_euclid(step)
     }
 
+    // Round the displacement separately to preserve exact cancellation for
+    // decimal UI steps (e.g. -1 + 1000 * 0.001). Use FMA only when the
+    // intermediate displacement overflows but the final value may be finite.
+    fn grid_at_index(self, index: f64, step: f64) -> f64 {
+        let displacement = index * step;
+        if displacement.is_finite() {
+            self.min + displacement
+        } else {
+            index.mul_add(step, self.min)
+        }
+    }
+
     fn quantize(self, value: f64) -> f64 {
         let value = value.clamp(self.min, self.max);
         let Some(step) = self.step else {
@@ -186,7 +198,7 @@ impl SliderState {
         }
         let index = (value - self.min) / step;
         let grid = if index < EXACT_GRID_LIMIT {
-            index.round().mul_add(step, self.min)
+            self.grid_at_index(index.round(), step)
         } else {
             let remainder = self.grid_remainder(value, step);
             if remainder <= step * 0.5 {
@@ -215,7 +227,7 @@ impl SliderState {
         true
     }
 
-    fn increment(self, count: f64) -> f64 {
+    fn increment_candidate(self, count: f64) -> f64 {
         let step = self.step.unwrap_or_else(|| {
             if self.span().is_finite() {
                 let increment = self.span() / 100.0;
@@ -235,7 +247,7 @@ impl SliderState {
                     // The maximum is an extra endpoint if it is off-grid.
                     // Find the last grid point strictly below it.
                     let last = index.ceil() - 1.0;
-                    let last = if last.mul_add(step, self.min) >= self.max {
+                    let last = if self.grid_at_index(last, step) >= self.max {
                         last - 1.0
                     } else {
                         last
@@ -244,8 +256,8 @@ impl SliderState {
                 } else {
                     index.round()
                 };
-                return (index + count)
-                    .mul_add(step, self.min)
+                return self
+                    .grid_at_index(index + count, step)
                     .clamp(self.min, self.max);
             }
             if count < 0.0 && self.value >= self.max {
@@ -256,12 +268,16 @@ impl SliderState {
                     .clamp(self.min, self.max);
             }
         }
-        let value = count.mul_add(step, self.value).clamp(self.min, self.max);
-        if self.step.is_none() && value.to_bits() == self.value.to_bits() {
+        count.mul_add(step, self.value).clamp(self.min, self.max)
+    }
+
+    fn increment(self, count: f64) -> f64 {
+        let value = self.quantize(self.increment_candidate(count));
+        if value.to_bits() == self.value.to_bits() {
             if count > 0.0 {
-                self.value.next_up().min(self.max)
+                self.quantize(self.value.next_up().min(self.max))
             } else {
-                self.value.next_down().max(self.min)
+                self.quantize(self.value.next_down().max(self.min))
             }
         } else {
             value
@@ -285,7 +301,7 @@ impl SliderGeometry {
         }
     }
 
-    fn travel(self) -> f64 {
+    const fn travel(self) -> f64 {
         self.radius.mul_add(-2.0, self.size.width).max(0.0)
     }
 
@@ -307,7 +323,7 @@ impl Slider {
     ///
     /// # Panics
     ///
-    /// Panics for invalid configurations in debug builds; see [SliderState::new].
+    /// Panics for invalid configurations in debug builds; see [`SliderState::new`].
     #[must_use = "Use the returned value."]
     pub fn new(min: f64, max: f64, value: f64) -> Self {
         Self::from_state(SliderState::new(min, max, value, None))
@@ -323,7 +339,7 @@ impl Slider {
     ///
     /// # Panics
     ///
-    /// Panics in debug builds for an invalid step; see [SliderState::new].
+    /// Panics in debug builds for an invalid step; see [`SliderState::new`].
     #[must_use = "Use the returned value."]
     pub fn with_step(mut self, step: f64) -> Self {
         self.state = SliderState::new(self.state.min, self.state.max, self.state.value, Some(step));
@@ -775,6 +791,32 @@ mod tests {
         let fixed = SliderState::new(5.0, 5.0, 99.0, None);
         assert_eq!(fixed.progress(), 0.0);
         assert_eq!(fixed.increment(1.0), 5.0);
+    }
+
+    #[test]
+    fn decimal_grid_preserves_zero_and_sub_ulp_steps_can_advance() {
+        let state = SliderState::new(-1.0, 1.0, 0.0, Some(0.001));
+        assert_eq!(
+            state.value().to_bits(),
+            0.0_f64.to_bits(),
+            "decimal grid retains exact zero crossing"
+        );
+        let mut state = SliderState::new(1e20, 1e20 + 1e6, 1e20, Some(1.0));
+        let next = state.increment(1.0);
+        assert!(
+            state.update_value(next),
+            "a step smaller than the local ULP must still advance to the next representable value"
+        );
+        assert!(state.value() > 1e20, "the selected value must advance");
+        assert!(
+            state.update_value(state.increment(-1.0)),
+            "sub-ULP steps can also move backward"
+        );
+        assert_eq!(
+            state.value().to_bits(),
+            1e20_f64.to_bits(),
+            "decrement returns to the minimum"
+        );
     }
 
     #[test]
