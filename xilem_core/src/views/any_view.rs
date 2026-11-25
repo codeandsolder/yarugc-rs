@@ -187,208 +187,60 @@ pub struct AnyViewState {
     generation: u64,
 }
 
-impl<State, Action, Context, Element> ViewMarker for dyn AnyView<State, Action, Context, Element> {}
-impl<State, Action, Context, Element> View<State, Action, Context> for dyn AnyView<State, Action, Context, Element>
-where
-    State: 'static,
-    // Element must be `static` so it can be downcasted
-    Element: ViewElement + 'static,
-    Context: ViewPathTracker + 'static,
-    Action: 'static,
-{
-    type Element = Element;
+// Auto-trait combinations differ only in their object bounds.
+macro_rules! impl_dyn_view {
+    ($($bound:ident),*) => {
+        impl<State, Action, Context, Element> ViewMarker for dyn AnyView<State, Action, Context, Element> $(+ $bound)* {}
+        impl<State, Action, Context, Element> View<State, Action, Context> for dyn AnyView<State, Action, Context, Element> $(+ $bound)*
+        where
+            State: 'static,
+            // Element must be `static` so it can be downcasted
+            Element: ViewElement + 'static,
+            Context: ViewPathTracker + 'static,
+            Action: 'static,
+        {
+            type Element = Element;
 
-    type ViewState = AnyViewState;
+            type ViewState = AnyViewState;
 
-    fn build(&self, ctx: &mut Context, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        self.dyn_build(ctx, app_state)
-    }
+            fn build(&self, ctx: &mut Context, app_state: &mut State) -> (Self::Element, Self::ViewState) {
+                self.dyn_build(ctx, app_state)
+            }
 
-    fn rebuild(
-        &self,
-        prev: &Self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut Context,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) {
-        self.dyn_rebuild(view_state, ctx, prev, element, app_state);
-    }
+            fn rebuild(
+                &self,
+                prev: &Self,
+                view_state: &mut Self::ViewState,
+                ctx: &mut Context,
+                element: Mut<'_, Self::Element>,
+                app_state: &mut State,
+            ) {
+                self.dyn_rebuild(view_state, ctx, prev, element, app_state);
+            }
 
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut Context,
-        element: Mut<'_, Self::Element>,
-    ) {
-        self.dyn_teardown(view_state, ctx, element);
-    }
+            fn teardown(
+                &self,
+                view_state: &mut Self::ViewState,
+                ctx: &mut Context,
+                element: Mut<'_, Self::Element>,
+            ) {
+                self.dyn_teardown(view_state, ctx, element);
+            }
 
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        self.dyn_message(view_state, message, element, app_state)
-    }
+            fn message(
+                &self,
+                view_state: &mut Self::ViewState,
+                message: &mut MessageCtx,
+                element: Mut<'_, Self::Element>,
+                app_state: &mut State,
+            ) -> MessageResult<Action> {
+                self.dyn_message(view_state, message, element, app_state)
+            }
+        }
+    };
 }
 
-// TODO: IWBN if we could avoid this
-
-impl<State, Action, Context, Element> ViewMarker
-    for dyn AnyView<State, Action, Context, Element> + Send
-{
-}
-impl<State, Action, Context, Element> View<State, Action, Context>
-    for dyn AnyView<State, Action, Context, Element> + Send
-where
-    State: 'static,
-    // Element must be `static` so it can be downcasted
-    Element: ViewElement + 'static,
-    Context: ViewPathTracker + 'static,
-    Action: 'static,
-{
-    type Element = Element;
-
-    type ViewState = AnyViewState;
-
-    fn build(&self, ctx: &mut Context, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        self.dyn_build(ctx, app_state)
-    }
-
-    fn rebuild(
-        &self,
-        prev: &Self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut Context,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) {
-        self.dyn_rebuild(view_state, ctx, prev, element, app_state);
-    }
-
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut Context,
-        element: Mut<'_, Self::Element>,
-    ) {
-        self.dyn_teardown(view_state, ctx, element);
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        self.dyn_message(view_state, message, element, app_state)
-    }
-}
-
-impl<State, Action, Context, Element> ViewMarker
-    for dyn AnyView<State, Action, Context, Element> + Send + Sync
-{
-}
-impl<State, Action, Context, Element> View<State, Action, Context>
-    for dyn AnyView<State, Action, Context, Element> + Send + Sync
-where
-    State: 'static,
-    // Element must be `static` so it can be downcasted
-    Element: ViewElement + 'static,
-    Context: ViewPathTracker + 'static,
-    Action: 'static,
-{
-    type Element = Element;
-
-    type ViewState = AnyViewState;
-
-    fn build(&self, ctx: &mut Context, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        self.dyn_build(ctx, app_state)
-    }
-
-    fn rebuild(
-        &self,
-        prev: &Self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut Context,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) {
-        self.dyn_rebuild(view_state, ctx, prev, element, app_state);
-    }
-
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut Context,
-        element: Mut<'_, Self::Element>,
-    ) {
-        self.dyn_teardown(view_state, ctx, element);
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        self.dyn_message(view_state, message, element, app_state)
-    }
-}
-
-impl<State, Action, Context, Element> ViewMarker
-    for dyn AnyView<State, Action, Context, Element> + Sync
-{
-}
-impl<State, Action, Context, Element> View<State, Action, Context>
-    for dyn AnyView<State, Action, Context, Element> + Sync
-where
-    State: 'static,
-    // Element must be `static` so it can be downcasted
-    Element: ViewElement + 'static,
-    Context: ViewPathTracker + 'static,
-    Action: 'static,
-{
-    type Element = Element;
-
-    type ViewState = AnyViewState;
-
-    fn build(&self, ctx: &mut Context, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        self.dyn_build(ctx, app_state)
-    }
-
-    fn rebuild(
-        &self,
-        prev: &Self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut Context,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) {
-        self.dyn_rebuild(view_state, ctx, prev, element, app_state);
-    }
-
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut Context,
-        element: Mut<'_, Self::Element>,
-    ) {
-        self.dyn_teardown(view_state, ctx, element);
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        self.dyn_message(view_state, message, element, app_state)
-    }
-}
+impl_dyn_view!();
+impl_dyn_view!(Send);
+impl_dyn_view!(Sync);
+impl_dyn_view!(Send, Sync);
