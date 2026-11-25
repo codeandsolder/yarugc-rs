@@ -148,7 +148,7 @@ impl Widget for Image {
             f64::from(self.brush.image.width),
             f64::from(self.brush.image.height),
         );
-        if image_size.is_empty() || content_box.is_empty() {
+        if image_size.is_zero_area() || content_box.is_zero_area() {
             return;
         }
         let transform = object_fit.affine(content_box, image_size.to_rect());
