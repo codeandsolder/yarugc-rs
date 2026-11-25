@@ -25,7 +25,7 @@ enum MathOperator {
 }
 
 impl MathOperator {
-    fn as_str(self) -> &'static str {
+    const fn as_str(self) -> &'static str {
         match self {
             Self::Add => "+",
             Self::Subtract => "\u{2212}",
@@ -69,8 +69,8 @@ impl Calculator {
         self.current_num_index = 0;
         self.result = None;
         self.operation = None;
-        for num in self.numbers.iter_mut() {
-            *num = "".into();
+        for num in &mut self.numbers {
+            num.clear();
         }
     }
 
@@ -80,7 +80,7 @@ impl Calculator {
             self.clear_all();
             return;
         }
-        self.set_current_number("".into());
+        self.set_current_number(String::new());
     }
 
     fn on_entered_digit(&mut self, digit: &str) {
@@ -124,21 +124,22 @@ impl Calculator {
                 // Not ready yet. Left number needed.
                 // invalid action
                 return;
-            } else {
-                self.current_num_index = 1;
             }
+            self.current_num_index = 1;
         }
         self.operation = Some(operator);
     }
 
     /// For instances when you continue working with the prior result.
     fn move_result_to_left(&mut self) {
+        let Some(result) = self.result.take() else {
+            return;
+        };
         self.clear_current_entry_on_input = true;
-        self.numbers[0] = self.result.clone().expect("expected result");
-        self.numbers[1] = "".into();
+        self.numbers[0] = result;
+        self.numbers[1].clear();
         self.operation = None;
         self.current_num_index = 0; // Moved to left
-        self.result = None; // It's moved, so remove the result.
     }
 
     fn on_equals(&mut self) {
@@ -146,18 +147,20 @@ impl Calculator {
         if self.numbers[0].is_empty() || self.numbers[1].is_empty() {
             // invalid action
             return; // Just abort.
-        } else if self.result.is_some() {
-            // Repeat the operation using the prior result on the left.
-            self.numbers[0] = self.result.clone().unwrap();
+        }
+        let Some(operation) = self.operation else {
+            return;
+        };
+        if let Some(result) = &self.result {
+            self.numbers[0].clone_from(result);
         }
         self.current_num_index = 0;
         let num1 = self.numbers[0].parse::<f64>();
         let num2 = self.numbers[1].parse::<f64>();
         // Display format error or display the result of the operation.
         self.result = Some(match (num1, num2) {
-            (Ok(num1), Ok(num2)) => self.operation.unwrap().perform_op(num1, num2).to_string(),
-            (Err(err), _) => err.to_string(),
-            (_, Err(err)) => err.to_string(),
+            (Ok(num1), Ok(num2)) => operation.perform_op(num1, num2).to_string(),
+            (Err(err), _) | (_, Err(err)) => err.to_string(),
         });
     }
 
@@ -168,7 +171,7 @@ impl Calculator {
         }
         let mut num = self.get_current_number();
         if !num.is_empty() {
-            num.remove(num.len() - 1);
+            num.pop();
             self.set_current_number(num);
         } // else, invalid action
     }
@@ -298,7 +301,7 @@ pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
     let data = Calculator {
         current_num_index: 0,
         clear_current_entry_on_input: false,
-        numbers: ["".into(), "".into()],
+        numbers: [String::new(), String::new()],
         result: None,
         operation: None,
     };

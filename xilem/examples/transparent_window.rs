@@ -6,7 +6,7 @@
 use masonry::layout::AsUnit;
 use xilem::RunError;
 use xilem::style::Style;
-use xilem::view::*;
+use xilem::view::{FlexSpacer, MainAxisAlignment, flex_col, flex_row, text_button};
 use xilem::{Color, EventLoop, WindowId, WindowView, Xilem};
 
 #[derive(Debug, Clone)]

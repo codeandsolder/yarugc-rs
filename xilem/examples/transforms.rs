@@ -64,7 +64,7 @@ impl TransformsGame {
 
         let controls = (
             text_button("↶", |this: &mut Self| {
-                this.rotation -= PI * 0.125;
+                this.rotation = PI.mul_add(-0.125, this.rotation);
             })
             .grid_params(GridParams::pos(0, 0)),
             text_button("↑", |this: &mut Self| {
@@ -72,7 +72,7 @@ impl TransformsGame {
             })
             .grid_params(GridParams::pos(1, 0)),
             text_button("↷", |this: &mut Self| {
-                this.rotation += PI * 0.125;
+                this.rotation = PI.mul_add(0.125, this.rotation);
             })
             .grid_params(GridParams::pos(2, 0)),
             text_button("←", |this: &mut Self| {
@@ -85,7 +85,7 @@ impl TransformsGame {
             .grid_params(GridParams::pos(2, 1)),
             text_button("-", |this: &mut Self| {
                 // 2 ^ (1/3) for 3 clicks to reach the target.
-                this.scale /= 1.2599210498948732;
+                this.scale /= 1.259_921_049_894_873_2;
             })
             .grid_params(GridParams::pos(0, 2)),
             text_button("↓", |this: &mut Self| {
@@ -93,7 +93,7 @@ impl TransformsGame {
             })
             .grid_params(GridParams::pos(1, 2)),
             text_button("+", |this: &mut Self| {
-                this.scale *= 1.2599210498948732;
+                this.scale *= 1.259_921_049_894_873_2;
             })
             .grid_params(GridParams::pos(2, 2)),
         );

@@ -51,12 +51,12 @@ fn color_block(
     vertical_count: u16,
     horizontal_count: u16,
 ) -> impl WidgetView<AppState> + use<> {
-    let row_idx = row_idx as f32;
-    let col_idx = col_idx as f32;
-    let vertical_count = vertical_count as f32;
-    let horizontal_count = horizontal_count as f32;
+    let row_idx = f32::from(row_idx);
+    let col_idx = f32::from(col_idx);
+    let vertical_count = f32::from(vertical_count);
+    let horizontal_count = f32::from(horizontal_count);
 
-    sized_box(label(format!("r{}c{}", row_idx, col_idx)))
+    sized_box(label(format!("r{row_idx}c{col_idx}")))
         .dims(50.px())
         .background_color(AlphaColor::new([
             row_idx / vertical_count,
@@ -66,7 +66,7 @@ fn color_block(
         ]))
 }
 
-fn grid_blocks(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
+fn grid_blocks(state: &AppState) -> impl WidgetView<AppState> + use<> {
     let (vertical_count, horizontal_count) = (state.vertical_count, state.horizontal_count);
 
     grid(
@@ -74,7 +74,7 @@ fn grid_blocks(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
             .flat_map(|row_idx| {
                 (0..horizontal_count).map(move |col_idx| {
                     color_block(row_idx, col_idx, vertical_count, horizontal_count)
-                        .grid_params(GridParams::pos(row_idx, col_idx))
+                        .grid_params(GridParams::pos(col_idx, row_idx))
                 })
             })
             .collect::<Vec<_>>(),
@@ -87,7 +87,7 @@ fn grid_blocks(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
     .gap(10.px())
 }
 
-fn flex_blocks(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
+fn flex_blocks(state: &AppState) -> impl WidgetView<AppState> + use<> {
     let (vertical_count, horizontal_count) = (state.vertical_count, state.horizontal_count);
 
     flex_col(
@@ -105,7 +105,7 @@ fn flex_blocks(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
     )
 }
 
-fn blocks(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
+fn blocks(state: &AppState) -> impl WidgetView<AppState> + use<> {
     match state.blocks_layout {
         BlocksLayout::Grid => Either::A(grid_blocks(state)),
         BlocksLayout::Flex => Either::B(flex_blocks(state)),
@@ -128,16 +128,20 @@ fn app_logic(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
     ));
     let vertical_controls = flex_row((
         label("Vertical blocks (rows):"),
-        text_button("-", |appstate: &mut AppState| appstate.vertical_count -= 1),
-        text_button("+", |appstate: &mut AppState| appstate.vertical_count += 1),
+        text_button("-", |appstate: &mut AppState| {
+            appstate.vertical_count = appstate.vertical_count.saturating_sub(1);
+        }),
+        text_button("+", |appstate: &mut AppState| {
+            appstate.vertical_count = appstate.vertical_count.saturating_add(1);
+        }),
     ));
     let horizontal_controls = flex_row((
         label("Horizontal blocks (columns):"),
         text_button("-", |appstate: &mut AppState| {
-            appstate.horizontal_count -= 1;
+            appstate.horizontal_count = appstate.horizontal_count.saturating_sub(1);
         }),
         text_button("+", |appstate: &mut AppState| {
-            appstate.horizontal_count += 1;
+            appstate.horizontal_count = appstate.horizontal_count.saturating_add(1);
         }),
     ));
 

@@ -28,7 +28,7 @@ enum IsEven {
     Success,
 }
 
-fn state_machine(app_data: &mut StateMachine) -> impl WidgetView<StateMachine> + use<> {
+fn state_machine(app_data: &StateMachine) -> impl WidgetView<StateMachine> + use<> {
     match app_data.state {
         // The first time we use `OneOf` in a conditional statement, we need
         // to specify the number of `OneOf` variants used - 3 in this case.

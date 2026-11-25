@@ -48,7 +48,15 @@ fn app_logic(data: &mut Clocks) -> impl WidgetView<Clocks> + use<> {
         portal(
             flex_col(
                 // TODO: When we get responsive layouts, move this into a two-column view on desktop.
-                TIMEZONES.iter().map(|it| it.view(data)).collect::<Vec<_>>(),
+                TIMEZONES
+                    .iter()
+                    .filter_map(|&(region, hours)| {
+                        let offset = UtcOffset::from_hms(hours, 0, 0)
+                            .map_err(|err| tracing::warn!(%err, region, "Invalid fixed offset"))
+                            .ok()?;
+                        Some(TimeZone { region, offset }.view(data))
+                    })
+                    .collect::<Vec<_>>(),
             )
             .width(Dim::Stretch),
         )
@@ -76,18 +84,19 @@ fn app_logic(data: &mut Clocks) -> impl WidgetView<Clocks> + use<> {
 
 /// Shows the current system time on a best-effort basis.
 // TODO: Maybe make this have a larger font size?
-fn local_time(data: &mut Clocks) -> impl WidgetView<Clocks> + use<> {
-    let (error_view, offset) = if let Ok(offset) = data.local_offset {
-        (None, offset)
-    } else {
-        (
-            Some(
-                prose("Could not determine local UTC offset, using UTC")
-                    .text_color(palette::css::ORANGE_RED),
-            ),
-            UtcOffset::UTC,
-        )
-    };
+fn local_time(data: &Clocks) -> impl WidgetView<Clocks> + use<> {
+    let (error_view, offset) = data.local_offset.map_or_else(
+        |_| {
+            (
+                Some(
+                    prose("Could not determine local UTC offset, using UTC")
+                        .text_color(palette::css::ORANGE_RED),
+                ),
+                UtcOffset::UTC,
+            )
+        },
+        |offset| (None, offset),
+    );
 
     flex_col((
         TimeZone {
@@ -120,7 +129,7 @@ fn controls() -> impl WidgetView<Clocks> {
 
 impl TimeZone {
     /// Display this timezone as a row, designed to be shown in a list of time zones.
-    fn view(&self, data: &mut Clocks) -> impl WidgetView<Clocks> + use<> {
+    fn view(&self, data: &Clocks) -> impl WidgetView<Clocks> + use<> {
         let date_time_in_self = data.now_utc.to_offset(self.offset);
         flex_col((
             flex_row((
@@ -139,8 +148,10 @@ impl TimeZone {
                 variable_label(
                     date_time_in_self
                         .format(format_description!("[hour repr:24]:[minute]:[second]"))
-                        .unwrap()
-                        .to_string(),
+                        .unwrap_or_else(|err| {
+                            tracing::warn!(%err, "Could not format time");
+                            "--:--:--".to_owned()
+                        }),
                 )
                 .text_size(48.)
                 // Use the roboto flex we have just loaded.
@@ -151,7 +162,10 @@ impl TimeZone {
                     label(
                         date_time_in_self
                             .format(format_description!("([day] [month repr:short])"))
-                            .unwrap(),
+                            .unwrap_or_else(|err| {
+                                tracing::warn!(%err, "Could not format date");
+                                String::new()
+                            }),
                     )
                 }),
             ))
@@ -163,10 +177,8 @@ impl TimeZone {
 
 impl Clocks {
     fn local_now(&self) -> OffsetDateTime {
-        match self.local_offset {
-            Ok(offset) => self.now_utc.to_offset(offset),
-            Err(_) => self.now_utc,
-        }
+        self.local_offset
+            .map_or(self.now_utc, |offset| self.now_utc.to_offset(offset))
     }
 }
 
@@ -202,43 +214,30 @@ pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
     Ok(())
 }
 
-/// A shorthand for creating a [`TimeZone`].
-const fn tz(region: &'static str, offset: i8) -> TimeZone {
-    TimeZone {
-        region,
-        offset: match UtcOffset::from_hms(offset, 0, 0) {
-            Ok(it) => it,
-            Err(_) => {
-                panic!("Component out of range.");
-            }
-        },
-    }
-}
-
 /// A static list of timezones to display. All regions selected do not observe daylight savings time.
 ///
 /// The timezones were determined on 2024-08-14.
-const TIMEZONES: &[TimeZone] = &[
-    tz("Hawaii", -10),
-    tz("Pitcairn Islands", -8),
-    tz("Arizona", -7),
-    tz("Saskatchewan", -6),
-    tz("Peru", -5),
-    tz("Barbados", -4),
-    tz("Martinique", -4),
-    tz("Uruguay", -3),
-    tz("Iceland", 0),
-    tz("Tunisia", 1),
-    tz("Mozambique", 2),
-    tz("Qatar", 3),
-    tz("Azerbaijan", 4),
-    tz("Pakistan", 5),
-    tz("Bangladesh", 6),
-    tz("Thailand", 7),
-    tz("Singapore", 8),
-    tz("Japan", 9),
-    tz("Queensland", 10),
-    tz("Tonga", 13),
+const TIMEZONES: &[(&str, i8)] = &[
+    ("Hawaii", -10),
+    ("Pitcairn Islands", -8),
+    ("Arizona", -7),
+    ("Saskatchewan", -6),
+    ("Peru", -5),
+    ("Barbados", -4),
+    ("Martinique", -4),
+    ("Uruguay", -3),
+    ("Iceland", 0),
+    ("Tunisia", 1),
+    ("Mozambique", 2),
+    ("Qatar", 3),
+    ("Azerbaijan", 4),
+    ("Pakistan", 5),
+    ("Bangladesh", 6),
+    ("Thailand", 7),
+    ("Singapore", 8),
+    ("Japan", 9),
+    ("Queensland", 10),
+    ("Tonga", 13),
 ];
 
 // Boilerplate code: Identical across all applications which support Android

@@ -3,16 +3,14 @@
 
 //! A stopwatch to display elapsed time.
 
-use std::ops::{Add, Sub};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant};
 
 use masonry::dpi::LogicalSize;
 use masonry::layout::AsUnit;
 use masonry::properties::types::{CrossAxisAlignment, MainAxisAlignment};
 use masonry_winit::app::{EventLoop, EventLoopBuilder};
 use tokio::time;
-use tracing::warn;
 use usvg::Tree;
 use xilem::RunError;
 use xilem::core::fork;
@@ -44,39 +42,27 @@ struct Stopwatch {
     /// time the timer was active before the last start.
     added_duration: Duration,
     /// The absolute time of the last start for calculating elapsed time.
-    last_start_time: Option<SystemTime>,
+    last_start_time: Option<Instant>,
     /// The duration displayed; updated by by `update_display()`
     displayed_duration: Duration,
-    /// An error string to display if there is an error.
-    displayed_error: String,
     /// A list of the length of all completed splits. Does not include the current split.
     completed_lap_splits: Vec<Duration>,
     /// The duration of the main timer when the split was started.
     split_start_time: Duration,
     /// The SVG stopwatch icon.
-    tree: Arc<Tree>,
+    tree: Option<Arc<Tree>>,
 }
 
 impl Stopwatch {
     fn start(&mut self) {
-        self.last_start_time = Some(SystemTime::now());
+        self.last_start_time = Some(Instant::now());
         self.active = true;
         self.update_display();
     }
 
     fn stop(&mut self) {
-        let dur_since_last_instant = self
-            .last_start_time
-            .expect("stop should only be called when the start time is set")
-            .elapsed();
-        match dur_since_last_instant {
-            Ok(dur) => {
-                self.added_duration = self.added_duration.add(dur);
-                self.displayed_error = "".into();
-            }
-            Err(err) => {
-                self.displayed_error = format!("failed to calculate elapsed time: {err}");
-            }
+        if let Some(start) = self.last_start_time {
+            self.added_duration = self.added_duration.saturating_add(start.elapsed());
         }
         self.last_start_time = None;
         self.active = false;
@@ -95,21 +81,14 @@ impl Stopwatch {
     fn lap(&mut self) {
         let split_end = self.get_current_duration();
         self.completed_lap_splits
-            .push(split_end.sub(self.split_start_time));
+            .push(split_end.saturating_sub(self.split_start_time));
         self.split_start_time = split_end;
     }
 
     fn get_current_duration(&self) -> Duration {
-        match self.last_start_time {
-            Some(last_start_time) => match last_start_time.elapsed() {
-                Ok(elapsed) => self.added_duration + elapsed,
-                Err(err) => {
-                    warn!("error calculating elapsed time: {}", err.to_string());
-                    self.added_duration
-                }
-            },
-            _ => self.added_duration,
-        }
+        self.last_start_time.map_or(self.added_duration, |start| {
+            self.added_duration.saturating_add(start.elapsed())
+        })
     }
 
     fn update_display(&mut self) {
@@ -129,7 +108,9 @@ fn app_logic(data: &mut Stopwatch) -> impl WidgetView<Stopwatch> + use<> {
         flex_col((
             FlexSpacer::Fixed(5.px()),
             flex_row((
-                svg(data.tree.clone()).dims((75.px(), 75.px())),
+                data.tree
+                    .as_ref()
+                    .map(|tree| svg(tree.clone()).dims((75.px(), 75.px()))),
                 label(get_formatted_duration(data.displayed_duration)).text_size(70.0),
             ))
             .main_axis_alignment(MainAxisAlignment::Center)
@@ -138,7 +119,6 @@ fn app_logic(data: &mut Stopwatch) -> impl WidgetView<Stopwatch> + use<> {
                 .main_axis_alignment(MainAxisAlignment::Center),
             FlexSpacer::Fixed(1.px()),
             laps_section(data),
-            label(data.displayed_error.as_ref()),
         )),
         data.active.then(|| {
             // Only update while active.
@@ -161,15 +141,15 @@ fn app_logic(data: &mut Stopwatch) -> impl WidgetView<Stopwatch> + use<> {
 }
 
 /// Creates a list of items that shows the lap number, split time, and total cumulative time.
-fn laps_section(data: &mut Stopwatch) -> impl FlexSequence<Stopwatch> + use<> {
+fn laps_section(data: &Stopwatch) -> impl FlexSequence<Stopwatch> + use<> {
     let mut items = Vec::new();
     let mut total_dur = Duration::ZERO;
     let current_lap = data.completed_lap_splits.len();
     for (i, split_dur) in data.completed_lap_splits.iter().enumerate() {
-        total_dur = total_dur.add(*split_dur);
+        total_dur = total_dur.saturating_add(*split_dur);
         items.push(single_lap(i, *split_dur, total_dur));
     }
-    let current_split_duration = data.get_current_duration().sub(total_dur);
+    let current_split_duration = data.get_current_duration().saturating_sub(total_dur);
     // Add the current lap, which is not stored in completed_lap_splits
     items.push(single_lap(
         current_lap,
@@ -196,7 +176,7 @@ fn single_lap(
     .main_axis_alignment(MainAxisAlignment::Start)
 }
 
-fn start_stop_button(data: &mut Stopwatch) -> impl WidgetView<Stopwatch> + use<> {
+fn start_stop_button(data: &Stopwatch) -> impl WidgetView<Stopwatch> + use<> {
     if data.active {
         Either::A(text_button("Stop", |data: &mut Stopwatch| {
             data.stop();
@@ -208,7 +188,7 @@ fn start_stop_button(data: &mut Stopwatch) -> impl WidgetView<Stopwatch> + use<>
     }
 }
 
-fn lap_reset_button(data: &mut Stopwatch) -> impl WidgetView<Stopwatch> + use<> {
+fn lap_reset_button(data: &Stopwatch) -> impl WidgetView<Stopwatch> + use<> {
     if data.active {
         Either::A(text_button("  Lap  ", |data: &mut Stopwatch| {
             data.lap();
@@ -221,16 +201,18 @@ fn lap_reset_button(data: &mut Stopwatch) -> impl WidgetView<Stopwatch> + use<> 
 }
 
 pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
-    let tree = Tree::from_str(STOPWATCH_SVG, &usvg::Options::default()).unwrap();
+    let tree = Tree::from_str(STOPWATCH_SVG, &usvg::Options::default())
+        .map(Arc::new)
+        .map_err(|err| tracing::warn!(%err, "Could not load stopwatch icon"))
+        .ok();
     let mut data = Stopwatch {
         active: false,
         added_duration: Duration::ZERO,
         last_start_time: None,
         displayed_duration: Duration::ZERO,
-        displayed_error: "".into(),
         completed_lap_splits: Vec::new(),
         split_start_time: Duration::ZERO,
-        tree: Arc::new(tree),
+        tree,
     };
     data.update_display();
 

@@ -4,8 +4,6 @@
 //! An example demonstrating the use of Async web requests in Xilem to access the <https://http.cat/> API.
 //! This also demonstrates image loading.
 
-#![expect(clippy::missing_assert_message, reason = "Deferred: Noisy")]
-
 use std::sync::Arc;
 
 use masonry::layout::{AsUnit, Length, UnitPoint};
@@ -44,7 +42,7 @@ struct Status {
 enum ImageState {
     NotRequested,
     Pending,
-    // Error,
+    Error(String),
     Available(ImageData),
 }
 
@@ -53,32 +51,37 @@ impl HttpCats {
         let left_column = flex_col((
             prose("Status"),
             self.statuses
-                .iter_mut()
+                .iter()
                 .map(Status::list_view)
                 .collect::<Vec<_>>(),
         ))
         .padding(Padding::left(5.px()));
 
-        let info_area = if let Some(selected_code) = self.selected_code {
-            if let Some(selected_status) =
-                self.statuses.iter_mut().find(|it| it.code == selected_code)
-            {
-                OneOf3::A(selected_status.details_view())
-            } else {
-                OneOf3::B(
-                    prose(format!(
-                        "Status code {selected_code} selected, but this was not found."
-                    ))
-                    .text_alignment(TextAlign::Center)
-                    .text_color(palette::css::YELLOW),
+        let info_area = self.selected_code.map_or_else(
+            || {
+                OneOf3::C(
+                    prose("No selection yet made. Select an item from the sidebar to continue.")
+                        .text_alignment(TextAlign::Center),
                 )
-            }
-        } else {
-            OneOf3::C(
-                prose("No selection yet made. Select an item from the sidebar to continue.")
-                    .text_alignment(TextAlign::Center),
-            )
-        };
+            },
+            |selected_code| {
+                self.statuses
+                    .iter()
+                    .find(|it| it.code == selected_code)
+                    .map_or_else(
+                        || {
+                            OneOf3::B(
+                                prose(format!(
+                                    "Status code {selected_code} selected, but this was not found."
+                                ))
+                                .text_alignment(TextAlign::Center)
+                                .text_color(palette::css::YELLOW),
+                            )
+                        },
+                        |status| OneOf3::A(status.details_view()),
+                    )
+            },
+        );
 
         // TODO: Should `web_image` be a built-in component?
 
@@ -96,26 +99,20 @@ impl HttpCats {
                         let proxy = proxy.clone();
                         tokio::task::spawn(async move {
                             let url = format!("https://http.cat/{code}");
-                            let result = image_from_url(&url).await;
-                            match result {
-                                // We choose not to handle the case where the event loop has ended
-                                Ok(image) => drop(proxy.message((code, image))),
-                                // TODO: Report in the frontend
-                                Err(err) => {
-                                    tracing::warn!(
-                                        "Loading image for HTTP status code {code} from {url} failed: {err:?}"
-                                    );
-                                }
-                            }
+                            let result = image_from_url(&url).await.map_err(|err| err.to_string());
+                            drop(proxy.message((code, result)));
                         });
                     }
                 },
                 |state: &mut Self, sender| {
                     state.download_sender = Some(sender);
                 },
-                |state: &mut Self, (code, image): (u32, ImageData)| {
+                |state: &mut Self, (code, result): (u32, Result<ImageData, String>)| {
                     if let Some(status) = state.statuses.iter_mut().find(|it| it.code == code) {
-                        status.image = ImageState::Available(image);
+                        status.image = match result {
+                            Ok(image) => ImageState::Available(image),
+                            Err(err) => ImageState::Error(err),
+                        };
                     } else {
                         // TODO: Error handling?
                     }
@@ -129,7 +126,7 @@ impl HttpCats {
 ///
 /// N.B. This is functionality shared with Placehero and `virtual_cats`.
 async fn image_from_url(url: &str) -> anyhow::Result<ImageData> {
-    let response = reqwest::get(url).await?;
+    let response = reqwest::get(url).await?.error_for_status()?;
     let bytes = response.bytes().await?;
     let image = image::load_from_memory(&bytes)?.into_rgba8();
     let width = image.width();
@@ -145,7 +142,7 @@ async fn image_from_url(url: &str) -> anyhow::Result<ImageData> {
 }
 
 impl Status {
-    fn list_view(&mut self) -> impl WidgetView<HttpCats> + use<> {
+    fn list_view(&self) -> impl WidgetView<HttpCats> + use<> {
         let code = self.code;
         flex_row((
             // TODO: Reduce allocations here?
@@ -155,15 +152,22 @@ impl Status {
             // TODO: Spinner if image pending?
             // TODO: Tick if image loaded?
             text_button("Select", move |state: &mut HttpCats| {
-                let status = state
-                    .statuses
-                    .iter_mut()
-                    .find(|it| it.code == code)
-                    .unwrap();
-
-                if matches!(status.image, ImageState::NotRequested) {
-                    state.download_sender.as_ref().unwrap().send(code).unwrap();
-                    status.image = ImageState::Pending;
+                let Some(status) = state.statuses.iter_mut().find(|it| it.code == code) else {
+                    return;
+                };
+                if matches!(
+                    status.image,
+                    ImageState::NotRequested | ImageState::Error(_)
+                ) {
+                    let requested = state
+                        .download_sender
+                        .as_ref()
+                        .is_some_and(|sender| sender.send(code).is_ok());
+                    status.image = if requested {
+                        ImageState::Pending
+                    } else {
+                        ImageState::Error("Download worker unavailable".to_owned())
+                    };
                 }
 
                 state.selected_code = Some(code);
@@ -172,11 +176,14 @@ impl Status {
         ))
     }
 
-    fn details_view(&mut self) -> impl WidgetView<HttpCats> + use<> {
+    fn details_view(&self) -> impl WidgetView<HttpCats> + use<> {
         let image = match &self.image {
             ImageState::NotRequested => OneOf3::A(
                 prose("Failed to start fetching image. This is a bug!")
                     .text_alignment(TextAlign::Center),
+            ),
+            ImageState::Error(error) => OneOf3::A(
+                prose(format!("Could not load image: {error}")).text_alignment(TextAlign::Center),
             ),
             ImageState::Pending => OneOf3::B(spinner().dims(80.px())),
             // TODO: Alt text?
@@ -236,8 +243,11 @@ impl Status {
     fn parse_file() -> Vec<Self> {
         let mut lines = STATUS_CODES_CSV.lines();
         let first_line = lines.next();
-        assert_eq!(first_line, Some("code,message"));
-        lines.flat_map(Self::parse_single).collect()
+        if first_line != Some("code,message") {
+            tracing::error!("Invalid HTTP status CSV header");
+            return Vec::new();
+        }
+        lines.filter_map(Self::parse_single).collect()
     }
 
     fn parse_single(line: &'static str) -> Option<Self> {
