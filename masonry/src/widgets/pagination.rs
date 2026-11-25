@@ -162,40 +162,33 @@ impl Pagination {
     /// Returns the list of page indices that the pagination buttons are associated with.
     fn derive_button_pages(&self) -> Vec<usize> {
         let button_count = self.page_count.min(self.buttons_total as usize);
-        let mut button_pages = Vec::new();
+        let mut button_pages = Vec::with_capacity(button_count);
 
-        // Returns true if no more buttons can be added.
-        let mut add_page = |idx| {
-            if button_pages.len() < button_count
-                && idx < self.page_count
-                && !button_pages.contains(&idx)
-            {
-                button_pages.push(idx);
-            }
-            button_pages.len() == button_count
-        };
-
-        // Prioritize the currently active page.
-        add_page(self.active_page);
-        // Then all the first pages.
-        for idx in 0..(self.buttons_start as usize) {
-            add_page(idx);
-        }
-        // Followed by all the last pages.
-        for idx in
-            (self.page_count.saturating_sub(self.buttons_end as usize)..self.page_count).rev()
-        {
-            add_page(idx);
-        }
-        // Finally, reach the desired button count by alternating between next and previous pages.
-        for idx in (1..).flat_map(|i| {
+        // There are at least button_count distinct pages within button_count - 1
+        // steps of the active page, even when it lies at an endpoint.
+        let nearby = (1..button_count).flat_map(|offset| {
             [
-                self.active_page.saturating_add(i),
-                self.active_page.saturating_sub(i),
+                self.active_page.checked_add(offset),
+                self.active_page.checked_sub(offset),
             ]
-        }) {
-            if add_page(idx) {
+            .into_iter()
+            .flatten()
+        });
+        let first = 0..self.page_count.min(usize::from(self.buttons_start));
+        let last = (self
+            .page_count
+            .saturating_sub(usize::from(self.buttons_end))..self.page_count)
+            .rev();
+        for idx in core::iter::once(self.active_page)
+            .chain(first)
+            .chain(last)
+            .chain(nearby)
+        {
+            if button_pages.len() == button_count {
                 break;
+            }
+            if idx < self.page_count && !button_pages.contains(&idx) {
+                button_pages.push(idx);
             }
         }
 
@@ -217,6 +210,7 @@ impl Pagination {
         {
             ctx.remove_child(button.widget);
         }
+        let mut visibility_changed = false;
         // Stash all buttons that are within the limit but not in use.
         for button in self
             .buttons
@@ -226,6 +220,7 @@ impl Pagination {
         {
             button.stashed = true;
             ctx.set_stashed(&button.widget, true);
+            visibility_changed = true;
         }
         // Make sure all the existing buttons have the correct info.
         for (button, &page_idx) in self.buttons.iter_mut().zip(button_pages.iter()) {
@@ -249,6 +244,7 @@ impl Pagination {
             if button.stashed {
                 button.stashed = false;
                 ctx.set_stashed(&button.widget, false);
+                visibility_changed = true;
             }
         }
         // Create any missing buttons.
@@ -268,6 +264,8 @@ impl Pagination {
         }
         if children_changed {
             ctx.children_changed();
+        } else if visibility_changed {
+            ctx.request_layout();
         }
     }
 }
@@ -291,7 +289,7 @@ impl Widget for Pagination {
             && let Some(button) = self
                 .buttons
                 .iter()
-                .find(|button| button.widget.id() == source)
+                .find(|button| button.widget.id() == source && !button.stashed && !button.disabled)
         {
             self.active_page = button.page_idx;
             self.sync_buttons(ctx);
@@ -401,6 +399,7 @@ impl Widget for Pagination {
 
 /// Collections of context methods required to sync buttons.
 trait SyncCtx {
+    fn request_layout(&mut self);
     fn children_changed(&mut self);
     fn set_stashed(&mut self, child: &WidgetPod<impl Widget + ?Sized>, stashed: bool);
     fn remove_child(&mut self, child: WidgetPod<impl Widget + ?Sized>);
@@ -412,6 +411,10 @@ trait SyncCtx {
 }
 
 impl SyncCtx for MutateCtx<'_> {
+    fn request_layout(&mut self) {
+        self.request_layout();
+    }
+
     fn children_changed(&mut self) {
         self.children_changed();
     }
@@ -434,6 +437,10 @@ impl SyncCtx for MutateCtx<'_> {
 }
 
 impl SyncCtx for ActionCtx<'_> {
+    fn request_layout(&mut self) {
+        self.request_layout();
+    }
+
     fn children_changed(&mut self) {
         self.children_changed();
     }
@@ -456,6 +463,10 @@ impl SyncCtx for ActionCtx<'_> {
 }
 
 impl SyncCtx for UpdateCtx<'_> {
+    fn request_layout(&mut self) {
+        self.request_layout();
+    }
+
     fn children_changed(&mut self) {
         self.children_changed();
     }
@@ -481,6 +492,116 @@ impl SyncCtx for UpdateCtx<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn page_selection_matches_priority_order() {
+        // Independent oracle: rank all pages by priority, then select the first N.
+        for count in 0..=16 {
+            for active in 0..=count {
+                for total in 0..=8 {
+                    for start in 0..=4 {
+                        for end in 0..=4 {
+                            let pg = Pagination::new(count)
+                                .active_page(active)
+                                .buttons_total(total)
+                                .buttons_start(start)
+                                .buttons_end(end);
+                            let mut expected: Vec<_> = (0..count).collect();
+                            expected.sort_unstable_by_key(|&idx| {
+                                if idx == pg.active_page {
+                                    (0, 0, false)
+                                } else if idx < usize::from(start) {
+                                    (1, idx, false)
+                                } else if idx >= count.saturating_sub(usize::from(end)) {
+                                    (2, count - idx, false)
+                                } else {
+                                    (3, idx.abs_diff(pg.active_page), idx < pg.active_page)
+                                }
+                            });
+                            expected.truncate(usize::from(total));
+                            expected.sort_unstable();
+                            assert_eq!(pg.derive_button_pages(), expected);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn retained_buttons_relayout_when_visible_count_changes() {
+        use crate::core::WidgetTag;
+        use crate::properties::types::{CrossAxisAlignment, MainAxisAlignment};
+        use crate::testing::TestHarness;
+        use crate::theme::test_property_set;
+        use crate::widgets::Flex;
+
+        let tag = WidgetTag::unique();
+        let pagination = NewWidget::new(Pagination::new(3)).with_tag(tag);
+        let root = Flex::row()
+            .with_fixed(pagination)
+            .main_axis_alignment(MainAxisAlignment::Start)
+            .cross_axis_alignment(CrossAxisAlignment::Start);
+        let mut harness =
+            TestHarness::create_with_size(test_property_set(), NewWidget::new(root), (400, 80));
+        let original = harness.get_widget(tag).unwrap();
+        let width = original.ctx().border_box().width();
+        let ids = original.inner().children_ids();
+        let _ = harness.redraw();
+
+        harness
+            .edit_widget(tag, |mut widget| {
+                Pagination::set_page_count(&mut widget, 1);
+            })
+            .unwrap();
+        let _ = harness.redraw();
+        let shrunk = harness.get_widget(tag).unwrap();
+        assert!(shrunk.ctx().border_box().width() < width);
+        assert_eq!(shrunk.inner().children_ids(), ids);
+        assert_eq!(
+            harness
+                .access_node(shrunk.id())
+                .unwrap()
+                .child_ids()
+                .count(),
+            1
+        );
+
+        harness
+            .edit_widget(tag, |mut widget| {
+                Pagination::set_page_count(&mut widget, 3);
+            })
+            .unwrap();
+        let _ = harness.redraw();
+        let restored = harness.get_widget(tag).unwrap();
+        assert_eq!(restored.ctx().border_box().width(), width);
+        assert_eq!(restored.inner().children_ids(), ids);
+        assert_eq!(
+            harness
+                .access_node(restored.id())
+                .unwrap()
+                .child_ids()
+                .count(),
+            3
+        );
+    }
+
+    #[test]
+    fn page_selection_handles_usize_max() {
+        let pg = Pagination::new(usize::MAX)
+            .active_page(usize::MAX)
+            .buttons_total(5);
+        assert_eq!(
+            pg.derive_button_pages(),
+            vec![
+                0,
+                usize::MAX - 4,
+                usize::MAX - 3,
+                usize::MAX - 2,
+                usize::MAX - 1
+            ]
+        );
+    }
 
     #[test]
     fn button_pages() {
