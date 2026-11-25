@@ -267,7 +267,7 @@ mod tests {
         let label_id = label.id();
         let mut harness = TestHarness::create(test_property_set(), Button::new(label).prepare());
         let button_id = harness.root_id();
-        let click = |id: crate::core::WidgetId| ActionRequest {
+        let click = |id: WidgetId| ActionRequest {
             action: Action::Click,
             target_tree: TreeId::ROOT,
             target_node: id.into(),

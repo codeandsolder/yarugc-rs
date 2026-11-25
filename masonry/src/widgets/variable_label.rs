@@ -196,7 +196,7 @@ impl VariableLabel {
             return;
         }
         let state = &mut *this.widget;
-        let Some(mut label) = this.ctx.get_mut(state.label.id()) else {
+        let Some(mut label) = this.ctx.get_mut::<Label>(state.label.id()) else {
             return;
         };
         // A caller may have edited the wrapped label while no animation was running.

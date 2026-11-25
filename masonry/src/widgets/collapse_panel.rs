@@ -373,7 +373,10 @@ mod tests {
         assert!((button_rect.center().y - label_rect.center().y).abs() < 1e-8);
         assert!(children[2].ctx().is_stashed());
         let button = harness.access_node(button_id).unwrap();
-        assert_eq!(button.data().labelled_by(), &[label_id.into()]);
+        assert_eq!(
+            button.data().labelled_by(),
+            &[accesskit::NodeId::from(label_id)]
+        );
         harness
             .mouse_click_on(button_id, Some(crate::core::PointerButton::Primary))
             .unwrap();
