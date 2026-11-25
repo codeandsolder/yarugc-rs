@@ -977,42 +977,8 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        // Currently we only support the common horizontal-tb writing mode,
-        // so we hardcode the assumption that inline axis is horizontal.
-        let inline = Axis::Horizontal;
-
-        // TODO: The following max_advance calculation is very similar to Label widget's measure,
-        //       so these could be more unified and share a single implementation.
-
-        // Calculate the max advance for the inline axis, with None indicating unbounded.
-        let max_advance = if self.word_wrap {
-            if axis == inline {
-                // Inline axis measurement ignores cross_length as a performance optimization.
-                // The search complexity of dealing with it is just too prohibitive.
-                // This is a common optimization also present on the web.
-                match len_req {
-                    // Zero space will get us the length of longest unbreakable word
-                    LenReq::Min => Some(Length::ZERO),
-                    // Unbounded space will get us the length of the unwrapped string
-                    LenReq::Max => None,
-                    // Attempt to wrap according to the parent's request
-                    LenReq::Fit(space) => Some(space),
-                }
-            } else {
-                // Block axis is dependent on the inline axis, so cross_length dominates.
-                // If there is no explicit cross_length present, we fall back to inline defaults.
-                match len_req {
-                    // Fallback is inline axis MinContent
-                    LenReq::Min => cross_length.or(Some(Length::ZERO)),
-                    // Fallback is inline axis MaxContent, even for FitContent, because
-                    // as we don't have the inline space bound we'll consider it unbounded.
-                    LenReq::Max | LenReq::Fit(_) => cross_length,
-                }
-            }
-        } else {
-            None
-        }
-        .map(|v| v.get() as f32);
+        let max_advance =
+            super::text_layout::measure_max_advance(self.word_wrap, axis, len_req, cross_length);
 
         let mut reset_max_advance = None;
         if self.last_max_advance != max_advance {

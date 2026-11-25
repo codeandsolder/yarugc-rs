@@ -44,6 +44,7 @@ mod svg;
 mod switch;
 mod text_area;
 mod text_input;
+mod text_layout;
 mod variable_label;
 mod virtual_scroll;
 mod zstack;

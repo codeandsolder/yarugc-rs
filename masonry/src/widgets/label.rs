@@ -68,106 +68,35 @@ struct TextLayout {
     layout: Layout<BrushIndex>,
     /// Max advance value that was used when calculating this layout.
     max_advance: Option<f32>,
-    /// Text alignment of this layout.
-    alignment: TextAlign,
-    /// Text alignment width of this layout.
-    alignment_width: f32,
+    /// Alignment parameters, if alignment has been applied.
+    alignment: Option<(TextAlign, f32)>,
     /// Last use timestamp for cache eviction purposes.
     last_used: u8,
 }
 
 impl TextLayout {
-    /// Text layout width differences less than 0.01 pixels can be considered equal.
-    const EPSILON: f32 = 0.01;
-
     /// Creates a new [`TextLayout`] with the specified `max_advance` constraint and `timestamp`.
     fn new(max_advance: Option<f32>, timestamp: u8) -> Self {
         Self {
             layout: Layout::new(),
             max_advance,
-            alignment: TextAlign::Start,
-            alignment_width: -1., // Not aligned yet
+            alignment: None,
             last_used: timestamp,
         }
-    }
-
-    /// Discards this layout, making it an obvious choice for cache eviction.
-    const fn discard(&mut self) {
-        // Mark it as least recently used.
-        self.last_used = 0;
-        // Set a fake unlikely-to-be-seen max advance so it won't get any use.
-        self.max_advance = Some(-1.);
     }
 
     /// Align the text layout.
     ///
     /// This method ensures that alignment only happens when the inputs have changed.
     fn align(&mut self, alignment: TextAlign, alignment_width: f32) {
-        if self.alignment == alignment
-            && (self.alignment_width - alignment_width).abs() < Self::EPSILON
-        {
-            return;
-        }
-        self.alignment = alignment;
-        self.alignment_width = alignment_width;
-        self.layout.align(
-            Some(self.alignment_width),
-            self.alignment,
-            TextAlignOptions::default(),
-        );
-    }
-
-    /// Returns `true` if this layout would be the result for `max_advance`.
-    ///
-    /// For example:
-    ///
-    /// `compute_layout(max_advance == 10) => layout.width == 8`
-    /// is also valid for `max_advance == 9`.
-    ///
-    /// This check assumes that Parley does greedy line-breaking,
-    /// which it does at the time of writing this.
-    fn satisfies(&self, max_advance: Option<f32>) -> bool {
-        // Check if the specified constraint is compatible with this layout's constraint.
-        self.max_advance.is_none_or(|layout_max_advance| {
-            max_advance.is_some_and(|max_advance| {
-                layout_max_advance - max_advance + Self::EPSILON >= 0.
-            })
-        }) &&
-        // Check if the computed layout fits into the specified constraint.
-        max_advance.is_none_or(|max_advance| {
-            max_advance - self.layout.width() + Self::EPSILON >= 0.
-        })
-    }
-
-    /// Returns `true` if this layout was more constrained than `max_advance`.
-    fn more_constrained(&self, max_advance: Option<f32>) -> bool {
-        self.max_advance.is_some_and(|layout_max_advance| {
-            max_advance.is_none_or(|max_advance| layout_max_advance < max_advance)
-        })
-    }
-
-    /// Returns `true` if the layouts are equal.
-    ///
-    /// That is if they have the same number of line breaks with the same reason at the same places.
-    fn equals(&self, other: &Self) -> bool {
-        if self.layout.len() != other.layout.len() {
-            return false;
-        }
-        let mut a = self.layout.lines();
-        let mut b = other.layout.lines();
-        loop {
-            match (a.next(), b.next()) {
-                (None, None) => return true,
-                (Some(a_line), Some(b_line)) => {
-                    if a_line.break_reason() != b_line.break_reason() {
-                        return false;
-                    }
-                    if a_line.text_range() != b_line.text_range() {
-                        return false;
-                    }
-                }
-                _ => return false,
-            }
+        let parameters = Some((alignment, alignment_width));
+        if self.alignment != parameters {
+            self.layout.align(
+                Some(alignment_width),
+                alignment,
+                TextAlignOptions::default(),
+            );
+            self.alignment = parameters;
         }
     }
 }
@@ -395,11 +324,10 @@ impl Label {
     ) -> usize {
         let timestamp = self.cache_time();
 
-        // Check if the cache already has a suitable entry.
-        // A suitable entry is one that was calculated with the same or larger constraint,
-        // and resulted in a layout that still fits within this newly requested constraint.
+        // Line breaking depends on the exact constraint, including trailing whitespace
+        // and clusters that overflow. The measured width alone cannot prove equivalence.
         for (idx, layout) in self.layouts.iter_mut().enumerate() {
-            if layout.satisfies(max_advance) {
+            if layout.max_advance == max_advance {
                 layout.last_used = timestamp;
                 return idx;
             }
@@ -417,61 +345,28 @@ impl Label {
                     .map(|(index, _)| index)
             })
             .flatten();
-        let mut idx = reusable.unwrap_or(self.layouts.len());
+        let idx = reusable.unwrap_or(self.layouts.len());
+        let rebuild_shape = reusable.is_none() || self.layouts[idx].alignment.is_some();
         if idx == self.layouts.len() {
             self.layouts.push(TextLayout::new(max_advance, timestamp));
         }
         let layout = &mut self.layouts[idx];
         layout.max_advance = max_advance;
         layout.last_used = timestamp;
-        // Building into the Parley layout resets its alignment.
-        layout.alignment_width = -1.;
+        layout.alignment = None;
 
-        // TODO: Should we use a different scale?
-        // See https://github.com/linebender/xilem/issues/1264
-        let mut builder = layout_ctx.ranged_builder(font_ctx, &self.text, 1.0, true);
-        for prop in self.styles.inner().values() {
-            builder.push_default(prop.to_owned());
+        // An unaligned speculative entry can be rebroken without shaping again.
+        // An aligned entry may have had its glyph advances changed by justification.
+        if rebuild_shape {
+            // TODO: Should we use a different scale?
+            // See https://github.com/linebender/xilem/issues/1264
+            let mut builder = layout_ctx.ranged_builder(font_ctx, &self.text, 1.0, true);
+            for prop in self.styles.inner().values() {
+                builder.push_default(prop.to_owned());
+            }
+            builder.build_into(&mut layout.layout, &self.text);
         }
-        builder.build_into(&mut layout.layout, &self.text);
-
         layout.layout.break_all_lines(max_advance);
-
-        // Check if the layout result matches an existing cache entry.
-        // This happens when slightly increasing max_advance, as we can't then safely pre-identify
-        // an existing cache entry because more text might fit inside this new larger constraint.
-        // However, if it actually resulted in the same layout as with a slightly lower constraint,
-        // then we don't want to have two cache entries with the same identical layout result.
-        if let Some((equal_idx, _)) = self
-            .layouts
-            .iter()
-            .enumerate()
-            // Only those that are more constrained than the new constraint are viable.
-            .filter(|(_, layout)| layout.more_constrained(max_advance))
-            // We want the one that is closest to the new constraint.
-            .max_by(|a, b| match (a.1.max_advance, b.1.max_advance) {
-                (Some(a), Some(b)) => a.total_cmp(&b),
-                (Some(_), None) => core::cmp::Ordering::Greater,
-                (None, Some(_)) => core::cmp::Ordering::Less,
-                (None, None) => core::cmp::Ordering::Equal,
-            })
-            // Make sure that it actually matches the new layout.
-            .filter(|(_, layout)| layout.equals(&self.layouts[idx]))
-        {
-            // Though these two layouts are equal, we want to keep the older one.
-            // Because the old one might be the currently active layout.
-            let equal_layout = &mut self.layouts[equal_idx];
-            // Mark the old layout as applicable up to this new constraint.
-            equal_layout.max_advance = max_advance;
-            equal_layout.last_used = timestamp;
-
-            // Discard the new layout that we just created as it is a duplicate.
-            let layout = &mut self.layouts[idx];
-            layout.discard();
-
-            // Return the updated old entry.
-            idx = equal_idx;
-        }
 
         idx
     }
@@ -523,37 +418,12 @@ impl Widget for Label {
         let cache = ctx.property_cache();
         let line_break_mode = props.get::<LineBreaking>(cache);
 
-        // Calculate the max advance for the inline axis, with None indicating unbounded.
-        let max_advance = match line_break_mode {
-            LineBreaking::WordWrap => {
-                if axis == inline {
-                    // Inline axis measurement ignores cross_length as a performance optimization.
-                    // The search complexity of dealing with it is just too prohibitive.
-                    // This is a common optimization also present on the web.
-                    match len_req {
-                        // Zero space will get us the length of longest unbreakable word
-                        LenReq::Min => Some(Length::ZERO),
-                        // Unbounded space will get us the length of the unwrapped string
-                        LenReq::Max => None,
-                        // Attempt to wrap according to the parent's request
-                        LenReq::Fit(space) => Some(space),
-                    }
-                } else {
-                    // Block axis is dependent on the inline axis, so cross_length dominates.
-                    // If there is no explicit cross_length present, we fall back to inline defaults.
-                    match len_req {
-                        // Fallback is inline axis MinContent
-                        LenReq::Min => cross_length.or(Some(Length::ZERO)),
-                        // Fallback is inline axis MaxContent, even for FitContent, because
-                        // as we don't have the inline space bound we'll consider it unbounded.
-                        LenReq::Max | LenReq::Fit(_) => cross_length,
-                    }
-                }
-            }
-            // If we're never wrapping, then there's no max advance.
-            LineBreaking::Clip | LineBreaking::Overflow => None,
-        }
-        .map(|v| v.get() as f32);
+        let max_advance = super::text_layout::measure_max_advance(
+            *line_break_mode == LineBreaking::WordWrap,
+            axis,
+            len_req,
+            cross_length,
+        );
 
         let (font_ctx, layout_ctx) = ctx.text_contexts();
         let layout_idx = self.build_and_break(font_ctx, layout_ctx, max_advance);
@@ -690,6 +560,66 @@ mod tests {
     use crate::testing::{TestHarness, assert_render_snapshot};
     use crate::theme::{ACCENT_COLOR, test_property_set};
     use crate::widgets::{Flex, SizedBox};
+
+    #[test]
+    fn cache_matches_fresh_layout_across_wrap_boundaries() {
+        let mut fonts = FontContext::new();
+        fonts.collection.register_fonts(
+            crate::peniko::Blob::new(std::sync::Arc::new(masonry_testing::ROBOTO)),
+            None,
+        );
+        let mut context = LayoutContext::new();
+        for text in ["hello world", "hello world  ", "a long unbreakableword"] {
+            let label =
+                || Label::new(text).with_style(FontFamily::Single(FontFamilyName::named("Roboto")));
+            let mut cached = label();
+            let initial = cached.build_and_break(&mut fonts, &mut context, None);
+            let width = cached.layouts[initial].layout.full_width();
+            assert!(width > 0.);
+            cached.active_layout = initial;
+            for constraint in [
+                Some(width - 0.005),
+                Some(width),
+                Some(width + 0.005),
+                Some(0.),
+                Some(width * 0.5),
+                Some(width * 0.25),
+                Some(width * 0.75),
+                Some(width - 0.005),
+                None,
+            ] {
+                let index = cached.build_and_break(&mut fonts, &mut context, constraint);
+                let mut fresh = label();
+                let reference = fresh.build_and_break(&mut fonts, &mut context, constraint);
+                let actual = &cached.layouts[index].layout;
+                let expected = &fresh.layouts[reference].layout;
+                assert_eq!(actual.len(), expected.len(), "{text:?} at {constraint:?}");
+                for (actual, expected) in actual.lines().zip(expected.lines()) {
+                    assert_eq!(actual.text_range(), expected.text_range());
+                    assert_eq!(actual.break_reason(), expected.break_reason());
+                    assert_eq!(
+                        actual.metrics().advance.to_bits(),
+                        expected.metrics().advance.to_bits()
+                    );
+                }
+                assert!(cached.layouts.len() <= Label::CACHE_CAPACITY);
+            }
+            assert_eq!(cached.layouts[initial].max_advance, None);
+        }
+    }
+
+    #[test]
+    fn repeated_overflowing_constraint_hits_cache() {
+        let mut fonts = FontContext::new();
+        let mut context = LayoutContext::new();
+        let mut label = Label::new("unbreakable");
+        let index = label.build_and_break(&mut fonts, &mut context, Some(0.));
+        assert_eq!(
+            label.build_and_break(&mut fonts, &mut context, Some(0.)),
+            index
+        );
+        assert_eq!(label.layouts.len(), 1);
+    }
 
     #[test]
     fn simple_label() {
