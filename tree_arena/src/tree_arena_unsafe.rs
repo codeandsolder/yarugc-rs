@@ -530,13 +530,20 @@ impl<'arena, T> ArenaMutList<'arena, T> {
         let node = self.parent_arena.items.remove(&child_id)?.into_inner();
         self.child_arr.retain(|id| *id != child_id);
         self.parent_arena.parents.remove(&child_id);
+        // Detach the entire subtree before dropping any user-owned payload.
+        // A destructor can unwind; the surviving arena must already have a
+        // consistent topology at that point.
         let mut pending = node.children;
+        let mut removed = Vec::new();
         while let Some(id) = pending.pop() {
             if let Some(child) = self.parent_arena.items.remove(&id) {
-                pending.extend(child.into_inner().children);
+                let TreeNode { item, children } = child.into_inner();
+                pending.extend(children);
+                removed.push(item);
             }
             self.parent_arena.parents.remove(&id);
         }
+        drop(removed);
         Some(node.item)
     }
 
