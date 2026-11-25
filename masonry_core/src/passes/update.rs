@@ -9,11 +9,11 @@ use ui_events::pointer::PointerType;
 
 use crate::app::{RenderRoot, RenderRootSignal, RenderRootState};
 use crate::core::{
-    ClassSetDiff, CursorIcon, DefaultProperties, Ime, PointerEvent, PointerInfo, PropertiesMut,
-    PropertyArena, PropertyCache, PseudoClass, RegisterCtx, TextEvent, Update, UpdateCtx, Widget,
+    ClassSetDiff, CursorIcon, DefaultProperties, PointerEvent, PointerInfo, PropertiesMut,
+    PropertyArena, PropertyCache, PseudoClass, RegisterCtx, Update, UpdateCtx, Widget,
     WidgetArenaNode, WidgetId, WidgetState,
 };
-use crate::passes::event::{run_on_pointer_event_pass, run_on_text_event_pass};
+use crate::passes::event::{end_ime_session, run_on_pointer_event_pass};
 use crate::passes::{enter_span, enter_span_if, merge_state_up, recurse_on_children};
 use crate::properties::core_property_changed;
 use crate::util::ParentLinkedList;
@@ -703,50 +703,17 @@ pub(crate) fn run_update_focus_pass(root: &mut RenderRoot) {
     }
 
     let prev_focused = root.global_state.focused_widget;
-    let was_ime_active = root.global_state.is_ime_active();
 
-    if was_ime_active && prev_focused != root.global_state.next_focused_widget {
-        // IME was active, but the next focused widget is going to receive the Ime::Disabled event
-        // sent by the platform. Synthesize an `Ime::Disabled` event here and send it to the widget
-        // about to be unfocused.
-
-        // HACK: It's not valid to send an event to a non-existent widget, so we check that the "previously"
-        // focused widget hasn't just been deleted.
-        // This means that if a parent widget was handling IME events, it won't get this event.
-        // We know that IME events bubbling is not the correct behaviour, but have chosen to keep it for consistency,
-        // as we also are planning to refactor how IME is delivered as we update to use Android View.
-        if let Some(prev_focused) = prev_focused
-            && root.has_widget(prev_focused)
-        {
-            run_on_text_event_pass(root, &TextEvent::Ime(Ime::Disabled));
-        }
-
-        // Disable the IME, which was enabled specifically for this widget. Note that if the newly
-        // focused widget also requires IME, we will request it again - this resets the platform's
-        // state, ensuring that partial IME inputs do not "travel" between widgets
-        root.global_state.emit_signal(RenderRootSignal::EndIme);
-
-        // Note: handling of the Ime::Disabled event sent above may have changed the next focused
-        // widget. In particular, focus may have changed back to the original widget we just
-        // disabled IME for.
-        //
-        // In this unlikely case, the rest of this handler will short-circuit, and IME would not be
-        // re-enabled for this widget. Re-enable IME here; the resultant `Ime::Enabled` event sent
-        // by the platform will be routed to this widget as it remains the focused widget. We don't
-        // handle this as above to avoid loops.
-        //
-        // First do the disabled, stashed or removed check again.
+    if root.global_state.is_ime_active()
+        && (prev_focused != root.global_state.next_focused_widget
+            || !root.global_state.window_focused())
+    {
+        end_ime_session(root);
+        // The owner may request a different focus while processing Disabled.
         if let Some(id) = root.global_state.next_focused_widget
             && !root.is_still_interactive(id)
         {
             root.global_state.next_focused_widget = None;
-        }
-        if prev_focused == root.global_state.next_focused_widget {
-            tracing::warn!(
-                id = prev_focused.map(WidgetId::trace),
-                "request_focus called whilst handling Ime::Disabled"
-            );
-            root.global_state.emit_signal(RenderRootSignal::StartIme);
         }
     }
 
@@ -778,14 +745,15 @@ pub(crate) fn run_update_focus_pass(root: &mut RenderRoot) {
             ctx.widget_state.set_request_accessibility(true);
             ctx.widget_state.set_needs_accessibility(true);
         });
+    }
 
-        let accepts_text = next_focused
+    // A window may regain OS focus without changing its logical focus target.
+    let accepts_text = root.global_state.window_focused()
+        && next_focused
             .and_then(|id| root.widget_arena.get_state(id))
             .is_some_and(WidgetState::accepts_text_input);
-        root.global_state.set_is_ime_active(accepts_text);
-        if accepts_text {
-            root.global_state.emit_signal(RenderRootSignal::StartIme);
-        }
+    if accepts_text && !root.global_state.is_ime_active() {
+        root.global_state.start_ime_session();
     }
 
     if next_focused.is_some() {

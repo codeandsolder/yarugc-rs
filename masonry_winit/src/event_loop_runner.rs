@@ -191,7 +191,7 @@ impl Window {
         if let Some(properties) = new_window.default_properties {
             options.default_properties = properties;
         }
-        Self {
+        let mut window = Self {
             id: window_id,
             handle,
             accesskit_adapter,
@@ -210,7 +210,13 @@ impl Window {
             last_anim: None,
             present_mode: wgpu::PresentMode::AutoVsync,
             surface_recovery_attempted: false,
+        };
+        if !window.handle.has_focus() {
+            window
+                .render_root
+                .handle_text_event(&TextEvent::WindowFocusChange(false));
         }
+        window
     }
 
     /// Access the underlying [Winit window](WindowHandle) of this window.
@@ -1193,7 +1199,7 @@ impl MasonryState {
             .render_cx
             .devices
             .get(&dev_id)
-            .is_some_and(|device| device.is_lost())
+            .is_some_and(crate::vello_util::DeviceHandle::is_lost)
         {
             return;
         }

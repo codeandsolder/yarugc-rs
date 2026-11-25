@@ -1120,6 +1120,12 @@ impl RenderRootState {
     root_flag_accessors!(access_tree_active, set_access_tree_active, AccessTreeActive);
     root_flag_accessors!(debug_paint, set_debug_paint, DebugPaint);
 
+    pub(crate) fn start_ime_session(&mut self) {
+        self.set_is_ime_active(true);
+        self.last_sent_ime_area = INVALID_IME_AREA;
+        self.emit_signal(RenderRootSignal::StartIme);
+    }
+
     /// Sends a signal to the runner of this app, which allows global actions to be triggered by a widget.
     pub(crate) fn emit_signal(&mut self, signal: RenderRootSignal) {
         (self.signal_sink)(signal);

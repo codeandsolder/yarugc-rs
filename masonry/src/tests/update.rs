@@ -567,6 +567,130 @@ fn ime_start_stop() {
     assert!(!harness.has_ime_session());
 }
 
+#[test]
+fn ime_stops_on_window_blur_and_resumes_for_logical_focus() {
+    let first = WidgetTag::named("first");
+    let second = WidgetTag::named("second");
+    let root = Flex::column()
+        .with_fixed(
+            TextArea::new_editable("first")
+                .record()
+                .prepare()
+                .with_tag(first),
+        )
+        .with_fixed(
+            TextArea::new_editable("second")
+                .record()
+                .prepare()
+                .with_tag(second),
+        )
+        .prepare();
+    let mut harness = TestHarness::create(test_property_set(), root);
+    let first_id = harness.get_widget(first).unwrap().id();
+    let second_id = harness.get_widget(second).unwrap().id();
+
+    harness.focus_on(Some(first_id));
+    assert!(harness.has_ime_session());
+    harness.process_text_event(&TextEvent::preedit("仮".into()));
+    harness.flush_records_of(first).unwrap();
+    harness.process_text_event(&TextEvent::WindowFocusChange(false));
+    assert!(!harness.has_ime_session());
+    assert_eq!(harness.focused_widget_id(), Some(first_id));
+    assert_eq!(
+        harness.get_widget(first).unwrap().inner().inner().text(),
+        "first"
+    );
+    assert_any(harness.take_records_of(first).unwrap(), |r| {
+        matches!(r, Record::TextEvent(TextEvent::Ime(Ime::Disabled)))
+    });
+
+    // Native events already queued for the blurred window cannot edit it.
+    harness.process_text_event(&TextEvent::Ime(Ime::Commit("stale".into())));
+    harness.process_text_event(&TextEvent::ClipboardPaste("stale".into()));
+    harness.process_text_event(&TextEvent::Ime(Ime::Disabled));
+    assert!(harness.pop_action_erased().is_none());
+    assert_eq!(
+        harness.get_widget(first).unwrap().inner().inner().text(),
+        "first"
+    );
+
+    harness.focus_on(Some(second_id));
+    assert!(!harness.has_ime_session());
+    harness.process_text_event(&TextEvent::WindowFocusChange(true));
+    assert!(harness.has_ime_session());
+    assert_eq!(harness.focused_widget_id(), Some(second_id));
+    harness.process_text_event(&TextEvent::Ime(Ime::Commit("!".into())));
+    assert_eq!(
+        harness.get_widget(first).unwrap().inner().inner().text(),
+        "first"
+    );
+    assert!(
+        harness
+            .get_widget(second)
+            .unwrap()
+            .inner()
+            .inner()
+            .text()
+            .contains('!')
+    );
+
+    // A blur/refocus without a logical focus change starts a fresh session too.
+    harness.process_text_event(&TextEvent::WindowFocusChange(false));
+    assert!(!harness.has_ime_session());
+    harness.process_text_event(&TextEvent::WindowFocusChange(true));
+    assert!(harness.has_ime_session());
+    assert_eq!(harness.focused_widget_id(), Some(second_id));
+}
+
+#[test]
+fn ime_is_targeted_and_never_bubbles_or_uses_focus_fallback() {
+    let child_tag = WidgetTag::named("ime-child");
+    let parent_tag = WidgetTag::named("ime-parent");
+    let child = ModularWidget::new(())
+        .accepts_focus(true)
+        .accepts_text_input(true)
+        .measure_fn(|_, _, _, _, _, _| 10.px())
+        .record()
+        .prepare()
+        .with_tag(child_tag);
+    let parent = ModularWidget::new_parent(child)
+        .record()
+        .prepare()
+        .with_tag(parent_tag);
+    let mut harness = TestHarness::create(test_property_set(), parent);
+    let child_id = harness.get_widget(child_tag).unwrap().id();
+    let parent_id = harness.get_widget(parent_tag).unwrap().id();
+    harness.set_focus_fallback(Some(parent_id));
+    harness.flush_records_of(parent_tag).unwrap();
+    harness.process_text_event(&TextEvent::Ime(Ime::Commit("orphan".into())));
+    assert!(
+        !harness
+            .take_records_of(parent_tag)
+            .unwrap()
+            .iter()
+            .any(|r| matches!(r, Record::TextEvent(TextEvent::Ime(_))))
+    );
+
+    harness.focus_on(Some(child_id));
+    harness.flush_records_of(parent_tag).unwrap();
+    harness.flush_records_of(child_tag).unwrap();
+    harness.process_text_event(&TextEvent::Ime(Ime::Commit("owned".into())));
+    assert_any(harness.take_records_of(child_tag).unwrap(), |r| {
+        matches!(r, Record::TextEvent(TextEvent::Ime(Ime::Commit(_))))
+    });
+    harness.focus_on(None);
+    assert_any(harness.take_records_of(child_tag).unwrap(), |r| {
+        matches!(r, Record::TextEvent(TextEvent::Ime(Ime::Disabled)))
+    });
+    assert!(
+        !harness
+            .take_records_of(parent_tag)
+            .unwrap()
+            .iter()
+            .any(|r| matches!(r, Record::TextEvent(TextEvent::Ime(_))))
+    );
+}
+
 // SCROLL
 
 // POINTER

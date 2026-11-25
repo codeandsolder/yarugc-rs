@@ -103,10 +103,11 @@ In that case, we still mark the widget as focused, but with a different color to
 
 Masonry drivers have the option to give set a widget as the "focus fallback".
 
-In that case, if no widget is focused, text events will get to the fallback widget instead.
+In that case, if no widget is focused, keyboard and clipboard events will get to the fallback widget instead.
 
 The focus fallback isn't considered as "focused" and will not get [`FocusChanged`] events or be visually marked as focused.
 
+IME events are delivered only to the focused text-input widget, not its ancestors or the focus fallback. Losing window focus ends its IME session without clearing logical widget focus; regaining window focus starts a new session if the focused widget accepts text input.
 
 ## Disabled
 

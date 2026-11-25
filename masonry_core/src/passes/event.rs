@@ -67,11 +67,18 @@ const fn try_event_position(event: &PointerEvent) -> Option<PhysicalPosition<f64
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EventRoute {
+    Bubble,
+    BubbleIncludingDisabled,
+    TargetOnly,
+}
+
 fn run_event_pass<E>(
     root: &mut RenderRoot,
     target: Option<WidgetId>,
     event: &E,
-    skip_if_disabled: bool,
+    route: EventRoute,
     pointer_press: Option<PointerPress>,
     pass_fn: impl FnMut(&mut dyn Widget, &mut EventCtx<'_>, &mut PropertiesMut<'_>, &E),
     trace: bool,
@@ -89,13 +96,13 @@ fn run_event_pass<E>(
             break;
         };
 
-        if skip_if_disabled && node.item.state.is_disabled() {
+        if route == EventRoute::Bubble && node.item.state.is_disabled() {
             // If the widget is disabled, we skip it and bubble to its parent.
             target_widget_id = parent_id;
             continue;
         }
 
-        if !is_handled {
+        if !is_handled && (route != EventRoute::TargetOnly || widget_id == original_target) {
             let _span = enter_span(&node.item.state);
             let widget_type_id = node.item.widget.as_ref().type_id();
             let stack = root
@@ -280,12 +287,16 @@ pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEv
         }
     }
 
-    let skip_if_disabled = !matches!(event, PointerEvent::Cancel { .. });
+    let route = if matches!(event, PointerEvent::Cancel { .. }) {
+        EventRoute::BubbleIncludingDisabled
+    } else {
+        EventRoute::Bubble
+    };
     let handled = run_event_pass(
         root,
         target_widget_id,
         event,
-        skip_if_disabled,
+        route,
         match event {
             PointerEvent::Down(press) => Some(PointerPress {
                 pointer: press.pointer,
@@ -319,10 +330,54 @@ pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEv
     handled
 }
 
+// IME events belong to one text-input owner. In particular the final Disabled
+// event must reach that owner even if it has just become disabled or stashed.
+fn dispatch_ime(root: &mut RenderRoot, owner: WidgetId, event: &TextEvent) -> Handled {
+    run_event_pass(
+        root,
+        Some(owner),
+        event,
+        EventRoute::TargetOnly,
+        None,
+        |widget, ctx, props, event| widget.on_text_event(ctx, props, event),
+        true,
+    )
+}
+
+pub(crate) fn end_ime_session(root: &mut RenderRoot) {
+    if !root.global_state.is_ime_active() {
+        return;
+    }
+    root.global_state.set_is_ime_active(false);
+    root.global_state.emit_signal(RenderRootSignal::EndIme);
+    if let Some(owner) = root.global_state.focused_widget
+        && root.has_widget(owner)
+    {
+        dispatch_ime(root, owner, &TextEvent::Ime(Ime::Disabled));
+    }
+}
+
 // --- MARK: TEXT EVENT
 /// See the [passes documentation](crate::doc::pass_system#event-passes).
 pub(crate) fn run_on_text_event_pass(root: &mut RenderRoot, event: &TextEvent) -> Handled {
+    if let TextEvent::WindowFocusChange(focused) = event {
+        root.global_state.set_window_focused(*focused);
+    } else if !root.global_state.window_focused() {
+        return Handled::No;
+    }
+
+    if matches!(event, TextEvent::Ime(_)) {
+        if root.global_state.is_ime_active()
+            && let Some(owner) = root.global_state.focused_widget
+            && root.is_still_interactive(owner)
+        {
+            return dispatch_ime(root, owner, event);
+        }
+        return Handled::No;
+    }
+
     if matches!(event, TextEvent::WindowFocusChange(false)) {
+        end_ime_session(root);
         run_on_pointer_event_pass(
             root,
             &PointerEvent::Cancel(PointerInfo {
@@ -337,10 +392,6 @@ pub(crate) fn run_on_text_event_pass(root: &mut RenderRoot, event: &TextEvent) -
 
     trace!("Running ON_TEXT_EVENT pass with {}", event.short_name());
 
-    if let TextEvent::WindowFocusChange(focused) = event {
-        root.global_state.set_window_focused(*focused);
-    }
-
     let target = root.global_state.focused_widget.or_else(|| {
         if let Some(focus_fallback) = root.global_state.focus_fallback
             && root.is_still_interactive(focus_fallback)
@@ -351,12 +402,11 @@ pub(crate) fn run_on_text_event_pass(root: &mut RenderRoot, event: &TextEvent) -
         }
     });
 
-    let skip_if_disabled = !matches!(event, TextEvent::Ime(Ime::Disabled));
     let mut handled = run_event_pass(
         root,
         target,
         event,
-        skip_if_disabled,
+        EventRoute::Bubble,
         None,
         |widget, ctx, props, event| {
             widget.on_text_event(ctx, props, event);
@@ -364,42 +414,8 @@ pub(crate) fn run_on_text_event_pass(root: &mut RenderRoot, event: &TextEvent) -
         true,
     );
 
-    if let TextEvent::Keyboard(key) = event {
-        // Handle Tab focus
-        if key.key == Key::Named(NamedKey::Tab)
-            && key.state == KeyState::Down
-            && handled == Handled::No
-        {
-            let forward = !key.modifiers.shift();
-            let next_focused_widget = find_next_focusable(root, forward);
-            root.global_state.next_focused_widget = next_focused_widget;
-            handled = Handled::Yes;
-        }
-
-        if key.key == Key::Named(NamedKey::F11)
-            && key.state == KeyState::Down
-            && handled == Handled::No
-        {
-            root.global_state.inspector_state.is_picking_widget =
-                !root.global_state.inspector_state.is_picking_widget;
-            root.global_state.inspector_state.hovered_widget = None;
-            if let Some(state) = root.root_state_mut() {
-                state.set_needs_paint(true);
-            }
-            handled = Handled::Yes;
-        }
-
-        if key.key == Key::Named(NamedKey::F12)
-            && key.state == KeyState::Down
-            && handled == Handled::No
-        {
-            root.global_state
-                .set_debug_paint(!root.global_state.debug_paint());
-            if let Some(state) = root.root_state_mut() {
-                state.set_needs_paint(true);
-            }
-            handled = Handled::Yes;
-        }
+    if handled == Handled::No {
+        handled = handle_global_shortcut(root, event);
     }
 
     trace!(
@@ -409,6 +425,38 @@ pub(crate) fn run_on_text_event_pass(root: &mut RenderRoot, event: &TextEvent) -
     );
 
     handled
+}
+
+fn handle_global_shortcut(root: &mut RenderRoot, event: &TextEvent) -> Handled {
+    let TextEvent::Keyboard(key) = event else {
+        return Handled::No;
+    };
+    if key.state != KeyState::Down {
+        return Handled::No;
+    }
+    match key.key {
+        Key::Named(NamedKey::Tab) => {
+            root.global_state.next_focused_widget =
+                find_next_focusable(root, !key.modifiers.shift());
+        }
+        Key::Named(NamedKey::F11) if !key.repeat => {
+            root.global_state.inspector_state.is_picking_widget =
+                !root.global_state.inspector_state.is_picking_widget;
+            root.global_state.inspector_state.hovered_widget = None;
+            if let Some(state) = root.root_state_mut() {
+                state.set_needs_paint(true);
+            }
+        }
+        Key::Named(NamedKey::F12) if !key.repeat => {
+            root.global_state
+                .set_debug_paint(!root.global_state.debug_paint());
+            if let Some(state) = root.root_state_mut() {
+                state.set_needs_paint(true);
+            }
+        }
+        _ => return Handled::No,
+    }
+    Handled::Yes
 }
 
 // --- MARK: ACCESS EVENT
@@ -439,7 +487,7 @@ pub(crate) fn run_on_access_event_pass(
             root,
             Some(target),
             event,
-            true,
+            EventRoute::Bubble,
             None,
             |widget, ctx, props, event| {
                 widget.on_access_event(ctx, props, event);
