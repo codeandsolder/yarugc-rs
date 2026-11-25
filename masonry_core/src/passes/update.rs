@@ -411,182 +411,152 @@ fn notify_inherited_state_change(
     widget.update(&mut ctx, &mut props, event);
 }
 
-// --- MARK: DISABLED
-/// See the [passes documentation](crate::doc::pass_system#update-passes).
-/// See the [disabled status documentation](../doc/06_masonry_concepts.md#disabled).
-fn update_disabled_for_widget(
+// --- MARK: INHERITED STATE
+// Both flags inherit from ancestors. Only their side effects differ.
+#[derive(Clone, Copy)]
+enum InheritedStatus {
+    Disabled,
+    Stashed,
+}
+
+impl InheritedStatus {
+    const fn explicit(self, state: &WidgetState) -> bool {
+        match self {
+            Self::Disabled => state.is_explicitly_disabled(),
+            Self::Stashed => state.is_explicitly_stashed(),
+        }
+    }
+
+    const fn effective(self, state: &WidgetState) -> bool {
+        match self {
+            Self::Disabled => state.is_disabled(),
+            Self::Stashed => state.is_stashed(),
+        }
+    }
+
+    const fn pending(self, state: &WidgetState) -> bool {
+        match self {
+            Self::Disabled => state.needs_update_disabled(),
+            Self::Stashed => state.needs_update_stashed(),
+        }
+    }
+
+    fn consume(self, state: &mut WidgetState) {
+        match self {
+            Self::Disabled => state.set_needs_update_disabled(false),
+            Self::Stashed => state.set_needs_update_stashed(false),
+        }
+    }
+
+    fn change(self, state: &mut WidgetState, value: bool) -> Update {
+        state.set_needs_update_focusable(true);
+        match self {
+            Self::Disabled => {
+                state.set_is_disabled(value);
+                state.class_diff.pseudo.set(PseudoClass::Disabled, value);
+                state.set_request_update_props(true);
+                state.set_needs_update_props(true);
+                state.set_request_accessibility(true);
+                state.set_needs_accessibility(true);
+                Update::DisabledChanged(value)
+            }
+            Self::Stashed => {
+                state.set_is_stashed(value);
+                if !value {
+                    // Hidden widgets can have changed since their last layout.
+                    state.set_needs_layout(true);
+                    state.set_request_layout(true);
+                    state.set_request_paint(true);
+                    state.set_needs_paint(true);
+                    state.set_needs_accessibility(true);
+                    state.set_request_accessibility(true);
+                }
+                Update::StashedChanged(value)
+            }
+        }
+    }
+
+    fn invalidate_parent(self, parent: &mut WidgetState) {
+        if matches!(self, Self::Stashed) {
+            // The visible child list and union of paint bounds both changed.
+            parent.set_request_accessibility(true);
+            parent.set_needs_accessibility(true);
+            parent.set_needs_paint(true);
+            parent.set_needs_compose(true);
+        }
+    }
+}
+
+fn update_inherited_status(
     global_state: &mut RenderRootState,
-    default_properties: &DefaultProperties,
     property_arena: &PropertyArena,
     node: ArenaMut<'_, WidgetArenaNode>,
-    parent_disabled: bool,
-) {
+    status: InheritedStatus,
+    parent_value: bool,
+) -> bool {
     let mut children = node.children;
     let widget = &mut *node.item.widget;
     let state = &mut node.item.state;
-    let properties = &mut node.item.properties;
-    let class_set = &node.item.class_set;
-    let id = state.id;
-
-    let _span = enter_span(state);
-
-    let disabled = state.is_explicitly_disabled() || parent_disabled;
-    if !state.needs_update_disabled() && disabled == state.is_disabled() {
-        return;
+    let value = status.explicit(state) || parent_value;
+    let changed = value != status.effective(state);
+    if !changed && !status.pending(state) {
+        return false;
     }
-
-    state.set_needs_update_disabled(false);
-    if disabled != state.is_disabled() {
-        state.set_is_disabled(disabled);
+    let _span = enter_span(state);
+    status.consume(state);
+    if changed {
+        let event = status.change(state, value);
         notify_inherited_state_change(
             global_state,
-            default_properties,
+            &property_arena.default_properties,
             property_arena,
             state,
             children.reborrow_mut(),
-            (widget, properties, class_set),
-            &Update::DisabledChanged(disabled),
+            (widget, &mut node.item.properties, &node.item.class_set),
+            &event,
         );
-        state.class_diff.pseudo.set(PseudoClass::Disabled, disabled);
-        state.set_request_update_props(true);
-        state.set_needs_update_props(true);
-        state.set_needs_update_focusable(true);
-        state.set_request_accessibility(true);
-        state.set_needs_accessibility(true);
     }
 
-    let parent_state = state;
-    recurse_on_children(id, widget, children, |mut node| {
-        update_disabled_for_widget(
+    recurse_on_children(state.id, widget, children, |mut node| {
+        if update_inherited_status(
             global_state,
-            default_properties,
             property_arena,
             node.reborrow_mut(),
-            disabled,
-        );
-        parent_state.merge_up(&node.item.state);
+            status,
+            value,
+        ) {
+            status.invalidate_parent(state);
+        }
+        state.merge_up(&node.item.state);
     });
+    changed
+}
+
+fn run_inherited_status_pass(root: &mut RenderRoot, status: InheritedStatus) {
+    if !root.root_state().is_some_and(|state| status.pending(state)) {
+        return;
+    }
+    // Effective visibility and disabled state both affect hit testing.
+    root.global_state.set_needs_pointer_pass(true);
+    if let Some(root_node) = root.widget_arena.nodes.find_mut(root.root_id()) {
+        update_inherited_status(
+            &mut root.global_state,
+            &root.property_arena,
+            root_node,
+            status,
+            false,
+        );
+    }
 }
 
 pub(crate) fn run_update_disabled_pass(root: &mut RenderRoot) {
     let _span = info_span!("update_disabled").entered();
-
-    // If a widget was enabled or disabled, the pointer icon may need to change.
-    if root
-        .root_state()
-        .is_some_and(WidgetState::needs_update_disabled)
-    {
-        root.global_state.set_needs_pointer_pass(true);
-    }
-
-    let Some(root_node) = root.widget_arena.nodes.find_mut(root.root_id()) else {
-        return;
-    };
-    update_disabled_for_widget(
-        &mut root.global_state,
-        &root.property_arena.default_properties,
-        &root.property_arena,
-        root_node,
-        false,
-    );
-}
-
-// ----------------
-
-// *Stashed* is for widgets that are no longer "part of the graph". So they can't get keyboard events, don't get painted, etc, but should keep some state.
-// Scrolled-out widgets are *not* stashed.
-
-// --- MARK: STASHED
-/// See the [passes documentation](crate::doc::pass_system#update-passes).
-/// See the [stashed status documentation](../doc/06_masonry_concepts.md#stashed).
-fn update_stashed_for_widget(
-    global_state: &mut RenderRootState,
-    default_properties: &DefaultProperties,
-    property_arena: &PropertyArena,
-    node: ArenaMut<'_, WidgetArenaNode>,
-    parent_stashed: bool,
-) {
-    let mut children = node.children;
-    let widget = &mut *node.item.widget;
-    let state = &mut node.item.state;
-    let properties = &mut node.item.properties;
-    let class_set = &node.item.class_set;
-    let id = state.id;
-
-    let _span = enter_span(state);
-
-    let stashed = state.is_explicitly_stashed() || parent_stashed;
-    if !state.needs_update_stashed() && stashed == state.is_stashed() {
-        return;
-    }
-
-    state.set_needs_update_stashed(false);
-    if stashed != state.is_stashed() {
-        state.set_is_stashed(stashed);
-        notify_inherited_state_change(
-            global_state,
-            default_properties,
-            property_arena,
-            state,
-            children.reborrow_mut(),
-            (widget, properties, class_set),
-            &Update::StashedChanged(stashed),
-        );
-        state.set_needs_update_focusable(true);
-
-        // Items may have been changed while they were stashed in ways that require a
-        // relayout and a re-render.
-        if !stashed {
-            state.set_needs_layout(true);
-            state.set_request_layout(true);
-            state.set_request_paint(true);
-            state.set_needs_paint(true);
-            state.set_needs_accessibility(true);
-            state.set_request_accessibility(true);
-        }
-    }
-
-    let parent_state = state;
-    recurse_on_children(id, widget, children, |mut node| {
-        let was_stashed = node.item.state.is_stashed();
-        update_stashed_for_widget(
-            global_state,
-            default_properties,
-            property_arena,
-            node.reborrow_mut(),
-            stashed,
-        );
-        if was_stashed != node.item.state.is_stashed() {
-            // The parent owns the visible child list and the union of its
-            // children's paint bounds. A visibility change affects both.
-            parent_state.set_request_accessibility(true);
-            parent_state.set_needs_accessibility(true);
-            parent_state.set_needs_paint(true);
-            parent_state.set_needs_compose(true);
-        }
-        parent_state.merge_up(&node.item.state);
-    });
+    run_inherited_status_pass(root, InheritedStatus::Disabled);
 }
 
 pub(crate) fn run_update_stashed_pass(root: &mut RenderRoot) {
     let _span = info_span!("update_stashed").entered();
-    if root
-        .root_state()
-        .is_some_and(WidgetState::needs_update_stashed)
-    {
-        root.global_state.set_needs_pointer_pass(true);
-    }
-
-    let Some(root_node) = root.widget_arena.nodes.find_mut(root.root_id()) else {
-        return;
-    };
-    update_stashed_for_widget(
-        &mut root.global_state,
-        &root.property_arena.default_properties,
-        &root.property_arena,
-        root_node,
-        false,
-    );
+    run_inherited_status_pass(root, InheritedStatus::Stashed);
 }
 
 // ----------------
