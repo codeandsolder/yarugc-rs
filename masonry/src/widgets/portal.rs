@@ -1041,11 +1041,12 @@ mod tests {
         let content = SizedBox::empty().size(80.px(), 600.px()).prepare();
         let widget = Portal::new(content).constrain_horizontal(true).prepare();
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (100, 200));
-        let bar = harness.root_widget().unwrap().children()[2];
+        let bar = harness.root_widget().unwrap().children()[1];
         let bar_id = bar.id();
-        let end = bar
-            .ctx()
-            .local_to_window(Point::new(bar.ctx().content_box().width() / 2.0, 199.0));
+        let end = bar.ctx().local_to_window(Point::new(
+            bar.ctx().content_box().width() / 2.0,
+            bar.ctx().content_box().height() - 1.0,
+        ));
         harness.mouse_move(end);
         harness.mouse_button_press(None);
         harness.mouse_button_release(None);

@@ -644,8 +644,9 @@ mod tests {
         assert!(harness.pop_action_erased().is_none());
 
         harness.mouse_click_on(scrollbar_id, None).unwrap();
-        // TODO - Scroll action?
-        assert!(harness.pop_action_erased().is_none());
+        let (action, source) = harness.pop_action::<ScrollBarMoved>().unwrap().unwrap();
+        assert_eq!(source, scrollbar_id);
+        assert!((action.0 - 0.5).abs() < 1e-9);
 
         assert_render_snapshot!(harness, "scrollbar_horizontal_middle");
     }
