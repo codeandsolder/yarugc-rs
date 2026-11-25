@@ -450,7 +450,8 @@ pub trait Widget: AsDynWidget + Any {
     /// Cheaper alternative than doing a full layout.
     ///
     /// This method is guaranteed to be called after this widget's [`layout`] method runs,
-    /// and after this widget explicitly requests compose. It may also be called in other scenarios.
+    /// after this widget explicitly requests compose, and when this widget or an ancestor changes
+    /// transform. It may also be called in other scenarios.
     ///
     /// [`layout`]: Self::layout
     fn compose(&mut self, _ctx: &mut ComposeCtx<'_>) {}

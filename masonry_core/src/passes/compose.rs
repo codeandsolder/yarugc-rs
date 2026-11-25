@@ -47,7 +47,7 @@ fn compose_widget(
         children: children.reborrow_mut(),
         property_arena,
     };
-    if ctx.widget_state.request_compose() {
+    if transformed || ctx.widget_state.request_compose() {
         widget.compose(&mut ctx);
     }
 

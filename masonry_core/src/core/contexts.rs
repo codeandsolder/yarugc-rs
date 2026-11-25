@@ -20,9 +20,10 @@ use tree_arena::{ArenaMutList, ArenaRef, ArenaRefList};
 
 use crate::app::{MutateCallback, PointerCapture, PointerPress, RenderRootSignal, RenderRootState};
 use crate::core::{
-    AllowRawMut, BrushIndex, ClassSet, ErasedAction, FromDynWidget, LayerType, NewWidget,
-    PaintLayerMode, PropertiesMut, PropertiesRef, PropertyArena, PropertyCache, ResizeDirection,
-    Widget, WidgetArenaNode, WidgetId, WidgetMut, WidgetPod, WidgetRef, WidgetState,
+    AllowRawMut, BrushIndex, ClassSet, ErasedAction, FromDynWidget, LayerPlacement, LayerType,
+    NewWidget, PaintLayerMode, PropertiesMut, PropertiesRef, PropertyArena, PropertyCache,
+    ResizeDirection, Widget, WidgetArenaNode, WidgetId, WidgetMut, WidgetPod, WidgetRef,
+    WidgetState,
 };
 use crate::kurbo::{Affine, Axis, Insets, Point, Rect, Size, Vec2};
 use crate::layout::{LayoutSize, LenDef, LenReq, Length, SizeDef, UnitPoint};
@@ -1996,7 +1997,7 @@ impl_context_method!(
 
         /// Creates a new [layer] at a specified `position`.
         ///
-        /// The given `position` must be in the window's coordinate space.
+        /// The placement is expressed in window coordinates.
         ///
         /// # Panics
         ///
@@ -2007,7 +2008,7 @@ impl_context_method!(
             &mut self,
             layer_type: LayerType,
             mut fallback_widget: NewWidget<W>,
-            position: Point,
+            placement: LayerPlacement,
         ) {
             trace!("create_layer");
 
@@ -2022,7 +2023,7 @@ impl_context_method!(
             self.global_state.emit_signal(RenderRootSignal::NewLayer(
                 layer_type,
                 fallback_widget.erased(),
-                position,
+                placement,
             ));
         }
 
@@ -2032,7 +2033,7 @@ impl_context_method!(
         /// A widget can only have one layer of any given type `W` at a time:
         /// if a widget creates two layers of the same type, the old layer will be removed.
         ///
-        /// The given `position` must be in the window's coordinate space.
+        /// The placement is expressed in window coordinates.
         ///
         /// # Panics
         ///
@@ -2043,7 +2044,7 @@ impl_context_method!(
             &mut self,
             layer_type: LayerType,
             mut fallback_widget: NewWidget<W>,
-            position: Point,
+            placement: LayerPlacement,
         ) {
             trace!("create_attached_layer");
 
@@ -2072,7 +2073,7 @@ impl_context_method!(
             self.global_state.emit_signal(RenderRootSignal::NewLayer(
                 layer_type,
                 fallback_widget.erased(),
-                position,
+                placement,
             ));
         }
 
@@ -2099,14 +2100,19 @@ impl_context_method!(
                 self.global_state.attached_layers.remove(&self.widget_id());
             }
         }
+    }
+);
 
-        /// Repositions the layer with the specified widget as root.
-        ///
-        /// The given `position` must be in the window's coordinate space.
-        pub fn reposition_layer(&mut self, root_widget_id: WidgetId, position: Point) {
-            trace!("reposition_layer");
+impl_context_method!(
+    MutateCtx<'_>,
+    EventCtx<'_>,
+    UpdateCtx<'_>,
+    ComposeCtx<'_>,
+    {
+        /// Updates the placement policy of an existing layer.
+        pub fn reposition_layer(&mut self, root_widget_id: WidgetId, placement: LayerPlacement) {
             self.global_state
-                .emit_signal(RenderRootSignal::RepositionLayer(root_widget_id, position));
+                .emit_signal(RenderRootSignal::RepositionLayer(root_widget_id, placement));
         }
     }
 );

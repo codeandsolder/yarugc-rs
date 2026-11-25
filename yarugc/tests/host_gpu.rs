@@ -194,9 +194,10 @@ fn cached_window_and_dynamic_layer_on_host_device() {
             }),
     );
     let external_id = external.id();
-    window
-        .root()
-        .add_layer(external, masonry::kurbo::Point::ZERO);
+    window.root().add_layer(
+        external,
+        masonry::core::LayerPlacement::Absolute(masonry::kurbo::Point::ZERO),
+    );
     window
         .root()
         .handle_window_event(WindowEvent::EnableAccessTree);

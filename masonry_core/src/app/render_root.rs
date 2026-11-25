@@ -19,8 +19,8 @@ use crate::app::VisualLayerPlan;
 use crate::app::layer_stack::LayerStack;
 use crate::core::{
     AccessCtx, AccessEvent, BrushIndex, CursorIcon, DefaultProperties, ErasedAction, FromDynWidget,
-    Handled, Ime, LayerType, NewWidget, PointerButton, PointerEvent, PointerInfo, PropertyArena,
-    PropertyStack, PropertyStackId, ResizeDirection, TextEvent, Widget, WidgetArena,
+    Handled, Ime, LayerPlacement, LayerType, NewWidget, PointerButton, PointerEvent, PointerInfo,
+    PropertyArena, PropertyStack, PropertyStackId, ResizeDirection, TextEvent, Widget, WidgetArena,
     WidgetArenaNode, WidgetId, WidgetMut, WidgetPod, WidgetRef, WidgetState, WidgetTag,
     WidgetTagInner, WindowEvent,
 };
@@ -284,16 +284,16 @@ pub enum RenderRootSignal {
     WidgetSelectedInInspector(WidgetId),
     /// A new [layer] should be created with the widget as root.
     ///
-    /// The given [`Point`] must be in the window's coordinate space.
+    /// The placement is expressed in window coordinates.
     ///
     /// [layer]: crate::doc::masonry_concepts#layers
-    NewLayer(LayerType, NewWidget<dyn Widget>, Point),
+    NewLayer(LayerType, NewWidget<dyn Widget>, LayerPlacement),
     /// The layer with the given widget as root should be removed.
     RemoveLayer(WidgetId),
     /// The layer with the given widget as root should be repositioned to the specified point.
     ///
-    /// The given [`Point`] must be in the window's coordinate space.
-    RepositionLayer(WidgetId, Point),
+    /// The placement is expressed in window coordinates.
+    RepositionLayer(WidgetId, LayerPlacement),
 }
 
 /// State of the widget inspector. Useful for debugging.
@@ -692,14 +692,14 @@ impl RenderRoot {
 
     /// Adds a new layer at the end of the stack, with the given widget as its root, at the given position.
     ///
-    /// The given `pos` must be in the window's coordinate space.
-    pub fn add_layer(&mut self, root: NewWidget<impl Widget + ?Sized>, pos: Point) {
+    /// The placement is expressed in window coordinates.
+    pub fn add_layer(&mut self, root: NewWidget<impl Widget + ?Sized>, placement: LayerPlacement) {
         debug!("added layer to stack");
         let _ = mutate_widget(
             self,
             self.root_id(),
             |mut layer_stack: WidgetMut<'_, LayerStack>| {
-                LayerStack::add_layer(&mut layer_stack, root, pos);
+                LayerStack::add_layer(&mut layer_stack, root, placement);
             },
         );
 
@@ -744,20 +744,20 @@ impl RenderRoot {
 
     /// Repositions the layer with the given widget as root.
     ///
-    /// The given `new_origin` must be in the window's coordinate space.
+    /// The placement is expressed in window coordinates.
     ///
     /// The base layer cannot be repositioned.
     ///
     /// # Panics
     ///
-    /// Panics in debug mode if the intended layer is the base layer or
-    /// is not found.
-    pub fn reposition_layer(&mut self, root_id: WidgetId, new_origin: Point) {
+    /// Panics in debug mode if the intended layer is the base layer.
+    /// A layer removed before a queued reposition is ignored.
+    pub fn reposition_layer(&mut self, root_id: WidgetId, placement: LayerPlacement) {
         let _ = mutate_widget(
             self,
             self.root_id(),
             |mut layer_stack: WidgetMut<'_, LayerStack>| {
-                LayerStack::reposition_layer(&mut layer_stack, root_id, new_origin);
+                LayerStack::reposition_layer(&mut layer_stack, root_id, placement);
             },
         );
 

@@ -7,11 +7,11 @@ use tracing::{Span, trace_span};
 use super::selection_control::Activation;
 use crate::core::keyboard::{Key, NamedKey};
 use crate::core::{
-    AccessCtx, AccessEvent, EventCtx, LayerType, PointerButton, PointerButtonEvent, PointerEvent,
-    PropertiesMut, PropertiesRef, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
-    WidgetPod,
+    AccessCtx, AccessEvent, ComposeCtx, EventCtx, LayerPlacement, LayerType, PointerButton,
+    PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, TextEvent, Update, UpdateCtx,
+    Widget, WidgetId, WidgetMut, WidgetPod,
 };
-use crate::kurbo::Point;
+use crate::kurbo::Rect;
 use crate::layers::SelectorMenu;
 use crate::layout::{AsUnit, UnitPoint};
 use crate::theme;
@@ -25,6 +25,8 @@ pub struct Selector {
     selected_option: Option<usize>,
     child: WidgetPod<Label>,
     activation: Activation,
+    popup_anchor: Option<Rect>,
+    active_option: Option<(WidgetId, WidgetId)>,
 }
 
 /// The requested option index does not exist.
@@ -60,6 +62,8 @@ impl Selector {
             selected_option,
             child: WidgetPod::new(Label::new(text)),
             activation: Activation::new(),
+            popup_anchor: None,
+            active_option: None,
         }
     }
 
@@ -137,6 +141,17 @@ impl Selector {
         Ok(())
     }
 
+    pub(crate) fn set_active_option(
+        this: &mut WidgetMut<'_, Self>,
+        menu: WidgetId,
+        option: Option<WidgetId>,
+    ) {
+        if this.ctx.get_attached_layer::<SelectorMenu>() == Some(menu) {
+            this.widget.active_option = option.map(|option| (menu, option));
+            this.ctx.request_accessibility_update();
+        }
+    }
+
     pub(crate) fn pick_from_menu(this: &mut WidgetMut<'_, Self>, menu: WidgetId, index: usize) {
         if this.ctx.get_attached_layer::<SelectorMenu>() != Some(menu)
             || this.ctx.is_disabled()
@@ -174,7 +189,7 @@ pub struct SelectionChanged {
 // --- MARK: HELPERS
 
 impl Selector {
-    fn activate_keyboard(&self, ctx: &mut EventCtx<'_>) {
+    fn activate_keyboard(&mut self, ctx: &mut EventCtx<'_>) {
         if let Some(menu) = ctx.get_attached_layer::<SelectorMenu>() {
             ctx.mutate_later::<SelectorMenu>(menu, |mut menu| {
                 SelectorMenu::commit_highlight(&mut menu);
@@ -184,7 +199,7 @@ impl Selector {
         }
     }
 
-    fn toggle_selector_layer(&self, ctx: &mut EventCtx<'_>) {
+    fn toggle_selector_layer(&mut self, ctx: &mut EventCtx<'_>) {
         if let Some(id) = ctx.get_attached_layer::<SelectorMenu>() {
             ctx.remove_layer(id);
             return;
@@ -196,10 +211,13 @@ impl Selector {
             options: self.options.clone(),
             selected_option,
         };
-        let menu = SelectorMenu::new(ctx.widget_id(), &self.options, selected_option).prepare();
-        let border = ctx.border_box();
-        let position = ctx.local_to_window(Point::new(border.x0, border.y1));
-        ctx.create_attached_layer(layer_type, menu, position);
+        let menu = SelectorMenu::new(ctx.widget_id(), &self.options, selected_option);
+        let active = menu.active_option_id();
+        let menu = menu.prepare();
+        self.active_option = active.map(|option| (menu.id(), option));
+        let anchor = ctx.window_transform().transform_rect_bbox(ctx.border_box());
+        self.popup_anchor = Some(anchor);
+        ctx.create_attached_layer(layer_type, menu, LayerPlacement::Popup(anchor));
     }
 }
 
@@ -261,8 +279,12 @@ impl Widget for Selector {
                     ctx.set_handled();
                 }
                 Key::Named(
-                    key
-                    @ (NamedKey::ArrowUp | NamedKey::ArrowDown | NamedKey::Home | NamedKey::End),
+                    key @ (NamedKey::ArrowUp
+                    | NamedKey::ArrowDown
+                    | NamedKey::Home
+                    | NamedKey::End
+                    | NamedKey::PageUp
+                    | NamedKey::PageDown),
                 ) if self.selected_option.is_some() => {
                     if let Some(menu) = ctx.get_attached_layer::<SelectorMenu>() {
                         ctx.mutate_later::<SelectorMenu>(menu, move |mut menu| {
@@ -325,6 +347,18 @@ impl Widget for Selector {
         }
     }
 
+    fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {
+        if let Some(menu) = ctx.get_attached_layer::<SelectorMenu>() {
+            let anchor = ctx.window_transform().transform_rect_bbox(ctx.border_box());
+            if self.popup_anchor != Some(anchor) {
+                self.popup_anchor = Some(anchor);
+                ctx.reposition_layer(menu, LayerPlacement::Popup(anchor));
+            }
+        } else {
+            self.popup_anchor = None;
+        }
+    }
+
     fn accessibility_role(&self) -> Role {
         Role::ComboBox
     }
@@ -345,6 +379,11 @@ impl Widget for Selector {
         node.set_expanded(layer.is_some());
         if let Some(layer) = layer {
             node.set_controls(vec![layer.into()]);
+            if let Some((menu, option)) = self.active_option
+                && menu == layer
+            {
+                node.set_active_descendant(option.into());
+            }
         }
     }
 
@@ -575,6 +614,103 @@ mod tests {
         assert!(attached(&harness, id).is_some());
         harness.mouse_click_on(id, None).unwrap();
         assert_eq!(attached(&harness, id), None);
+    }
+
+    #[test]
+    fn popup_flips_clips_scrolls_and_tracks_transformed_anchor() {
+        use crate::core::WindowEvent;
+        use crate::kurbo::{Affine, Point, Size};
+        use crate::properties::Dimensions;
+        use crate::testing::ModularWidget;
+
+        let options = (0..32).map(|i| format!("Option {i}")).collect();
+        let selector = Selector::new(options)
+            .with_selected_option(20)
+            .unwrap()
+            .prepare()
+            .with_props(Dimensions::fixed(90.px(), 25.px()));
+        let id = selector.id();
+        let root = ModularWidget::new_parent(selector)
+            .layout_fn(|child, ctx, _, _| {
+                ctx.run_layout(child, Size::new(90.0, 25.0));
+                ctx.place_child(child, Point::new(95.0, 90.0));
+            })
+            .prepare();
+        let mut harness = TestHarness::create_with_size(test_property_set(), root, (200, 120));
+        harness.focus_on(Some(id));
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::Enter)));
+        let menu = attached(&harness, id).unwrap();
+        let popup = harness.get_widget_with_id(menu).unwrap();
+        let bounds = popup
+            .ctx()
+            .window_transform()
+            .transform_rect_bbox(popup.ctx().border_box());
+        assert!(bounds.x0 >= 0.0 && bounds.y0 >= 0.0);
+        assert!(bounds.x1 <= 200.0 && bounds.y1 <= 90.0);
+        let items = popup
+            .children()
+            .iter()
+            .map(|item| item.id())
+            .collect::<Vec<_>>();
+        let _ = harness.redraw();
+        assert_eq!(
+            harness.access_node(id).unwrap().data().active_descendant(),
+            Some(items[20].into())
+        );
+        harness.mouse_move_to(items[20]).unwrap();
+        assert!(harness.mouse_move_to(items[0]).is_err());
+
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::Home)));
+        harness.mouse_move_to(items[0]).unwrap();
+        harness.mouse_wheel(crate::kurbo::Vec2::new(0.0, -10000.0));
+        harness.mouse_move_to(items[31]).unwrap();
+        harness.scroll_into_view(items[0]);
+        harness.mouse_move_to(items[0]).unwrap();
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::PageDown)));
+        let _ = harness.redraw();
+        assert_ne!(
+            harness.access_node(id).unwrap().data().active_descendant(),
+            Some(items[0].into())
+        );
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::End)));
+        harness.mouse_move_to(items[31]).unwrap();
+        let _ = harness.redraw();
+        assert_eq!(
+            harness.access_node(id).unwrap().data().active_descendant(),
+            Some(items[31].into())
+        );
+
+        // A transform on the owner itself moves the anchor to the top.
+        harness
+            .edit_widget_with_id(id, |mut widget| {
+                widget.ctx.set_transform(Affine::translate((-80.0, -80.0)));
+            })
+            .unwrap();
+        let popup = harness.get_widget_with_id(menu).unwrap();
+        let bounds = popup
+            .ctx()
+            .window_transform()
+            .transform_rect_bbox(popup.ctx().border_box());
+        assert!(bounds.y0 >= 35.0 && bounds.y1 <= 120.0);
+        harness.process_window_event(WindowEvent::Resize((160, 100).into()));
+        let popup = harness.get_widget_with_id(menu).unwrap();
+        let bounds = popup
+            .ctx()
+            .window_transform()
+            .transform_rect_bbox(popup.ctx().border_box());
+        assert!(bounds.x1 <= 160.0 && bounds.y1 <= 100.0);
+        harness.mouse_move_to(items[31]).unwrap();
+        harness.mouse_click_on(items[31], None).unwrap();
+        assert_eq!(
+            harness.pop_action::<SelectionChanged>().unwrap(),
+            Some((
+                SelectionChanged {
+                    selected_content: "Option 31".into(),
+                    index: 31
+                },
+                id
+            ))
+        );
     }
 
     #[test]
