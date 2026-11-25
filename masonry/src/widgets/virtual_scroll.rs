@@ -222,13 +222,14 @@ impl VirtualScroll {
     /// Creates a new virtual scrolling list.
     ///
     /// The item at `initial_anchor` will have its top aligned with the top of
-    /// the scroll area to start with.
+    /// the scroll area to start with (clamped to the last item if necessary).
     ///
     /// Note that it is not possible to add children before the widget is "live".
     /// This is for simplicity, as the set of the children which should be loaded has
     /// not yet been determined.
     #[must_use = "Use the returned value."]
     pub fn new(initial_anchor: usize, len: usize) -> Self {
+        let initial_anchor = initial_anchor.min(len.saturating_sub(1));
         let mut virtual_list = VirtualList::new(
             SparsePrefixSumExtentModel::new(DEFAULT_MEAN_ITEM_LENGTH, len),
             0.,
@@ -255,6 +256,11 @@ impl VirtualScroll {
     #[must_use = "Use the returned value."]
     pub fn with_len(mut self, len: usize) -> Self {
         self.virtual_list.set_len(len);
+        self.anchor_index = self.anchor_index.min(len.saturating_sub(1));
+        self.virtual_list
+            .scroll_to_index(self.anchor_index, ScrollAlign::Start);
+        self.active_range = self.anchor_index..self.anchor_index;
+        self.range_in_viewport = self.active_range.clone();
         self
     }
 
@@ -515,10 +521,12 @@ impl VirtualScroll {
     /// virtual scroll area.
     ///
     /// That is, scroll to the item at `idx`, losing any scroll progress by the user.
+    /// An out-of-range index selects the last item, or offset zero in an empty list.
     ///
     /// This method is mostly useful for tests, but can be used outside of tests
     /// (for example, in certain scrollbar schemes).
     pub fn scroll_to(this: &mut WidgetMut<'_, Self>, idx: usize) {
+        let idx = idx.min(this.widget.virtual_list.len().saturating_sub(1));
         this.widget.anchor_index = idx;
         this.widget
             .virtual_list
@@ -1176,6 +1184,61 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn initial_and_runtime_jumps_clamp_to_valid_items() {
+        let mut initial = VirtualScroll::new(usize::MAX, 20).with_len(10);
+        assert_eq!(
+            initial.anchor_index, 9,
+            "builder anchor must track the last valid item"
+        );
+        assert_eq!(
+            initial.scroll_offset_from_anchor(),
+            0.,
+            "builder anchor and offset agree"
+        );
+        let mut harness =
+            TestHarness::create_with_size(test_property_set(), initial.prepare(), (100, 200));
+        let id = harness.root_id();
+        drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::scroll_to(&mut scroll, usize::MAX);
+                assert_eq!(scroll.widget.anchor_index, 9, "jump anchor is clamped");
+                assert_eq!(
+                    scroll.widget.scroll_offset_from_anchor(),
+                    0.,
+                    "jump offset matches anchor"
+                );
+            })
+            .unwrap();
+        drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+        assert_eq!(
+            harness.root_widget().unwrap().range_in_viewport.end,
+            10,
+            "last item is visible"
+        );
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::set_len(&mut scroll, 0);
+                VirtualScroll::scroll_to(&mut scroll, usize::MAX);
+                assert_eq!(
+                    scroll.widget.anchor_index, 0,
+                    "empty list has no nonzero anchor"
+                );
+                assert_eq!(
+                    scroll.widget.scroll_offset_from_anchor(),
+                    0.,
+                    "empty list offset is zero"
+                );
+            })
+            .unwrap();
+        drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+        assert!(
+            harness.root_widget().unwrap().range_in_viewport.is_empty(),
+            "empty list has no visible items"
+        );
     }
 
     #[test]

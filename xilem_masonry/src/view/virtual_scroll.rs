@@ -287,15 +287,15 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) {
+        let len_changed = self.len != prev.len;
+        if len_changed {
+            widgets::VirtualScroll::set_len(&mut element, self.len);
+        }
+
         if self.anchor_index != prev.anchor_index
             && let Some(idx) = self.anchor_index
         {
             widgets::VirtualScroll::scroll_to(&mut element, idx);
-        }
-
-        let len_changed = self.len != prev.len;
-        if len_changed {
-            widgets::VirtualScroll::set_len(&mut element, self.len);
         }
 
         let start_at = self.start_at.to_bits() != prev.start_at.to_bits();
@@ -475,24 +475,20 @@ mod tests {
         )
     }
 
-    #[test]
-    fn shrinking_between_message_and_rebuild_never_calls_out_of_range_component() {
+    fn view_context() -> ViewCtx {
         let runtime = Arc::new(
             tokio::runtime::Builder::new_current_thread()
                 .build()
                 .unwrap(),
         );
-        let mut ctx = ViewCtx::new(Arc::new(ClosedProxy), runtime);
-        let mut calls = Vec::new();
-        let component = |calls: &mut Vec<usize>, idx| {
-            calls.push(idx);
-            spinner()
-        };
-        let original = virtual_scroll::<_, (), _, _>(100, component);
-        let smaller = virtual_scroll::<_, (), _, _>(1, component);
-        let (pod, mut state) = original.build(&mut ctx, &mut calls);
+        ViewCtx::new(Arc::new(ClosedProxy), runtime)
+    }
+
+    fn root_for(
+        pod: Pod<widgets::VirtualScroll>,
+    ) -> (RenderRoot, mpsc::Receiver<RenderRootSignal>) {
         let (send, receive) = mpsc::channel();
-        let mut root = RenderRoot::new(
+        let root = RenderRoot::new(
             pod.new_widget,
             move |signal| {
                 let _ = send.send(signal);
@@ -506,6 +502,69 @@ mod tests {
                 test_font: None,
             },
         );
+        (root, receive)
+    }
+
+    #[test]
+    fn growing_and_jumping_in_one_rebuild_uses_new_length() {
+        let mut ctx = view_context();
+        let component = |_: &mut (), _| spinner();
+        let original = virtual_scroll::<_, (), _, _>(1, component);
+        let grown = virtual_scroll::<_, (), _, _>(100, component).jump_to(Some(80));
+        let (pod, mut state) = original.build(&mut ctx, &mut ());
+        let (mut root, receive) = root_for(pod);
+        let first = next_fetch(&receive);
+        assert_eq!(
+            first.target(),
+            &(0..1),
+            "initial request covers the single item"
+        );
+        root.edit_base_layer(
+            |mut element: masonry::core::WidgetMut<'_, widgets::VirtualScroll>| {
+                assert!(
+                    matches!(
+                        original.message(
+                            &mut state,
+                            &mut message(first),
+                            element.reborrow_mut(),
+                            &mut ()
+                        ),
+                        MessageResult::RequestRebuild
+                    ),
+                    "initial request is accepted"
+                );
+                original.rebuild(&original, &mut state, &mut ctx, element, &mut ());
+            },
+        )
+        .unwrap();
+        root.edit_base_layer(|element| {
+            grown.rebuild(&original, &mut state, &mut ctx, element, &mut ());
+        })
+        .unwrap();
+        let request = next_fetch(&receive);
+        assert!(
+            request.target().contains(&80),
+            "the new target must be materialized: {:?}",
+            request.target()
+        );
+        assert!(
+            request.target().start > 0,
+            "jump must leave the initial range"
+        );
+    }
+
+    #[test]
+    fn shrinking_between_message_and_rebuild_never_calls_out_of_range_component() {
+        let mut ctx = view_context();
+        let mut calls = Vec::new();
+        let component = |calls: &mut Vec<usize>, idx| {
+            calls.push(idx);
+            spinner()
+        };
+        let original = virtual_scroll::<_, (), _, _>(100, component);
+        let smaller = virtual_scroll::<_, (), _, _>(1, component);
+        let (pod, mut state) = original.build(&mut ctx, &mut calls);
+        let (mut root, receive) = root_for(pod);
         let old = next_fetch(&receive);
         assert!(old.target().end > 1);
 
