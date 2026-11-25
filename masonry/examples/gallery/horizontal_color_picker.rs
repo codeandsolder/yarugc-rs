@@ -25,7 +25,7 @@ enum Component {
 impl Component {
     const ALL: [Self; 4] = [Self::R, Self::G, Self::B, Self::A];
 
-    fn update(self, color: &mut Color, value: f32) {
+    const fn update(self, color: &mut Color, value: f32) {
         color.components[match self {
             Self::R => 0,
             Self::G => 1,
@@ -34,7 +34,7 @@ impl Component {
         }] = value;
     }
 
-    fn get(self, color: &Color) -> f32 {
+    const fn get(self, color: &Color) -> f32 {
         color.components[match self {
             Self::R => 0,
             Self::G => 1,
@@ -43,7 +43,7 @@ impl Component {
         }]
     }
 
-    fn visual_color(self) -> Color {
+    const fn visual_color(self) -> Color {
         match self {
             Self::R => Color::from_rgb8(0xff, 0x00, 0x00),
             Self::G => Color::from_rgb8(0x00, 0xff, 0x00),
@@ -54,11 +54,11 @@ impl Component {
 }
 
 #[derive(PartialEq, Debug)]
-pub(crate) struct ColorSelected {
+pub(super) struct ColorSelected {
     pub color: Color,
 }
 
-pub(crate) struct HorizontalColorPicker {
+pub(super) struct HorizontalColorPicker {
     color: Color,
     widget: WidgetPod<Flex>,
     sliders: [(Component, WidgetId); 4],
@@ -66,11 +66,11 @@ pub(crate) struct HorizontalColorPicker {
 }
 
 impl HorizontalColorPicker {
-    pub(crate) fn new(color: Color) -> Self {
+    pub(super) fn new(color: Color) -> Self {
         let mut body = Flex::row().cross_axis_alignment(CrossAxisAlignment::Stretch);
 
         let sliders: [(Component, WidgetId); 4] = Component::ALL.map(|component| {
-            let widget = Slider::new(0., 1., component.get(&color) as f64)
+            let widget = Slider::new(0., 1., f64::from(component.get(&color)))
                 .prepare()
                 .with_props(TrackColor {
                     active: component.visual_color(),
@@ -99,8 +99,8 @@ impl HorizontalColorPicker {
     }
 
     #[expect(dead_code, reason = "Currently unused, available for future use.")]
-    pub(crate) fn set_color(this: &mut WidgetMut<'_, Self>, color: Color) {
-        for (component, wid) in this.widget.sliders.iter() {
+    pub(super) fn set_color(this: &mut WidgetMut<'_, Self>, color: Color) {
+        for (component, wid) in &this.widget.sliders {
             let value = component.get(&color);
             this.ctx
                 .mutate_later::<Slider>(*wid, move |mut slider_widget| {

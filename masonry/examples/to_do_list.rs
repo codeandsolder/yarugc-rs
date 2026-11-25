@@ -49,14 +49,12 @@ impl Driver {
                 let child = Label::new(self.next_task.clone()).prepare();
                 Flex::add_fixed(&mut list, child);
             });
-        } else if action.is::<TextAction>() {
-            let action = action.downcast::<TextAction>().unwrap();
+        } else if let Ok(action) = action.downcast::<TextAction>() {
             match *action {
                 TextAction::Changed(new_text) => {
-                    self.next_task = new_text.clone();
+                    self.next_task = new_text;
                 }
-                TextAction::Entered(_) => {}
-                TextAction::Cancelled => {}
+                TextAction::Entered(_) | TextAction::Cancelled => {}
             }
         }
     }
@@ -104,7 +102,7 @@ pub fn make_widget_tree() -> NewWidget<impl Widget> {
     NewWidget::new(root)
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window_size = LogicalSize::new(400.0, 400.0);
     let window_attributes = Window::default_attributes()
         .with_title("To-do list")
@@ -112,9 +110,7 @@ fn main() {
         .with_min_inner_size(window_size);
     let driver = Driver::new();
 
-    let event_loop = masonry_winit::app::EventLoop::with_user_event()
-        .build()
-        .unwrap();
+    let event_loop = masonry_winit::app::EventLoop::with_user_event().build()?;
     masonry_winit::app::run_with(
         event_loop,
         vec![
@@ -127,8 +123,8 @@ fn main() {
         ],
         driver,
         default_property_set(),
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }
 
 // --- MARK: TESTS

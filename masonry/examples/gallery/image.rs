@@ -10,25 +10,25 @@ use masonry::widgets::{Flex, Image, Label, SizedBox};
 
 use crate::demo::{CONTENT_GAP, DemoPage, ShellTags, wrap_in_shell};
 
-pub(crate) fn make_image_data() -> ImageData {
+pub(super) fn make_image_data() -> Result<ImageData, image::ImageError> {
     let image_bytes = include_bytes!("../assets/PicWithAlpha.png");
-    let image_data = image::load_from_memory(image_bytes).unwrap().to_rgba8();
+    let image_data = image::load_from_memory(image_bytes)?.to_rgba8();
     let (width, height) = image_data.dimensions();
-    ImageData {
+    Ok(ImageData {
         data: image_data.to_vec().into(),
         format: ImageFormat::Rgba8,
         alpha_type: ImageAlphaType::Alpha,
         width,
         height,
-    }
+    })
 }
 
-pub(crate) struct ImageDemo {
+pub(super) struct ImageDemo {
     shell: ShellTags,
 }
 
 impl ImageDemo {
-    pub(crate) fn new(shell: ShellTags) -> Self {
+    pub(super) const fn new(shell: ShellTags) -> Self {
         Self { shell }
     }
 }
@@ -43,8 +43,16 @@ impl DemoPage for ImageDemo {
     }
 
     fn build(&self) -> NewWidget<dyn Widget> {
-        let image = NewWidget::new(Image::new(make_image_data()))
-            .with_props(PropertySet::one(ObjectFit::Contain));
+        let Ok(image_data) = make_image_data() else {
+            return wrap_in_shell(
+                self.shell,
+                Label::new("Failed to decode embedded image")
+                    .prepare()
+                    .erased(),
+            );
+        };
+        let image =
+            NewWidget::new(Image::new(image_data)).with_props(PropertySet::one(ObjectFit::Contain));
 
         let body = Flex::column()
             .cross_axis_alignment(CrossAxisAlignment::Stretch)

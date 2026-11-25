@@ -18,7 +18,7 @@ use masonry::widgets::{
 
 use crate::demo::{DemoPage, ShellTags, wrap_in_shell};
 
-pub(crate) struct BadgeDemo {
+pub(super) struct BadgeDemo {
     shell: ShellTags,
     count: u32,
     decrement_btn: WidgetTag<Button>,
@@ -28,7 +28,7 @@ pub(crate) struct BadgeDemo {
 }
 
 impl BadgeDemo {
-    pub(crate) fn new(shell: ShellTags) -> Self {
+    pub(super) fn new(shell: ShellTags) -> Self {
         Self {
             shell,
             count: 0,
@@ -71,6 +71,79 @@ impl BadgeDemo {
     }
 }
 
+fn inbox_examples() -> [NewWidget<Badged>; 3] {
+    let inbox = Badged::new(
+        Button::with_text("Inbox").prepare(),
+        Badge::count(3).prepare(),
+    )
+    .with_badge_placement(BadgePlacement::TopRight)
+    .with_badge_offset(Vec2::new(2.0, -2.0))
+    .prepare();
+
+    let inbox_zero = Badged::new_optional(
+        Button::with_text("Empty inbox").prepare(),
+        Badge::count_nonzero(0).map(|b| b.prepare().erased()),
+    )
+    .with_badge_placement(BadgePlacement::TopRight)
+    .with_badge_offset(Vec2::new(2.0, -2.0))
+    .prepare();
+
+    let inbox_overflow = Badged::new(
+        Button::with_text("Big inbox").prepare(),
+        Badge::count(120).prepare(),
+    )
+    .with_badge_placement(BadgePlacement::TopRight)
+    .with_badge_offset(Vec2::new(2.0, -2.0))
+    .prepare();
+
+    [inbox, inbox_zero, inbox_overflow]
+}
+
+fn avatar_with_status() -> NewWidget<Badged> {
+    let avatar = NewWidget::new(
+        SizedBox::new(
+            Align::centered(
+                Label::new("AB")
+                    .with_style(StyleProperty::FontSize(22.0))
+                    .with_style(StyleProperty::FontWeight(FontWeight::BOLD))
+                    .prepare(),
+            )
+            .prepare(),
+        )
+        .size(
+            masonry::layout::length!(72.0),
+            masonry::layout::length!(72.0),
+        ),
+    )
+    .with_props(
+        PropertySet::new()
+            .with(Background::Color(Color::from_rgb8(0x3f, 0x3f, 0x46)))
+            .with(CornerRadius { radius: 999.px() })
+            .with(Padding::ZERO),
+    );
+
+    let online_dot = NewWidget::new(Badge::new(
+        SizedBox::empty()
+            .size(
+                masonry::layout::length!(10.0),
+                masonry::layout::length!(10.0),
+            )
+            .prepare(),
+    ))
+    .with_props(
+        PropertySet::new()
+            .with(Padding::ZERO)
+            .with(CornerRadius { radius: 999.px() })
+            .with(BorderWidth { width: 0.px() })
+            .with(Background::Color(Color::from_rgb8(0x22, 0xc5, 0x5e))),
+    );
+
+    Badged::new(avatar.erased(), online_dot.erased())
+        .with_badge_placement(BadgePlacement::BottomRight)
+        .with_badge_offset(Vec2::new(-2.0, -2.0))
+        .prepare()
+}
+
 impl DemoPage for BadgeDemo {
     fn name(&self) -> &'static str {
         "Badge"
@@ -99,29 +172,7 @@ impl DemoPage for BadgeDemo {
                 }),
         );
 
-        let inbox = Badged::new(
-            Button::with_text("Inbox").prepare(),
-            Badge::count(3).prepare(),
-        )
-        .with_badge_placement(BadgePlacement::TopRight)
-        .with_badge_offset(Vec2::new(2.0, -2.0))
-        .prepare();
-
-        let inbox_zero = Badged::new_optional(
-            Button::with_text("Empty inbox").prepare(),
-            Badge::count_nonzero(0).map(|b| b.prepare().erased()),
-        )
-        .with_badge_placement(BadgePlacement::TopRight)
-        .with_badge_offset(Vec2::new(2.0, -2.0))
-        .prepare();
-
-        let inbox_overflow = Badged::new(
-            Button::with_text("Big inbox").prepare(),
-            Badge::count(120).prepare(),
-        )
-        .with_badge_placement(BadgePlacement::TopRight)
-        .with_badge_offset(Vec2::new(2.0, -2.0))
-        .prepare();
+        let [inbox, inbox_zero, inbox_overflow] = inbox_examples();
 
         let interactive_inbox = NewWidget::new(
             Badged::new_optional(
@@ -140,48 +191,7 @@ impl DemoPage for BadgeDemo {
         )
         .with_tag(self.count_label);
 
-        let avatar = NewWidget::new(
-            SizedBox::new(
-                Align::centered(
-                    Label::new("AB")
-                        .with_style(StyleProperty::FontSize(22.0))
-                        .with_style(StyleProperty::FontWeight(FontWeight::BOLD))
-                        .prepare(),
-                )
-                .prepare(),
-            )
-            .size(
-                masonry::layout::length!(72.0),
-                masonry::layout::length!(72.0),
-            ),
-        )
-        .with_props(
-            PropertySet::new()
-                .with(Background::Color(Color::from_rgb8(0x3f, 0x3f, 0x46)))
-                .with(CornerRadius { radius: 999.px() })
-                .with(Padding::ZERO),
-        );
-
-        let online_dot = NewWidget::new(Badge::new(
-            SizedBox::empty()
-                .size(
-                    masonry::layout::length!(10.0),
-                    masonry::layout::length!(10.0),
-                )
-                .prepare(),
-        ))
-        .with_props(
-            PropertySet::new()
-                .with(Padding::ZERO)
-                .with(CornerRadius { radius: 999.px() })
-                .with(BorderWidth { width: 0.px() })
-                .with(Background::Color(Color::from_rgb8(0x22, 0xc5, 0x5e))),
-        );
-
-        let avatar_with_status = Badged::new(avatar.erased(), online_dot.erased())
-            .with_badge_placement(BadgePlacement::BottomRight)
-            .with_badge_offset(Vec2::new(-2.0, -2.0))
-            .prepare();
+        let avatar_with_status = avatar_with_status();
 
         let body = Flex::column()
             .cross_axis_alignment(CrossAxisAlignment::Start)
@@ -262,20 +272,18 @@ impl DemoPage for BadgeDemo {
 
         let dec_id = render_root
             .get_widget_with_tag(self.decrement_btn)
-            .unwrap()
-            .id();
+            .map(|widget| widget.id());
         let inc_id = render_root
             .get_widget_with_tag(self.increment_btn)
-            .unwrap()
-            .id();
+            .map(|widget| widget.id());
 
-        if widget_id == dec_id {
+        if Some(widget_id) == dec_id {
             self.count = self.count.saturating_sub(1);
             self.apply_count(render_root);
             return Handled::Yes;
         }
 
-        if widget_id == inc_id {
+        if Some(widget_id) == inc_id {
             self.count = self.count.saturating_add(1);
             self.apply_count(render_root);
             return Handled::Yes;

@@ -197,7 +197,7 @@ impl Widget for CustomWidget {
     }
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let my_string = "Masonry + Vello".to_string();
     let window_attributes = Window::default_attributes().with_title("Fancy colors");
 
@@ -208,8 +208,8 @@ fn main() {
         )],
         Driver,
         default_property_set(),
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }
 
 fn make_image_data(width: usize, height: usize) -> Vec<u8> {

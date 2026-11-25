@@ -78,7 +78,7 @@ mod tests {
     fn zero_size_simple_image() {
         let mut harness = TestHarness::create_with(
             default_property_set(),
-            others::simple_image::make_image(),
+            others::simple_image::make_image().unwrap(),
             PARAMS_ZERO_SIZE,
         );
         let _ = harness.render().unwrap();

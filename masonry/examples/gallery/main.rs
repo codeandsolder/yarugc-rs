@@ -10,25 +10,105 @@
 // On Windows platform, don't show a console when opening the app.
 #![cfg_attr(not(test), windows_subsystem = "windows")]
 
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod badge;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod basics;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod checkbox;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod demo;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod divider;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod horizontal_color_picker;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod image;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod kitchen_sink;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod pagination;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod progress;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod radio_buttons;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod slider;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod spinner;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod split;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod step_input;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod svg;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod switch;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod text_input;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod tooltip;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Gallery internals are deliberately not public API under unreachable_pub."
+)]
 mod transforms;
 
 use masonry::core::{ErasedAction, NewWidget, StyleProperty, Widget as _, WidgetId, WidgetTag};
@@ -68,7 +148,7 @@ struct Driver {
 
 impl Driver {
     fn apply_demo_disabled(
-        &mut self,
+        &self,
         ctx: &mut DriverCtx<'_>,
         window_id: WindowId,
         demo_idx: usize,
@@ -142,7 +222,7 @@ impl AppDriver for Driver {
                     .iter()
                     .enumerate()
                     .find_map(|(idx, tag)| {
-                        let id = render_root.get_widget_with_tag(*tag).unwrap().id();
+                        let id = render_root.get_widget_with_tag(*tag)?.id();
                         (id == widget_id).then_some(idx)
                     })
             };
@@ -162,10 +242,7 @@ impl AppDriver for Driver {
                 };
                 self.demos.iter().enumerate().find_map(|(idx, demo)| {
                     let shell = demo.shell_tags();
-                    let id = render_root
-                        .get_widget_with_tag(shell.disabled_toggle)
-                        .unwrap()
-                        .id();
+                    let id = render_root.get_widget_with_tag(shell.disabled_toggle)?.id();
                     (id == widget_id).then_some(idx)
                 })
             };
@@ -214,7 +291,7 @@ fn build_demos() -> Vec<Box<dyn DemoPage>> {
     demos
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let demos = build_demos();
 
     // Sidebar button tags (one per demo).
@@ -299,6 +376,6 @@ fn main() {
         )],
         driver,
         default_property_set(),
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }

@@ -14,7 +14,7 @@ use masonry::widgets::{Flex, Label, Slider, SliderMoved, Step, StepInput};
 use crate::demo::{CONTENT_GAP, DemoPage, ShellTags, wrap_in_shell};
 use crate::{ColorSelected, HorizontalColorPicker};
 
-pub(crate) struct SliderDemo {
+pub(super) struct SliderDemo {
     shell: ShellTags,
     value_label: WidgetTag<Label>,
     slider: WidgetTag<Slider>,
@@ -26,7 +26,7 @@ pub(crate) struct SliderDemo {
 }
 
 impl SliderDemo {
-    pub(crate) fn new(shell: ShellTags) -> Self {
+    pub(super) fn new(shell: ShellTags) -> Self {
         Self {
             shell,
             value_label: WidgetTag::unique(),
@@ -47,11 +47,11 @@ const DEFAULT_TRACK_INACTIVE_COLOR: Color = masonry::theme::ZYNC_800;
 const DEFAULT_TRACK_THICKNESS: f64 = 4.;
 const DEFAULT_THUMB_RADIUS: f64 = 7.;
 
-fn get_id<W>(rr: &RenderRoot, tag: WidgetTag<W>) -> WidgetId
+fn get_id<W>(rr: &RenderRoot, tag: WidgetTag<W>) -> Option<WidgetId>
 where
     W: Widget + FromDynWidget + ?Sized,
 {
-    rr.get_widget_with_tag(tag).unwrap().id()
+    rr.get_widget_with_tag(tag).map(|widget| widget.id())
 }
 
 impl DemoPage for SliderDemo {
@@ -155,69 +155,53 @@ impl DemoPage for SliderDemo {
         widget_id: WidgetId,
     ) -> Handled {
         if let Some(value) = action.downcast_ref::<ColorSelected>() {
-            if get_id(render_root, self.thumb_color) == widget_id {
+            if get_id(render_root, self.thumb_color) == Some(widget_id) {
                 let _ = render_root.edit_widget_with_tag(self.slider, |mut slider| {
                     slider.insert_prop(ThumbColor(value.color));
                 });
-            } else if get_id(render_root, self.track_active_color) == widget_id {
+            } else if get_id(render_root, self.track_active_color) == Some(widget_id) {
                 let _ = render_root.edit_widget_with_tag(self.slider, |mut slider| {
-                    if let Some(mut prop) = slider.insert_prop(TrackColor {
-                        ..Default::default()
-                    }) {
-                        prop.active = value.color;
-                        slider.insert_prop(prop);
-                    } else {
-                        slider.insert_prop(TrackColor {
-                            active: value.color,
-                            inactive: DEFAULT_TRACK_INACTIVE_COLOR,
-                        });
-                    }
+                    let mut prop = *slider.get_prop::<TrackColor>();
+                    prop.active = value.color;
+                    slider.insert_prop(prop);
                 });
-            } else if get_id(render_root, self.track_inactive_color) == widget_id {
+            } else if get_id(render_root, self.track_inactive_color) == Some(widget_id) {
                 let _ = render_root.edit_widget_with_tag(self.slider, |mut slider| {
-                    if let Some(mut prop) = slider.insert_prop(TrackColor {
-                        ..Default::default()
-                    }) {
-                        prop.inactive = value.color;
-                        slider.insert_prop(prop);
-                    } else {
-                        slider.insert_prop(TrackColor {
-                            active: DEFAULT_TRACK_ACTIVE_COLOR,
-                            inactive: value.color,
-                        });
-                    }
+                    let mut prop = *slider.get_prop::<TrackColor>();
+                    prop.inactive = value.color;
+                    slider.insert_prop(prop);
                 });
-            };
+            }
             return Handled::Yes;
-        };
+        }
 
         if let Some(value) = action.downcast_ref::<SliderMoved>() {
             let value = value.value;
 
-            if get_id(render_root, self.slider) == widget_id {
+            if get_id(render_root, self.slider) == Some(widget_id) {
                 let _ = render_root.edit_widget_with_tag(self.value_label, |mut label| {
                     Label::set_text(&mut label, format!("Value: {value:.3}"));
                 });
             }
             return Handled::Yes;
-        };
+        }
 
         if let Some(value) = action.downcast_ref::<Step<f64>>() {
             let Some(value) = Length::try_px(value.value) else {
                 return Handled::Yes;
             };
 
-            if get_id(render_root, self.thumb_radius) == widget_id {
+            if get_id(render_root, self.thumb_radius) == Some(widget_id) {
                 let _ = render_root.edit_widget_with_tag(self.slider, |mut slider| {
                     slider.insert_prop(ThumbRadius(value));
                 });
-            } else if get_id(render_root, self.track_thickness) == widget_id {
+            } else if get_id(render_root, self.track_thickness) == Some(widget_id) {
                 let _ = render_root.edit_widget_with_tag(self.slider, |mut slider| {
                     slider.insert_prop(TrackThickness(value));
                 });
             }
             return Handled::Yes;
-        };
+        }
 
         Handled::No
     }

@@ -1,7 +1,7 @@
 // Copyright 2024 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! A demonstration of the [`VirtualScroll`] widget, producing an infinite[^1] FizzBuzz.
+//! A demonstration of the [`VirtualScroll`] widget, producing an infinite[^1] `FizzBuzz`.
 //!
 //! [^1]: Limited to `i64::MIN..i64::MAX-1`; that is, there are `2^64-1` possible items.
 //! However, there is (currently...) no way to jump to a specific item, so it's impossible to reach the end.
@@ -50,9 +50,9 @@ impl AppDriver for Driver {
         if Some(widget_id) == scroll_id {
             // The VirtualScroll widget will send us a VirtualScrollAction every time it wants different
             // items to be loaded or unloaded.
-            let action = action
-                .downcast::<VirtualScrollAction>()
-                .expect("Only expected Virtual Scroll actions");
+            let Ok(action) = action.downcast::<VirtualScrollAction>() else {
+                return;
+            };
             let VirtualScrollAction::Fetch(action) = *action else {
                 tracing::trace!("Got scroll action {action:?}");
                 return;
@@ -95,7 +95,7 @@ impl AppDriver for Driver {
     }
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scroll_tag = WidgetTag::unique();
     let main_widget = NewWidget::new(init()).with_tag(scroll_tag).erased();
     let driver = Driver {
@@ -119,6 +119,6 @@ fn main() {
         )],
         driver,
         default_property_set(),
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }

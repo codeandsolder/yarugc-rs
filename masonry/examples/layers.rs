@@ -106,7 +106,7 @@ impl Widget for OverlayBox {
     }
 
     fn update(&mut self, _ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        if let Update::HoveredChanged(false) = event {
+        if matches!(event, Update::HoveredChanged(false)) {
             self.last_mouse_move = None;
         }
     }
@@ -160,7 +160,7 @@ impl Widget for OverlayBox {
     }
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let label = Label::new("Hello")
         .with_style(StyleProperty::FontSize(32.0))
         // Ideally there's be an Into in Parley for this
@@ -201,6 +201,6 @@ fn main() {
         )],
         driver,
         default_property_set(),
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }

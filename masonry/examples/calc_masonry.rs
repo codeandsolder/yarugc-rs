@@ -6,8 +6,6 @@
 // On Windows platform, don't show a console when opening the app.
 #![cfg_attr(not(test), windows_subsystem = "windows")]
 
-use std::str::FromStr;
-
 use masonry::app::RenderRoot;
 use masonry::core::{
     CollectionWidget, DefaultProperties, ErasedAction, NewWidget, Property, PropertySet,
@@ -274,7 +272,7 @@ pub fn build_calc() -> NewWidget<impl Widget> {
 
     NewWidget::new(root_widget).with_props(
         PropertySet::new()
-            .with(Background::Color(AlphaColor::from_str("#794869").unwrap()))
+            .with(Background::Color(AlphaColor::from_rgb8(0x79, 0x48, 0x69)))
             .with(Padding::all(2.px()))
             .with(Gap::new(1.px())),
     )
@@ -320,7 +318,7 @@ fn custom_property_set() -> DefaultProperties {
     default_properties
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window_size = LogicalSize::new(223., 300.);
 
     let window_attributes = Window::default_attributes()
@@ -330,9 +328,7 @@ fn main() {
 
     let calc_state = CalcState::new();
 
-    let event_loop = masonry_winit::app::EventLoop::with_user_event()
-        .build()
-        .unwrap();
+    let event_loop = masonry_winit::app::EventLoop::with_user_event().build()?;
     masonry_winit::app::run_with(
         event_loop,
         vec![NewWindow::new_with_id(
@@ -342,8 +338,8 @@ fn main() {
         )],
         calc_state,
         custom_property_set(),
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }
 
 // --- MARK: TESTS

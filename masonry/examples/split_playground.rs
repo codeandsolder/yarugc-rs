@@ -80,15 +80,21 @@ impl AppDriver for Driver {
         let Some(render_root) = ctx.render_root(window_id) else {
             return;
         };
-        let fraction_id = render_root.get_widget_with_tag(FRACTION_BTN).unwrap().id();
-        let start_id = render_root.get_widget_with_tag(START_BTN).unwrap().id();
-        let end_id = render_root.get_widget_with_tag(END_BTN).unwrap().id();
+        let fraction_id = render_root
+            .get_widget_with_tag(FRACTION_BTN)
+            .map(|widget| widget.id());
+        let start_id = render_root
+            .get_widget_with_tag(START_BTN)
+            .map(|widget| widget.id());
+        let end_id = render_root
+            .get_widget_with_tag(END_BTN)
+            .map(|widget| widget.id());
 
-        if widget_id == fraction_id {
+        if Some(widget_id) == fraction_id {
             self.set_mode(ctx, SplitPointMode::Fraction);
-        } else if widget_id == start_id {
+        } else if Some(widget_id) == start_id {
             self.set_mode(ctx, SplitPointMode::FromStart);
-        } else if widget_id == end_id {
+        } else if Some(widget_id) == end_id {
             self.set_mode(ctx, SplitPointMode::FromEnd);
         }
     }
@@ -142,7 +148,7 @@ fn make_widget_tree() -> NewWidget<impl masonry::core::Widget> {
     )
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window_size = LogicalSize::new(900.0, 600.0);
     let window_attributes = Window::default_attributes()
         .with_title("Split playground")
@@ -162,6 +168,6 @@ fn main() {
         )],
         driver,
         default_property_set(),
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }

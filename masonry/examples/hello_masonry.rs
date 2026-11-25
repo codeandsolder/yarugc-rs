@@ -41,7 +41,7 @@ impl AppDriver for Driver {
     }
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let label = Label::new("Hello")
         .with_style(StyleProperty::FontSize(32.0))
         // Ideally there's be an Into in Parley for this
@@ -72,6 +72,6 @@ fn main() {
         )],
         driver,
         default_property_set(),
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }

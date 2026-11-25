@@ -9,7 +9,7 @@ macro_rules! assert_debug_panics {
     ($expr:expr) => {
         $crate::assert_debug_panics_inner(
             || {
-                $expr;
+                let _ = $expr;
             },
             "",
         )
@@ -18,7 +18,7 @@ macro_rules! assert_debug_panics {
     ($expr:expr, $needle:expr) => {
         $crate::assert_debug_panics_inner(
             || {
-                $expr;
+                let _ = $expr;
             },
             $needle,
         )

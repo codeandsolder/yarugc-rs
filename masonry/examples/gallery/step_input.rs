@@ -20,7 +20,7 @@ use crate::demo::{DemoPage, ShellTags, wrap_in_shell};
 
 const BALANCE_TOTAL: isize = 50_000;
 
-pub(crate) struct StepInputDemo {
+pub(super) struct StepInputDemo {
     shell: ShellTags,
 
     initialized: bool,
@@ -31,7 +31,7 @@ pub(crate) struct StepInputDemo {
 }
 
 impl StepInputDemo {
-    pub(crate) fn new(shell: ShellTags) -> Self {
+    pub(super) fn new(shell: ShellTags) -> Self {
         let tag_balance = WidgetTag::unique();
         let tag_left = WidgetTag::unique();
         let tag_right = WidgetTag::unique();
@@ -52,6 +52,29 @@ fn desc(text: &str) -> NewWidget<Label> {
         .with_style(StyleProperty::FontSize(14.0))
         .prepare()
         .with_props(Dimensions::width(250.px()))
+}
+
+fn custom_display_row() -> NewWidget<Flex> {
+    Flex::row()
+        .with_fixed(desc("Supports custom display"))
+        .with(
+            StepInput::new(16000, 1000, 0, u32::MAX)
+                .with_display(|ctx| {
+                    if ctx.value >= 1_000_000 {
+                        let value = ctx.value / 1_000_000;
+                        format!("{value}M")
+                    } else if ctx.value >= 1_000 {
+                        let value = ctx.value / 1_000;
+                        format!("{value}K")
+                    } else {
+                        format!("{}", ctx.value)
+                    }
+                })
+                .prepare()
+                .with_props(StepInputStyle::Flow),
+            1.,
+        )
+        .prepare()
 }
 
 impl DemoPage for StepInputDemo {
@@ -119,9 +142,8 @@ impl DemoPage for StepInputDemo {
         if action.is::<ButtonPress>() {
             let id_balance = render_root
                 .get_widget_with_tag(self.tag_balance)
-                .unwrap()
-                .id();
-            if widget_id == id_balance {
+                .map(|widget| widget.id());
+            if Some(widget_id) == id_balance {
                 let _ = render_root.edit_widget_with_tag(self.tag_left, |mut widget| {
                     StepInput::set_base(&mut widget, BALANCE_TOTAL / 2);
                 });
@@ -135,18 +157,19 @@ impl DemoPage for StepInputDemo {
 
         if let Some(step) = action.downcast_ref::<Step<isize>>() {
             let value = step.value;
-            let id_left = render_root.get_widget_with_tag(self.tag_left).unwrap().id();
+            let id_left = render_root
+                .get_widget_with_tag(self.tag_left)
+                .map(|widget| widget.id());
             let id_right = render_root
                 .get_widget_with_tag(self.tag_right)
-                .unwrap()
-                .id();
+                .map(|widget| widget.id());
 
-            if widget_id == id_left {
+            if Some(widget_id) == id_left {
                 let _ = render_root.edit_widget_with_tag(self.tag_right, |mut widget| {
                     StepInput::set_base(&mut widget, BALANCE_TOTAL - value);
                 });
                 return Handled::Yes;
-            } else if widget_id == id_right {
+            } else if Some(widget_id) == id_right {
                 let _ = render_root.edit_widget_with_tag(self.tag_left, |mut widget| {
                     StepInput::set_base(&mut widget, BALANCE_TOTAL - value);
                 });
@@ -228,28 +251,7 @@ impl DemoPage for StepInputDemo {
                     )
                     .prepare(),
             )
-            .with_fixed(
-                Flex::row()
-                    .with_fixed(desc("Supports custom display"))
-                    .with(
-                        StepInput::new(16000, 1000, 0, u32::MAX)
-                            .with_display(|ctx| {
-                                if ctx.value >= 1_000_000 {
-                                    let value = ctx.value / 1_000_000;
-                                    format!("{value}M")
-                                } else if ctx.value >= 1_000 {
-                                    let value = ctx.value / 1_000;
-                                    format!("{value}K")
-                                } else {
-                                    format!("{}", ctx.value)
-                                }
-                            })
-                            .prepare()
-                            .with_props(StepInputStyle::Flow),
-                        1.,
-                    )
-                    .prepare(),
-            )
+            .with_fixed(custom_display_row())
             .with_fixed(
                 Flex::row()
                     .with_fixed(desc("Visuals can be customized"))

@@ -7,12 +7,12 @@ use masonry::widgets::{Flex, Label, SizedBox, TextInput};
 
 use crate::demo::{DemoPage, ShellTags, wrap_in_shell};
 
-pub(crate) struct TextInputDemo {
+pub(super) struct TextInputDemo {
     shell: ShellTags,
 }
 
 impl TextInputDemo {
-    pub(crate) fn new(shell: ShellTags) -> Self {
+    pub(super) const fn new(shell: ShellTags) -> Self {
         Self { shell }
     }
 }

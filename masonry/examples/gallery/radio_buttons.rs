@@ -8,13 +8,13 @@ use masonry::widgets::{Flex, Label, RadioButton, RadioButtonSelected, RadioGroup
 
 use crate::demo::{CONTENT_GAP, DemoPage, ShellTags, wrap_in_shell};
 
-pub(crate) struct RadioButtonsDemo {
+pub(super) struct RadioButtonsDemo {
     shell: ShellTags,
     state_label: WidgetTag<Label>,
 }
 
 impl RadioButtonsDemo {
-    pub(crate) fn new(shell: ShellTags) -> Self {
+    pub(super) fn new(shell: ShellTags) -> Self {
         Self {
             shell,
             state_label: WidgetTag::unique(),

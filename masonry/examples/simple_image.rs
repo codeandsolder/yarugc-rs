@@ -33,9 +33,11 @@ impl AppDriver for Driver {
 
 /// Return an image with hardcoded data
 /// Creates the image displayed by this example.
-pub fn make_image() -> NewWidget<Image> {
+/// # Errors
+/// Returns a decode error if the embedded image cannot be decoded.
+pub fn make_image() -> Result<NewWidget<Image>, image::ImageError> {
     let image_bytes = include_bytes!("./assets/PicWithAlpha.png");
-    let image_data = image::load_from_memory(image_bytes).unwrap().to_rgba8();
+    let image_data = image::load_from_memory(image_bytes)?.to_rgba8();
     let (width, height) = image_data.dimensions();
     let png_data = ImageData {
         data: image_data.to_vec().into(),
@@ -45,10 +47,10 @@ pub fn make_image() -> NewWidget<Image> {
         height,
     };
 
-    NewWidget::new(Image::new(png_data)).with_props(PropertySet::one(ObjectFit::Contain))
+    Ok(NewWidget::new(Image::new(png_data)).with_props(PropertySet::one(ObjectFit::Contain)))
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window_size = LogicalSize::new(650.0, 450.0);
     let window_attributes = Window::default_attributes()
         .with_title("Simple image example")
@@ -56,11 +58,11 @@ fn main() {
         .with_max_inner_size(window_size);
 
     masonry_winit::app::run(
-        vec![NewWindow::new(window_attributes, make_image().erased())],
+        vec![NewWindow::new(window_attributes, make_image()?.erased())],
         Driver,
         default_property_set(),
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }
 
 // --- MARK: TESTS
@@ -79,7 +81,7 @@ mod tests {
             TestHarnessParams::default().with_max_screenshot_size(16 * TestHarnessParams::KIBIBYTE);
 
         let mut harness =
-            TestHarness::create_with(default_property_set(), make_image(), test_params);
+            TestHarness::create_with(default_property_set(), make_image().unwrap(), test_params);
         assert_render_snapshot!(harness, "example_simple_image_initial");
     }
 }

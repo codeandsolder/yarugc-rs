@@ -14,7 +14,7 @@ use masonry::widgets::{Button, ButtonPress, Flex, Label, SizedBox};
 
 use crate::demo::{CONTENT_GAP, DemoPage, SIDEBAR_GAP, ShellTags, wrap_in_shell};
 
-pub(crate) struct TransformsDemo {
+pub(super) struct TransformsDemo {
     shell: ShellTags,
     state_label: WidgetTag<Label>,
     target: WidgetTag<SizedBox>,
@@ -28,7 +28,7 @@ pub(crate) struct TransformsDemo {
 }
 
 impl TransformsDemo {
-    pub(crate) fn new(shell: ShellTags) -> Self {
+    pub(super) fn new(shell: ShellTags) -> Self {
         Self {
             shell,
             state_label: WidgetTag::unique(),
@@ -66,12 +66,13 @@ impl TransformsDemo {
     }
 
     fn matches_button(
-        &self,
-        render_root: &mut RenderRoot,
+        render_root: &RenderRoot,
         tag: WidgetTag<Button>,
         widget_id: WidgetId,
     ) -> bool {
-        render_root.get_widget_with_tag(tag).unwrap().id() == widget_id
+        render_root
+            .get_widget_with_tag(tag)
+            .is_some_and(|widget| widget.id() == widget_id)
     }
 }
 
@@ -142,27 +143,27 @@ impl DemoPage for TransformsDemo {
             return Handled::No;
         }
 
-        if self.matches_button(render_root, self.btn_rotate_left, widget_id) {
+        if Self::matches_button(render_root, self.btn_rotate_left, widget_id) {
             self.angle_rad -= 15_f64.to_radians();
             self.apply(render_root);
             return Handled::Yes;
         }
-        if self.matches_button(render_root, self.btn_rotate_right, widget_id) {
+        if Self::matches_button(render_root, self.btn_rotate_right, widget_id) {
             self.angle_rad += 15_f64.to_radians();
             self.apply(render_root);
             return Handled::Yes;
         }
-        if self.matches_button(render_root, self.btn_scale_down, widget_id) {
+        if Self::matches_button(render_root, self.btn_scale_down, widget_id) {
             self.scale = (self.scale / 1.1).clamp(0.3, 3.0);
             self.apply(render_root);
             return Handled::Yes;
         }
-        if self.matches_button(render_root, self.btn_scale_up, widget_id) {
+        if Self::matches_button(render_root, self.btn_scale_up, widget_id) {
             self.scale = (self.scale * 1.1).clamp(0.3, 3.0);
             self.apply(render_root);
             return Handled::Yes;
         }
-        if self.matches_button(render_root, self.btn_reset, widget_id) {
+        if Self::matches_button(render_root, self.btn_reset, widget_id) {
             self.angle_rad = 0.0;
             self.scale = 1.0;
             self.apply(render_root);

@@ -7,16 +7,16 @@ use masonry::layout::Length;
 use masonry::properties::types::CrossAxisAlignment;
 use masonry::widgets::{Button, Checkbox, Flex, SizedBox};
 
-pub(crate) const CONTENT_GAP: Length = masonry::layout::length!(10.0);
-pub(crate) const SIDEBAR_GAP: Length = masonry::layout::length!(2.0);
+pub(super) const CONTENT_GAP: Length = masonry::layout::length!(10.0);
+pub(super) const SIDEBAR_GAP: Length = masonry::layout::length!(2.0);
 
 #[derive(Clone, Copy)]
-pub(crate) struct ShellTags {
+pub(super) struct ShellTags {
     pub disabled_toggle: WidgetTag<Checkbox>,
     pub content_wrapper: WidgetTag<SizedBox>,
 }
 
-pub(crate) trait DemoPage {
+pub(super) trait DemoPage {
     fn name(&self) -> &'static str;
     fn shell_tags(&self) -> ShellTags;
     fn build(&self) -> NewWidget<dyn Widget>;
@@ -34,7 +34,7 @@ pub(crate) trait DemoPage {
     }
 }
 
-pub(crate) fn wrap_in_shell(
+pub(super) fn wrap_in_shell(
     shell: ShellTags,
     body: NewWidget<dyn Widget>,
 ) -> NewWidget<dyn Widget> {
@@ -57,14 +57,14 @@ pub(crate) fn wrap_in_shell(
     .erased()
 }
 
-pub(crate) fn new_demo_shell_tags() -> ShellTags {
+pub(super) fn new_demo_shell_tags() -> ShellTags {
     ShellTags {
         disabled_toggle: WidgetTag::unique(),
         content_wrapper: WidgetTag::unique(),
     }
 }
 
-pub(crate) fn build_sidebar_button(
+pub(super) fn build_sidebar_button(
     tag: WidgetTag<Button>,
     name: &'static str,
 ) -> NewWidget<Button> {

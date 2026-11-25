@@ -7,12 +7,12 @@ use masonry::widgets::{Button, Flex, Label};
 
 use crate::demo::{DemoPage, ShellTags, wrap_in_shell};
 
-pub(crate) struct BasicsDemo {
+pub(super) struct BasicsDemo {
     shell: ShellTags,
 }
 
 impl BasicsDemo {
-    pub(crate) fn new(shell: ShellTags) -> Self {
+    pub(super) const fn new(shell: ShellTags) -> Self {
         Self { shell }
     }
 }
