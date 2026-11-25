@@ -36,6 +36,17 @@ impl WindowId {
     }
 }
 
+/// Identity of a GPU device incarnation, unique for the process lifetime.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct GpuDeviceId(pub(crate) NonZeroU64);
+
+impl GpuDeviceId {
+    pub(crate) fn next() -> Self {
+        static DEVICE_ID_COUNTER: IdAllocator = IdAllocator::new();
+        Self(DEVICE_ID_COUNTER.allocate())
+    }
+}
+
 /// Context for the [`AppDriver`] trait.
 #[derive(Debug)]
 pub struct DriverCtx<'a> {
@@ -55,6 +66,8 @@ impl<'a> DriverCtx<'a> {
 /// (textures, pipelines, etc.) using the same `Device`/`Queue` as Masonry.
 #[derive(Debug)]
 pub struct WgpuContext<'a> {
+    /// Stable identity of this device incarnation.
+    pub id: GpuDeviceId,
     /// The WGPU instance used by Masonry.
     pub instance: &'a wgpu::Instance,
     /// The WGPU adapter used to create the device.
@@ -132,6 +145,10 @@ pub trait AppDriver {
     /// This also runs when a lost device has been replaced. Applications must
     /// recreate device-specific resources for the supplied device and queue.
     fn on_wgpu_ready(&mut self, _wgpu: &WgpuContext<'_>) {}
+
+    /// Called once when a previously announced GPU device is lost.
+    /// Release application-owned resources associated with this identity.
+    fn on_wgpu_lost(&mut self, id: GpuDeviceId) {}
 }
 
 impl DriverCtx<'_> {

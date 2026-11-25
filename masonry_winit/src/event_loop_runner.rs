@@ -32,7 +32,7 @@ use winit::event_loop::{ActiveEventLoop, OwnedDisplayHandle};
 use winit::window::{Window as WindowHandle, WindowAttributes, WindowId as HandleId};
 
 use crate::app::{
-    AppDriver, DriverCtx, WgpuContext, WgpuLimits, masonry_resize_direction_to_winit,
+    AppDriver, DriverCtx, GpuDeviceId, WgpuContext, WgpuLimits, masonry_resize_direction_to_winit,
     winit_ime_to_masonry,
 };
 use crate::app_driver::WindowId;
@@ -54,7 +54,7 @@ pub enum MasonryUserEvent {
     AsyncAction(WindowId, ErasedAction),
     /// A WGPU device became unusable; affected surfaces must be rebuilt.
     #[doc(hidden)]
-    GpuDeviceLost(usize),
+    GpuDeviceLost(GpuDeviceId),
 }
 
 impl From<accesskit_winit::Event> for MasonryUserEvent {
@@ -286,7 +286,6 @@ pub struct MasonryState {
     is_suspended: bool,
     started: bool,
     render_cx: RenderContext,
-    renderer: ImagingRenderer,
     // TODO: Winit doesn't seem to let us create these proxies from within the loop
     // The reasons for this are unclear
     event_loop_proxy: EventLoopProxy,
@@ -416,7 +415,10 @@ impl Debug for MasonryState {
         f.debug_struct("MasonryState")
             .field("is_suspended", &self.is_suspended)
             .field("started", &self.started)
-            .field("renderer", &self.renderer)
+            .field(
+                "gpu_device_ids",
+                &self.render_cx.devices.keys().collect::<Vec<_>>(),
+            )
             .field("event_loop_proxy", &self.event_loop_proxy)
             .field("window_id_to_handle_id", &self.window_id_to_handle_id)
             .field("surfaces", &self.surfaces)
@@ -466,7 +468,6 @@ impl MasonryState {
             is_suspended: true,
             started: false,
             render_cx,
-            renderer: ImagingRenderer::new(),
             event_loop_proxy,
             #[cfg(feature = "tracy")]
             frame: None,
@@ -778,7 +779,7 @@ impl MasonryState {
             root_scene,
             &overlays,
         );
-        let outcome = Self::render(surface, window, frame, &self.render_cx, &mut self.renderer);
+        let outcome = Self::render(surface, window, frame, &mut self.render_cx);
         match outcome {
             FrameOutcome::Presented => window.surface_recovery_attempted = false,
             FrameOutcome::Skipped => {}
@@ -812,7 +813,7 @@ impl MasonryState {
         let size = window.render_root.size();
         if surfaces
             .get(&id)
-            .is_some_and(|surface| render_cx.devices[surface.dev_id].is_lost())
+            .is_some_and(|surface| render_cx.devices[&surface.dev_id].is_lost())
         {
             surfaces.remove(&id);
         }
@@ -837,13 +838,14 @@ impl MasonryState {
 
         // The device might have been allocated during an earlier failed
         // surface creation. Notify at first successful use, not allocation.
-        let device_handle = &mut render_cx.devices[surface.dev_id];
+        let device_handle = render_cx.devices.get_mut(&surface.dev_id)?;
         if device_handle.is_lost() {
             return None;
         }
         if !device_handle.ready_notified {
             device_handle.ready_notified = true;
             app_driver.on_wgpu_ready(&WgpuContext {
+                id: surface.dev_id,
                 instance: &render_cx.instance,
                 adapter: &device_handle.adapter,
                 device: &device_handle.device,
@@ -858,25 +860,29 @@ impl MasonryState {
         surface: &mut RenderSurface<'_>,
         window: &Window,
         frame: PreparedFrame<'_>,
-        render_cx: &RenderContext,
-        renderer: &mut ImagingRenderer,
+        render_cx: &mut RenderContext,
     ) -> FrameOutcome {
-        let dev_id = surface.dev_id;
-        let device = &render_cx.devices[dev_id].device;
-        let queue = &render_cx.devices[dev_id].queue;
         let surface_texture = match Self::acquire_surface_texture(surface, window, render_cx) {
             Ok(texture) => texture,
             Err(outcome) => return outcome,
         };
 
+        let Some(handle) = render_cx.devices.get_mut(&surface.dev_id) else {
+            return FrameOutcome::SurfaceLost;
+        };
+        if handle.is_lost() {
+            return FrameOutcome::SurfaceLost;
+        }
+        let device = &handle.device;
+        let queue = &handle.queue;
         let _render_span = tracing::info_span!(
             "Rendering Masonry window",
             backend = ImagingRenderer::BACKEND_NAME
         )
         .entered();
-        if let Err(err) = renderer.render_to_texture(
+        if let Err(err) = handle.renderer.render_to_texture(
             ImagingRenderTarget {
-                adapter: &render_cx.devices[dev_id].adapter,
+                adapter: &handle.adapter,
                 device,
                 queue,
                 texture: &surface.target_texture,
@@ -1135,7 +1141,7 @@ impl MasonryState {
             return;
         }
         match event {
-            MasonryUserEvent::GpuDeviceLost(dev_id) => self.handle_device_lost(dev_id),
+            MasonryUserEvent::GpuDeviceLost(dev_id) => self.handle_device_lost(dev_id, app_driver),
             MasonryUserEvent::AccessKit(handle_id, event) => {
                 let Some(window) = self.windows.get_mut(&handle_id) else {
                     tracing::debug!(handle = ?handle_id, "Dropping accesskit event for closed window");
@@ -1182,11 +1188,11 @@ impl MasonryState {
         self.handle_signals(event_loop, app_driver);
     }
 
-    fn handle_device_lost(&mut self, dev_id: usize) {
+    fn handle_device_lost(&mut self, dev_id: GpuDeviceId, app_driver: &mut dyn AppDriver) {
         if !self
             .render_cx
             .devices
-            .get(dev_id)
+            .get(&dev_id)
             .is_some_and(|device| device.is_lost())
         {
             return;
@@ -1203,6 +1209,11 @@ impl MasonryState {
             }
             false
         });
+        if let Some(device) = self.render_cx.devices.remove(&dev_id)
+            && device.ready_notified
+        {
+            app_driver.on_wgpu_lost(dev_id);
+        }
     }
 
     // --- MARK: SIGNALS
@@ -1390,11 +1401,29 @@ impl MasonryState {
             .map(|window| &mut window.render_root)
     }
 
+    /// Returns the device identity of a live window surface, if it has one.
+    #[must_use = "Identify the GPU owning the window surface."]
+    pub fn gpu_device_id(&self, window_id: WindowId) -> Option<GpuDeviceId> {
+        let surface = self.surfaces.get(&self.handle_id(window_id)?)?;
+        (!self.render_cx.devices.get(&surface.dev_id)?.is_lost()).then_some(surface.dev_id)
+    }
+
+    /// Returns the configured presentation mode of a live surface.
+    ///
+    /// Automatic modes remain automatic; WGPU chooses the concrete mode.
+    #[must_use = "Inspect the configured presentation mode."]
+    pub fn present_mode(&self, window_id: WindowId) -> Option<wgpu::PresentMode> {
+        let surface = self.surfaces.get(&self.handle_id(window_id)?)?;
+        self.gpu_device_id(window_id)?;
+        Some(surface.config.present_mode)
+    }
+
     /// Sets how frames are presented to the user.
     ///
     /// This affects what users commonly know as "vertical sync".
     /// Returns false if the window is unknown or its live surface does not support the mode.
-    /// A mode selected before surface creation is validated when the surface is created.
+    /// A mode selected before surface creation is retained as a preference; if unavailable
+    /// on a new or recovered surface, a supported fallback is used.
     pub fn set_present_mode(
         &mut self,
         window_id: WindowId,
@@ -1407,7 +1436,7 @@ impl MasonryState {
             return false;
         };
         if let Some(surface) = self.surfaces.get_mut(&handle_id)
-            && !self.render_cx.devices[surface.dev_id].is_lost()
+            && !self.render_cx.devices[&surface.dev_id].is_lost()
             && !self.render_cx.set_present_mode(surface, present_mode)
         {
             return false;

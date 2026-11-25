@@ -11,6 +11,7 @@ struct Driver {
     created: Vec<WindowId>,
     actions: Vec<(WindowId, u32)>,
     devices: Vec<wgpu::Device>,
+    lost_devices: Vec<GpuDeviceId>,
 }
 
 impl AppDriver for Driver {
@@ -33,6 +34,10 @@ impl AppDriver for Driver {
 
     fn on_wgpu_ready(&mut self, wgpu: &WgpuContext<'_>) {
         self.devices.push(wgpu.device.clone());
+    }
+
+    fn on_wgpu_lost(&mut self, id: GpuDeviceId) {
+        self.lost_devices.push(id);
     }
 
     fn on_async_action(&mut self, id: WindowId, ctx: &mut DriverCtx<'_>, action: ErasedAction) {
@@ -72,7 +77,7 @@ impl Lifecycle {
         self.state.handle_resumed(event_loop, &mut self.driver);
     }
 
-    fn prepare_surface(&mut self, id: WindowId) -> usize {
+    fn prepare_surface(&mut self, id: WindowId) -> GpuDeviceId {
         let handle = self.state.handle_id(id).unwrap();
         let window = self.state.windows.get(&handle).unwrap();
         MasonryState::prepare_surface(
@@ -93,6 +98,11 @@ impl Lifecycle {
     ) {
         let old = self.prepare_surface(first);
         assert_eq!(self.prepare_surface(second), old);
+        assert_eq!(self.state.gpu_device_id(first), Some(old));
+        assert_eq!(
+            self.state.present_mode(first),
+            Some(wgpu::PresentMode::AutoVsync)
+        );
         assert_eq!(self.driver.devices.len(), 1);
         let device = self.driver.devices[0].clone();
 
@@ -100,17 +110,23 @@ impl Lifecycle {
         // physical device. Poll to drain callbacks before delivering the event.
         device.destroy();
         let _ = self.state.render_cx.instance.poll_all(true);
-        assert!(self.state.render_cx.devices[old].is_lost());
+        assert!(self.state.render_cx.devices[&old].is_lost());
         self.state.handle_user_event(
             event_loop,
             MasonryUserEvent::GpuDeviceLost(old),
             &mut self.driver,
         );
         assert!(self.state.surfaces.is_empty());
+        assert!(self.state.render_cx.devices.is_empty());
+        assert_eq!(self.state.gpu_device_id(first), None);
+        assert_eq!(self.state.present_mode(first), None);
+        assert_eq!(self.driver.lost_devices, [old]);
+        assert!(!self.state.add_wgpu_features(wgpu::Features::empty()));
 
         let new = self.prepare_surface(first);
         assert_ne!(new, old);
         assert_eq!(self.prepare_surface(second), new);
+        assert_eq!(self.state.gpu_device_id(first), Some(new));
         assert_eq!(self.driver.devices.len(), 2);
         assert_ne!(self.driver.devices[1], device);
         // Late duplicate loss notification cannot discard replacement surfaces.
@@ -120,6 +136,8 @@ impl Lifecycle {
             &mut self.driver,
         );
         assert_eq!(self.state.surfaces.len(), 2);
+        assert_eq!(self.driver.lost_devices, [old]);
+        assert_eq!(self.state.render_cx.devices.len(), 1);
         assert_eq!(self.prepare_surface(first), new);
         assert_eq!(self.driver.devices.len(), 2);
     }

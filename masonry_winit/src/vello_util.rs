@@ -6,6 +6,7 @@
 //! This module is based on [`vello::util`](https://docs.rs/vello/latest/vello/util/index.html) module with modifications
 //! for transparent surfaces.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -17,8 +18,9 @@ use wgpu::{
 };
 use winit::event_loop::OwnedDisplayHandle;
 
-use crate::app_driver::WgpuLimits;
+use crate::app_driver::{GpuDeviceId, WgpuLimits};
 use crate::event_loop_runner::{EventLoopProxy, MasonryUserEvent};
+use masonry_imaging::texture_render::Renderer;
 
 const PREMUL_BLEND_STATE: BlendState = BlendState {
     alpha: BlendComponent::REPLACE,
@@ -34,7 +36,6 @@ pub(crate) enum RenderSurfaceError {
     CreateSurface(wgpu::CreateSurfaceError),
     RequestAdapter(wgpu::RequestAdapterError),
     RequestDevice(wgpu::RequestDeviceError),
-    UnsupportedPresentMode(PresentMode),
     UnsupportedSurfaceFormat,
 }
 
@@ -44,9 +45,6 @@ impl core::fmt::Display for RenderSurfaceError {
             Self::CreateSurface(err) => write!(f, "creating surface failed: {err}"),
             Self::RequestAdapter(err) => write!(f, "requesting WGPU adapter failed: {err}"),
             Self::RequestDevice(err) => write!(f, "requesting WGPU device failed: {err}"),
-            Self::UnsupportedPresentMode(mode) => {
-                write!(f, "unsupported presentation mode: {mode:?}")
-            }
             Self::UnsupportedSurfaceFormat => write!(f, "unsupported surface format"),
         }
     }
@@ -58,7 +56,7 @@ impl std::error::Error for RenderSurfaceError {
             Self::CreateSurface(err) => Some(err),
             Self::RequestAdapter(err) => Some(err),
             Self::RequestDevice(err) => Some(err),
-            Self::UnsupportedPresentMode(_) | Self::UnsupportedSurfaceFormat => None,
+            Self::UnsupportedSurfaceFormat => None,
         }
     }
 }
@@ -66,15 +64,10 @@ impl std::error::Error for RenderSurfaceError {
 /// Simple render context that maintains wgpu state for rendering the pipeline.
 pub(crate) struct RenderContext {
     pub instance: Instance,
-    /// Created devices used by this context.
-    ///
-    /// Invariants:
-    /// - Entries are append-only (never deleted or replaced).
-    /// - Indices are stable for the lifetime of the `RenderContext`.
-    ///
-    /// Other parts of the library store indices into this vec (e.g. `RenderSurface::dev_id`) and
-    /// assume they remain valid.
-    pub devices: Vec<DeviceHandle>,
+    /// Devices keyed by never-reused identities. A device is removed only
+    /// after every surface referencing it has been detached.
+    pub devices: BTreeMap<GpuDeviceId, DeviceHandle>,
+    device_options_locked: bool,
     requested_features: wgpu::Features,
     requested_limits: WgpuLimits,
     event_loop_proxy: EventLoopProxy,
@@ -86,6 +79,7 @@ pub(crate) struct DeviceHandle {
     pub queue: wgpu::Queue,
     lost: Arc<AtomicBool>,
     pub ready_notified: bool,
+    pub renderer: Renderer,
 }
 
 impl DeviceHandle {
@@ -110,7 +104,8 @@ impl RenderContext {
         });
         Self {
             instance,
-            devices: Vec::new(),
+            devices: BTreeMap::new(),
+            device_options_locked: false,
             requested_features: wgpu::Features::empty(),
             requested_limits: WgpuLimits::Default,
             event_loop_proxy,
@@ -122,7 +117,7 @@ impl RenderContext {
         features: wgpu::Features,
         limits: WgpuLimits,
     ) -> bool {
-        if !self.devices.is_empty() {
+        if self.device_options_locked {
             return false;
         }
         self.requested_features = features;
@@ -131,7 +126,7 @@ impl RenderContext {
     }
 
     pub(crate) fn add_wgpu_features(&mut self, features: wgpu::Features) -> bool {
-        if !self.devices.is_empty() {
+        if self.device_options_locked {
             return false;
         }
         self.requested_features |= features;
@@ -139,7 +134,7 @@ impl RenderContext {
     }
 
     pub(crate) fn set_wgpu_limits(&mut self, limits: WgpuLimits) -> bool {
-        if !self.devices.is_empty() {
+        if self.device_options_locked {
             return false;
         }
         self.requested_limits = limits;
@@ -174,10 +169,11 @@ impl RenderContext {
     ) -> Result<RenderSurface<'w>, RenderSurfaceError> {
         let dev_id = self.device(&surface)?;
 
-        let device_handle = &self.devices[dev_id];
+        let device_handle = &self.devices[&dev_id];
         let capabilities = surface.get_capabilities(&device_handle.adapter);
-        if !supports_present_mode(&capabilities.present_modes, present_mode) {
-            return Err(RenderSurfaceError::UnsupportedPresentMode(present_mode));
+        let effective_present_mode = select_present_mode(&capabilities.present_modes, present_mode);
+        if effective_present_mode != present_mode {
+            tracing::warn!(requested = ?present_mode, effective = ?effective_present_mode, "Requested presentation mode unavailable on new surface");
         }
         let format = capabilities
             .formats
@@ -228,7 +224,7 @@ impl RenderContext {
             format,
             width,
             height,
-            present_mode,
+            present_mode: effective_present_mode,
             desired_maximum_frame_latency: 2,
             alpha_mode,
             view_formats: vec![],
@@ -240,6 +236,7 @@ impl RenderContext {
             surface,
             config,
             dev_id,
+            requested_present_mode: present_mode,
             format,
             target_texture,
             target_view,
@@ -253,7 +250,7 @@ impl RenderContext {
 
     /// Resizes the surface to the new dimensions.
     pub(crate) fn resize_surface(&self, surface: &mut RenderSurface<'_>, width: u32, height: u32) {
-        let (texture, view) = create_targets(width, height, &self.devices[surface.dev_id].device);
+        let (texture, view) = create_targets(width, height, &self.devices[&surface.dev_id].device);
         // TODO: Use clever resize semantics to avoid thrashing the memory allocator during a resize
         // especially important on metal.
         surface.target_texture = texture;
@@ -300,33 +297,39 @@ impl RenderContext {
         surface: &mut RenderSurface<'_>,
         present_mode: PresentMode,
     ) -> bool {
-        if surface.config.present_mode == present_mode {
-            return true;
-        }
         let capabilities = surface
             .surface
-            .get_capabilities(&self.devices[surface.dev_id].adapter);
+            .get_capabilities(&self.devices[&surface.dev_id].adapter);
         if !supports_present_mode(&capabilities.present_modes, present_mode) {
             return false;
         }
-        surface.config.present_mode = present_mode;
-        self.configure_surface(surface);
+        surface.requested_present_mode = present_mode;
+        if surface.config.present_mode != present_mode || surface.needs_reconfigure {
+            self.configure_surface(surface);
+        }
         true
     }
 
     pub(crate) fn configure_surface(&self, surface: &mut RenderSurface<'_>) {
-        let device = &self.devices[surface.dev_id].device;
-        surface.surface.configure(device, &surface.config);
+        let handle = &self.devices[&surface.dev_id];
+        let supported = surface
+            .surface
+            .get_capabilities(&handle.adapter)
+            .present_modes;
+        let mode = select_present_mode(&supported, surface.requested_present_mode);
+        if mode != surface.config.present_mode && mode != surface.requested_present_mode {
+            tracing::warn!(requested = ?surface.requested_present_mode, effective = ?mode, "Presentation mode no longer supported");
+        }
+        surface.config.present_mode = mode;
+        surface.surface.configure(&handle.device, &surface.config);
         surface.needs_reconfigure = false;
     }
 
     /// Finds or creates a compatible device handle id.
-    fn device(&mut self, surface: &Surface<'_>) -> Result<usize, RenderSurfaceError> {
-        if let Some(id) = self
-            .devices
-            .iter()
-            .position(|device| !device.is_lost() && device.adapter.is_surface_supported(surface))
-        {
+    fn device(&mut self, surface: &Surface<'_>) -> Result<GpuDeviceId, RenderSurfaceError> {
+        if let Some(id) = self.devices.iter().find_map(|(id, device)| {
+            (!device.is_lost() && device.adapter.is_surface_supported(surface)).then_some(*id)
+        }) {
             return Ok(id);
         }
         self.new_device(surface)
@@ -336,7 +339,7 @@ impl RenderContext {
     fn new_device(
         &mut self,
         compatible_surface: &Surface<'_>,
-    ) -> Result<usize, RenderSurfaceError> {
+    ) -> Result<GpuDeviceId, RenderSurfaceError> {
         let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(
             &self.instance,
             Some(compatible_surface),
@@ -361,12 +364,12 @@ impl RenderContext {
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
         }))
         .map_err(RenderSurfaceError::RequestDevice)?;
-        let dev_id = self.devices.len();
+        let dev_id = GpuDeviceId::next();
         let lost = Arc::new(AtomicBool::new(false));
         let callback_lost = lost.clone();
         let proxy = self.event_loop_proxy.clone();
         device.set_device_lost_callback(move |reason, message| {
-            tracing::warn!(?reason, %message, dev_id, "Masonry GPU device lost");
+            tracing::warn!(?reason, %message, ?dev_id, "Masonry GPU device lost");
             if !callback_lost.swap(true, Ordering::AcqRel) {
                 let _ = proxy.send_event(MasonryUserEvent::GpuDeviceLost(dev_id));
             }
@@ -377,14 +380,69 @@ impl RenderContext {
             queue,
             lost,
             ready_notified: false,
+            renderer: Renderer::new(),
         };
-        self.devices.push(device_handle);
+        self.device_options_locked = true;
+        self.devices.insert(dev_id, device_handle);
         Ok(dev_id)
     }
 }
 
 fn supports_present_mode(supported: &[PresentMode], mode: PresentMode) -> bool {
     matches!(mode, PresentMode::AutoVsync | PresentMode::AutoNoVsync) || supported.contains(&mode)
+}
+
+// Explicit live-surface requests are validated, but an existing preference
+// must not prevent a new or recovered surface from rendering.
+fn select_present_mode(supported: &[PresentMode], requested: PresentMode) -> PresentMode {
+    if supports_present_mode(supported, requested) {
+        requested
+    } else if requested == PresentMode::Immediate {
+        PresentMode::AutoNoVsync
+    } else {
+        // Mailbox is non-tearing, so prefer a non-tearing fallback.
+        PresentMode::Fifo
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn presentation_fallback_preserves_supported_preferences_and_tearing_policy() {
+        let all = [
+            PresentMode::AutoVsync,
+            PresentMode::AutoNoVsync,
+            PresentMode::Fifo,
+            PresentMode::FifoRelaxed,
+            PresentMode::Immediate,
+            PresentMode::Mailbox,
+        ];
+        for requested in all {
+            assert_eq!(select_present_mode(&all, requested), requested);
+        }
+        let supported = [PresentMode::Fifo];
+        for requested in [
+            PresentMode::AutoVsync,
+            PresentMode::AutoNoVsync,
+            PresentMode::Fifo,
+        ] {
+            assert_eq!(select_present_mode(&supported, requested), requested);
+        }
+        assert_eq!(
+            select_present_mode(&supported, PresentMode::Immediate),
+            PresentMode::AutoNoVsync
+        );
+        assert_eq!(
+            select_present_mode(&supported, PresentMode::Mailbox),
+            PresentMode::Fifo
+        );
+        assert_eq!(
+            select_present_mode(&supported, PresentMode::FifoRelaxed),
+            PresentMode::Fifo
+        );
+    }
 }
 
 /// Masonry renders into an intermediate texture because surface textures are not suitable for all
@@ -419,7 +477,8 @@ fn create_targets(width: u32, height: u32, device: &Device) -> (Texture, Texture
 pub(crate) struct RenderSurface<'s> {
     pub surface: Surface<'s>,
     pub config: SurfaceConfiguration,
-    pub dev_id: usize,
+    pub dev_id: GpuDeviceId,
+    pub requested_present_mode: PresentMode,
     pub format: TextureFormat,
     pub target_texture: Texture,
     pub target_view: TextureView,
@@ -434,6 +493,7 @@ impl std::fmt::Debug for RenderSurface<'_> {
             .field("surface", &self.surface)
             .field("config", &self.config)
             .field("dev_id", &self.dev_id)
+            .field("requested_present_mode", &self.requested_present_mode)
             .field("format", &self.format)
             .field("target_texture", &self.target_texture)
             .field("target_view", &self.target_view)
