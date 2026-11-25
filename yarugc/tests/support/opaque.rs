@@ -74,11 +74,15 @@ pub(super) fn glyph_atlas(
         .unwrap();
     queue.submit(Some(enc.finish()));
     let coverage = pixels(device, queue, &alpha);
-    assert!(coverage.chunks_exact(4).any(|p| p[3] > 128));
+    assert!(
+        coverage.chunks_exact(4).any(|p| p[3] > 128),
+        "glyph atlas should contain visible ink"
+    );
     assert!(
         coverage.chunks_exact(4).all(|p| p[0].abs_diff(p[3]) <= 1
             && p[1].abs_diff(p[3]) <= 1
-            && p[2].abs_diff(p[3]) <= 1)
+            && p[2].abs_diff(p[3]) <= 1),
+        "white glyph coverage must be premultiplied"
     );
     // Bake exactly the same coverage over both known backgrounds. The atlas
     // preparation itself is outside the steady-state timing.
@@ -235,7 +239,10 @@ pub(super) fn glyph_ids(frame: u32, changed: usize) -> Vec<u32> {
             let s = &strings(i)[selected(frame, changed, i) % 2];
             let mut result = [0; CELLS as usize];
             let len = s.chars().count();
-            assert!(len <= result.len());
+            assert!(
+                len <= result.len(),
+                "benchmark text exceeds fixed glyph cells"
+            );
             for (c, slot) in s.chars().zip(result[CELLS as usize - len..].iter_mut()) {
                 *slot = GLYPHS.chars().position(|g| g == c).unwrap() as u32;
             }
@@ -281,7 +288,11 @@ fn full(pass: &mut RenderPass<'_>, pipeline: &wgpu::RenderPipeline, binding: &wg
 }
 
 pub(super) fn compare(a: &[u8], b: &[u8]) {
-    assert_eq!(a.len(), b.len());
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "readback images must have the same extent"
+    );
     let max = a.iter().zip(b).map(|(x, y)| x.abs_diff(*y)).max().unwrap();
     assert!(max <= 2, "opaque and transparent output differ by {max}");
 }

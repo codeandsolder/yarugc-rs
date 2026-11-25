@@ -17,6 +17,7 @@ pub enum AlphaMode {
 /// Persistent RGBA8 content, in physical pixels.
 #[derive(Debug)]
 pub struct Surface {
+    device: wgpu::Device,
     texture: wgpu::Texture,
     view: wgpu::TextureView,
     binding: wgpu::BindGroup,
@@ -24,22 +25,30 @@ pub struct Surface {
 }
 
 impl Surface {
+    pub(crate) fn belongs_to(&self, device: &wgpu::Device) -> bool {
+        &self.device == device
+    }
+
     /// Texture for the host's own GPU rendering or copying.
-    pub fn texture(&self) -> &wgpu::Texture {
+    #[must_use = "Use the retained texture."]
+    pub const fn texture(&self) -> &wgpu::Texture {
         &self.texture
     }
 
     /// View suitable for a render or compute target. Content must use the alpha representation specified at allocation.
-    pub fn view(&self) -> &wgpu::TextureView {
+    #[must_use = "Use the retained texture view."]
+    pub const fn view(&self) -> &wgpu::TextureView {
         &self.view
     }
 
     /// Alpha representation of the texture content.
-    pub fn alpha_mode(&self) -> AlphaMode {
+    #[must_use = "Use the alpha representation."]
+    pub const fn alpha_mode(&self) -> AlphaMode {
         self.alpha_mode
     }
 
     /// Physical pixel extent.
+    #[must_use = "Use the physical extent."]
     pub fn size(&self) -> [u32; 2] {
         [self.texture.width(), self.texture.height()]
     }
@@ -56,6 +65,7 @@ pub struct Layer<'a> {
 
 impl<'a> Layer<'a> {
     /// Place at the texture's native pixel size.
+    #[must_use = "Use the placed layer."]
     pub fn at(surface: &'a Surface, [x, y]: [f64; 2]) -> Self {
         let [w, h] = surface.size().map(f64::from);
         Self {
@@ -73,6 +83,26 @@ pub struct Composition {
     bindings: Vec<(std::ops::Range<u32>, wgpu::BindGroup)>,
 }
 
+/// A failure to prepare a retained composition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompositionError {
+    /// A visible layer or total vertex buffer exceeds the host device's limits.
+    InvalidExtent,
+    /// A surface belongs to a different WGPU device.
+    DifferentDevice,
+}
+
+impl std::fmt::Display for CompositionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::InvalidExtent => "composition exceeds device limits",
+            Self::DifferentDevice => "composition surface belongs to a different device",
+        })
+    }
+}
+
+impl std::error::Error for CompositionError {}
+
 /// Composites retained surfaces into a render pass owned by the host.
 #[derive(Debug)]
 pub struct Compositor {
@@ -84,6 +114,7 @@ pub struct Compositor {
 
 impl Compositor {
     /// Create a compositor for the host device and final render target format.
+    #[must_use = "Use the compositor."]
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("yarugc layer layout"),
@@ -127,7 +158,7 @@ impl Compositor {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: 20,
                     step_mode: wgpu::VertexStepMode::Vertex,
@@ -137,16 +168,16 @@ impl Compositor {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
                     blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
-            primitive: Default::default(),
+            primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
-            multisample: Default::default(),
+            multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
             cache: None,
         });
@@ -158,13 +189,14 @@ impl Compositor {
         }
     }
 
-    pub(crate) fn device(&self) -> &wgpu::Device {
+    pub(crate) const fn device(&self) -> &wgpu::Device {
         &self.device
     }
 
     /// Allocate a persistent texture compatible with Vello and native GPU producers.
     ///
     /// Returns `None` for empty or unsupported extents.
+    #[must_use = "Use the allocated surface or handle an unsupported extent."]
     pub fn create_surface(
         &self,
         [width, height]: [u32; 2],
@@ -192,7 +224,7 @@ impl Compositor {
                 | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        let view = texture.create_view(&Default::default());
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let binding = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("yarugc retained surface binding"),
             layout: &self.layout,
@@ -208,6 +240,7 @@ impl Compositor {
             ],
         });
         Some(Surface {
+            device: self.device.clone(),
             texture,
             view,
             binding,
@@ -219,39 +252,54 @@ impl Compositor {
     ///
     /// The prepared composition retains GPU bindings, so a replaced surface requires
     /// rebuilding this composition. Ordinary content updates do not.
-    pub fn prepare(&self, extent: [u32; 2], layers: &[Layer<'_>]) -> Composition {
-        let mut bytes = Vec::new();
+    ///
+    /// # Errors
+    /// Returns an error for surfaces from another device, vertex index overflow,
+    /// allocation failure, or a vertex buffer larger than the device supports.
+    pub fn prepare(
+        &self,
+        extent: [u32; 2],
+        layers: &[Layer<'_>],
+    ) -> Result<Composition, CompositionError> {
+        let mut vertices = Vec::<[f32; 5]>::new();
         let mut bindings = Vec::new();
+        let max_buffer_size = self.device.limits().max_buffer_size;
         let mut first = 0_u32;
         for layer in layers {
-            let vertices = layer.placement.vertices(extent);
-            if !vertices.is_empty() {
-                let count = u32::try_from(vertices.len()).expect("vertex count fits u32");
-                let end = first.checked_add(count).expect("vertex index fits u32");
-                for vertex in vertices {
-                    for value in vertex {
-                        bytes.extend_from_slice(&value.to_ne_bytes());
-                    }
-                    let straight = if layer.surface.alpha_mode == AlphaMode::Straight {
-                        1.0_f32
-                    } else {
-                        0.0_f32
-                    };
-                    bytes.extend_from_slice(&straight.to_ne_bytes());
-                }
-                bindings.push((first..end, layer.surface.binding.clone()));
-                first = end;
+            if !layer.surface.belongs_to(&self.device) {
+                return Err(CompositionError::DifferentDevice);
             }
+            let quad = layer.placement.vertices(extent);
+            if quad.is_empty() {
+                continue;
+            }
+            let count = u32::try_from(quad.len()).map_err(|_| CompositionError::InvalidExtent)?;
+            let end = first
+                .checked_add(count)
+                .ok_or(CompositionError::InvalidExtent)?;
+            if u64::from(end) * 20 > max_buffer_size {
+                return Err(CompositionError::InvalidExtent);
+            }
+            vertices
+                .try_reserve(quad.len())
+                .map_err(|_| CompositionError::InvalidExtent)?;
+            bindings
+                .try_reserve(1)
+                .map_err(|_| CompositionError::InvalidExtent)?;
+            let straight = f32::from(u8::from(layer.surface.alpha_mode == AlphaMode::Straight));
+            vertices.extend(quad.into_iter().map(|[x, y, u, v]| [x, y, u, v, straight]));
+            bindings.push((first..end, layer.surface.binding.clone()));
+            first = end;
         }
-        let vertices = (!bytes.is_empty()).then(|| {
+        let vertices = (!vertices.is_empty()).then(|| {
             self.device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("yarugc retained placement"),
-                    contents: &bytes,
+                    contents: bytemuck::cast_slice(&vertices),
                     usage: wgpu::BufferUsages::VERTEX,
                 })
         });
-        Composition { vertices, bindings }
+        Ok(Composition { vertices, bindings })
     }
 
     /// Draw cached layers over the current host frame. The host controls load/store

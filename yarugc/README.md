@@ -3,8 +3,8 @@
 Engine-owned retained UI. Masonry handles widget state, layout and events. A cached
 window renders to a persistent transparent texture only when its root requests a
 redraw. Native GPU producers can update other surfaces independently. A prepared
-composition reuses GPU placement buffers and texture bindings until geometry or
-ordering changes. The host draws it over its own scene and presents.
+composition returned by the fallible `Compositor::prepare` reuses GPU placement buffers and texture bindings until geometry or
+ordering changes. Preparation rejects mismatched devices and unsupported buffer sizes. The host draws it over its own scene and presents.
 
 ## Fixed-layout telemetry
 

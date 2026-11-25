@@ -362,9 +362,9 @@ impl Fixture {
             let row = slot / 16;
             let col = slot % 16;
             let bg = if (row + col) % 2 == 0 {
-                [16u32, 24, 32]
+                [16_u32, 24, 32]
             } else {
-                [24u32, 32, 40]
+                [24_u32, 32, 40]
             };
             for y in 0..TILE_H {
                 for x in 0..TILE_W {
@@ -424,7 +424,7 @@ pub(super) fn run(device: &Device, queue: &Queue, compositor: &Compositor) {
         .unwrap();
     let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
-        contents: bytemuck::cast_slice(&vec![[0u32; 4]; CELLS]),
+        contents: bytemuck::cast_slice(&vec![[0_u32; 4]; CELLS]),
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
     });
     let binding = f.bind(device, &buffer, &panel);
