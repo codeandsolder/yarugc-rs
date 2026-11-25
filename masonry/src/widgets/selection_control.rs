@@ -176,7 +176,7 @@ pub(super) use activation_methods;
 
 // Keep the indicator at its preferred size unless the actual available
 // content box is smaller. Reserve the same prefix in layout and painting.
-pub(super) fn indicator_side(size: Size) -> f64 {
+pub(super) const fn indicator_side(size: Size) -> f64 {
     theme::BASIC_WIDGET_HEIGHT
         .get()
         .min(size.width)
@@ -240,8 +240,8 @@ pub(super) fn layout(
     props: &PropertiesRef<'_>,
     size: Size,
 ) {
-    let side = Length::px(indicator_side(size));
-    let prefix = indicator_prefix(side, Some(Length::px(size.width))).get();
+    let indicator = Length::px(indicator_side(size));
+    let prefix = indicator_prefix(indicator, Some(Length::px(size.width))).get();
     let space = Size::new((size.width - prefix).max(0.0), size.height);
 
     let label_size = ctx.compute_size(label, SizeDef::fit(space), space.into());

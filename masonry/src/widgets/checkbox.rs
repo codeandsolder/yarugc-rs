@@ -179,7 +179,7 @@ impl Widget for Checkbox {
 
             // The nominal checkmark is centered in an 18px square. Scale
             // with constrained content and further fit it inside the border.
-            let interior = side - 2.0 * border_width.width.get();
+            let interior = (-2.0_f64).mul_add(border_width.width.get(), side);
             let stroke_width = (checkmark_width.width * (side / 18.0)).min(interior / 3.0);
             if !checkmark_width.width.is_finite() || stroke_width <= 0.0 {
                 return;
@@ -187,9 +187,12 @@ impl Widget for Checkbox {
             let scale = (side / 18.0).min((interior - stroke_width) / 10.0);
             let center = side / 2.0;
             let mut path = BezPath::new();
-            path.move_to((center - 5.0 * scale, center));
-            path.line_to((center - scale, center + 4.0 * scale));
-            path.line_to((center + 5.0 * scale, center - 4.0 * scale));
+            path.move_to(((-5.0_f64).mul_add(scale, center), center));
+            path.line_to((center - scale, 4.0_f64.mul_add(scale, center)));
+            path.line_to((
+                5.0_f64.mul_add(scale, center),
+                (-4.0_f64).mul_add(scale, center),
+            ));
 
             let style = Stroke {
                 width: stroke_width,
