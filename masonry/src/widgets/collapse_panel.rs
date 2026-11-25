@@ -5,7 +5,7 @@ use std::any::TypeId;
 
 use crate::core::{
     AccessCtx, ArcStr, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
-    PropertiesRef, RegisterCtx, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    PropertiesRef, RegisterCtx, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Line, Point, Size, Stroke};
@@ -42,12 +42,7 @@ impl CollapsePanel {
         header_text: impl Into<ArcStr>,
         child: NewWidget<impl Widget + ?Sized>,
     ) -> Self {
-        Self {
-            disclosure_button: Self::disclosure_button(collapse),
-            header_label: WidgetPod::new(Label::new(header_text)),
-            separator_line_y: None,
-            child: child.erased().into_pod(),
-        }
+        Self::from_label(collapse, Label::new(header_text).prepare(), child)
     }
 
     /// Create a new [`CollapsePanel`] with a header label widget and a child widget.
@@ -58,15 +53,16 @@ impl CollapsePanel {
         child: NewWidget<impl Widget + ?Sized>,
     ) -> Self {
         Self {
-            disclosure_button: Self::disclosure_button(collapse),
+            disclosure_button: Self::disclosure_button(collapse, header_label.id()),
             header_label: header_label.into_pod(),
             separator_line_y: None,
             child: child.erased().into_pod(),
         }
     }
 
-    fn disclosure_button(collapse: bool) -> WidgetPod<DisclosureButton> {
+    fn disclosure_button(collapse: bool, label: WidgetId) -> WidgetPod<DisclosureButton> {
         DisclosureButton::new(!collapse)
+            .with_label(label)
             .prepare()
             .with_props(
                 // TODO - Move to DefaultProperties
@@ -365,6 +361,7 @@ mod tests {
         );
         let children = harness.root_widget().unwrap().children();
         let button_id = children[0].id();
+        let label_id = children[1].id();
         let button_rect = children[0]
             .ctx()
             .window_transform()
@@ -375,6 +372,8 @@ mod tests {
             .transform_rect_bbox(children[1].ctx().border_box());
         assert!((button_rect.center().y - label_rect.center().y).abs() < 1e-8);
         assert!(children[2].ctx().is_stashed());
+        let button = harness.access_node(button_id).unwrap();
+        assert_eq!(button.data().labelled_by(), &[label_id.into()]);
         harness
             .mouse_click_on(button_id, Some(crate::core::PointerButton::Primary))
             .unwrap();

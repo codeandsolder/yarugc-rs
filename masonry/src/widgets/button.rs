@@ -261,6 +261,28 @@ mod tests {
     }
 
     #[test]
+    fn accessible_click_targets_only_the_intended_control() {
+        use accesskit::{Action, ActionRequest, TreeId};
+        let label = Label::new("Button").prepare();
+        let label_id = label.id();
+        let mut harness = TestHarness::create(test_property_set(), Button::new(label).prepare());
+        let button_id = harness.root_id();
+        let click = |id: crate::core::WidgetId| ActionRequest {
+            action: Action::Click,
+            target_tree: TreeId::ROOT,
+            target_node: id.into(),
+            data: None,
+        };
+        harness.process_access_event(click(label_id));
+        assert!(harness.pop_action_erased().is_none());
+        harness.process_access_event(click(button_id));
+        assert_eq!(
+            harness.pop_action::<ButtonPress>().unwrap(),
+            Some((ButtonPress { button: None }, button_id))
+        );
+    }
+
+    #[test]
     fn mouse_down_requests_focus() {
         let widget = NewWidget::new(Button::with_text("Hello"));
         let mut harness = TestHarness::create(test_property_set(), widget);

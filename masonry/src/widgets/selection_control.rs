@@ -114,7 +114,11 @@ impl Activation {
     }
 
     pub(super) fn access(ctx: &mut EventCtx<'_>, event: &AccessEvent) -> bool {
-        if event.action == accesskit::Action::Click && !ctx.is_disabled() && !ctx.is_stashed() {
+        if event.action == accesskit::Action::Click
+            && ctx.target() == ctx.widget_id()
+            && !ctx.is_disabled()
+            && !ctx.is_stashed()
+        {
             ctx.set_handled();
             true
         } else {

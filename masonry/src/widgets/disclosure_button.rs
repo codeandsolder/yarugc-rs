@@ -8,7 +8,7 @@ use super::selection_control::{Activation, ActivationKeys};
 use crate::accesskit;
 use crate::core::{
     AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NoAction, PaintCtx,
-    PropertiesMut, PropertiesRef, RegisterCtx, Update, UpdateCtx, Widget, WidgetMut,
+    PropertiesMut, PropertiesRef, RegisterCtx, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Affine, Axis, BezPath, Join, Size, Stroke};
@@ -25,6 +25,7 @@ const DEFAULT_LENGTH: Length = crate::layout::length!(8.);
 pub struct DisclosureButton {
     is_disclosed: bool,
     activation: Activation,
+    label: Option<WidgetId>,
 }
 
 impl Default for DisclosureButton {
@@ -42,7 +43,15 @@ impl DisclosureButton {
         Self {
             is_disclosed,
             activation: Activation::new(),
+            label: None,
         }
+    }
+
+    /// Associates a separate accessible label with this disclosure control.
+    #[must_use = "Use the configured disclosure button."]
+    pub const fn with_label(mut self, label: WidgetId) -> Self {
+        self.label = Some(label);
+        self
     }
 
     /// Get the disclosed state of the button.
@@ -177,6 +186,9 @@ impl Widget for DisclosureButton {
         _props: &PropertiesRef<'_>,
         node: &mut accesskit::Node,
     ) {
+        if let Some(label) = self.label {
+            node.push_labelled_by(label.into());
+        }
         node.set_expanded(self.is_disclosed);
         node.add_action(accesskit::Action::Click);
         node.add_action(if self.is_disclosed {
