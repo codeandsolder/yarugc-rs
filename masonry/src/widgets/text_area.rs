@@ -435,8 +435,11 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
 
     /// Sets the selection to the given byte range.
     ///
-    /// No-op if either index is not a char boundary.
+    /// No-op while IME composition is active or if either index is not a char boundary.
     pub fn select_byte_range(this: &mut WidgetMut<'_, Self>, start: usize, end: usize) {
+        if this.widget.editor.is_composing() {
+            return;
+        }
         let (fctx, lctx) = this.ctx.text_contexts();
         this.widget
             .editor
@@ -730,19 +733,24 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
                 false
             }
             Ime::Commit(text) => {
-                // Restore the replaced selection before committing, including
-                // when the platform omits the preceding empty preedit event.
-                self.cancel_preedit(ctx);
-                let (fctx, lctx) = ctx.text_contexts();
-                self.editor
-                    .driver(fctx, lctx)
-                    .insert_or_replace_selection(text);
+                self.replace_preedit(ctx, text);
                 true
             }
             Ime::Enabled => false,
         };
         ctx.set_handled();
         self.finish_text_edit(ctx, committed);
+    }
+
+    fn replace_preedit(&mut self, ctx: &mut EventCtx<'_>, text: &str) {
+        // Clearing the preedit moves the caret to its original start. The
+        // original selection was already removed when composition began;
+        // replacing it again would require unnecessary layout and reselection.
+        self.preedit_replaced = None;
+        let (fctx, lctx) = ctx.text_contexts();
+        let mut driver = self.editor.driver(fctx, lctx);
+        driver.clear_compose();
+        driver.insert_or_replace_selection(text);
     }
 
     fn finish_text_edit(&mut self, ctx: &mut EventCtx<'_>, committed: bool) {
@@ -891,11 +899,7 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
                 self.handle_ime(ctx, event);
             }
             TextEvent::ClipboardPaste(text) if EDITABLE => {
-                self.cancel_preedit(ctx);
-                let (fctx, lctx) = ctx.text_contexts();
-                self.editor
-                    .driver(fctx, lctx)
-                    .insert_or_replace_selection(text);
+                self.replace_preedit(ctx, text);
                 ctx.set_handled();
                 self.finish_text_edit(ctx, true);
             }
