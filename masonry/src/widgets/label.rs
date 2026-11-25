@@ -254,30 +254,37 @@ impl Label {
         property: Discriminant<StyleProperty>,
     ) -> Option<StyleProperty> {
         let old = this.widget.styles.remove(property);
-
-        this.widget.clear_cache();
-        this.ctx.request_layout();
+        if old.is_some() {
+            this.widget.clear_cache();
+            this.ctx.request_layout();
+        }
         old
     }
 
     /// Replaces the text of this widget.
     pub fn set_text(this: &mut WidgetMut<'_, Self>, new_text: impl Into<ArcStr>) {
-        this.widget.text = new_text.into();
-
-        this.widget.clear_cache();
-        this.ctx.request_layout();
+        let new_text = new_text.into();
+        if this.widget.text != new_text {
+            this.widget.text = new_text;
+            this.widget.clear_cache();
+            this.ctx.request_layout();
+        }
     }
 
     /// The runtime equivalent of [`with_text_alignment`](Self::with_text_alignment).
     pub fn set_text_alignment(this: &mut WidgetMut<'_, Self>, text_alignment: TextAlign) {
-        this.widget.text_alignment = text_alignment;
-        this.ctx.request_layout();
+        if this.widget.text_alignment != text_alignment {
+            this.widget.text_alignment = text_alignment;
+            this.ctx.request_layout();
+        }
     }
 
     /// The runtime equivalent of [`with_hint`](Self::with_hint).
     pub fn set_hint(this: &mut WidgetMut<'_, Self>, hint: bool) {
-        this.widget.hint = hint;
-        this.ctx.request_paint_only();
+        if this.widget.hint != hint {
+            this.widget.hint = hint;
+            this.ctx.request_paint_only();
+        }
     }
 }
 
@@ -619,6 +626,34 @@ mod tests {
             index
         );
         assert_eq!(label.layouts.len(), 1);
+    }
+
+    #[test]
+    fn unchanged_text_and_alignment_preserve_cached_layouts() {
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            Label::new("Stable").prepare(),
+            (100, 40),
+        );
+        let _ = harness.redraw();
+        let before = harness.root_widget().unwrap();
+        let timestamp = before.cache_time;
+        let active = before.active_layout;
+        let count = before.layouts.len();
+        let alignment = before.text_alignment;
+        harness
+            .edit_root_widget(|mut label| {
+                Label::set_text(&mut label, String::from("Stable"));
+                Label::set_text_alignment(&mut label, alignment);
+            })
+            .unwrap();
+        let after = harness.root_widget().unwrap();
+        assert_eq!(
+            after.cache_time, timestamp,
+            "unchanged text must not trigger shaping or measurement"
+        );
+        assert_eq!(after.active_layout, active);
+        assert_eq!(after.layouts.len(), count);
     }
 
     #[test]

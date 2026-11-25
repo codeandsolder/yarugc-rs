@@ -34,7 +34,7 @@ pub struct ProgressBar {
     /// A value in the range `[0, 1]` inclusive, where 0 is 0% and 1 is 100% complete.
     ///
     /// `None` variant can be used to show a progress bar without a percentage.
-    /// It is also used if an invalid float (outside of [0, 1]) is passed.
+    /// NaN is treated as indeterminate; other values are clamped.
     progress: Option<f64>,
     label: WidgetPod<Label>,
 }
@@ -50,7 +50,7 @@ impl ProgressBar {
     pub fn new(progress: Option<f64>) -> Self {
         let progress = clamp_progress(progress);
         let label_props = PropertySet::one(LineBreaking::Overflow);
-        let label = NewWidget::new(Label::new(Self::value(progress)))
+        let label = NewWidget::new(Label::new(Self::value(progress)).accessibility_hidden(true))
             .with_props(label_props)
             .into_pod();
         Self { progress, label }
@@ -66,8 +66,12 @@ impl ProgressBar {
         )
     }
 
+    fn percent(progress: Option<f64>) -> Option<f64> {
+        progress.map(|value| (value * 100.).round_ties_even())
+    }
+
     fn value(progress: Option<f64>) -> ArcStr {
-        progress.map_or_else(|| "".into(), |value| format!("{:.0}%", value * 100.).into())
+        Self::percent(progress).map_or_else(|| "".into(), |value| format!("{value:.0}%").into())
     }
 }
 
@@ -80,15 +84,16 @@ impl ProgressBar {
     /// A `None` value (or NaN) will show an indeterminate progress bar.
     pub fn set_progress(this: &mut WidgetMut<'_, Self>, progress: Option<f64>) {
         let progress = clamp_progress(progress);
-        let progress_changed = this.widget.progress != progress;
-        if progress_changed {
-            this.widget.progress = progress;
-            if let Some(mut label) = this.ctx.get_mut(this.widget.label.id()) {
-                Label::set_text(&mut label, Self::value(progress));
-            }
+        if this.widget.progress == progress {
+            return;
         }
-        this.ctx.request_layout();
-        this.ctx.request_render();
+        let label_changed = Self::percent(this.widget.progress) != Self::percent(progress);
+        this.widget.progress = progress;
+        if label_changed && let Some(mut label) = this.ctx.get_mut(this.widget.label.id()) {
+            Label::set_text(&mut label, Self::value(progress));
+        }
+        this.ctx.request_paint_only();
+        this.ctx.request_accessibility_update();
     }
 }
 
@@ -100,7 +105,7 @@ fn clamp_progress(progress: Option<f64>) -> Option<f64> {
     if progress.is_nan() {
         None
     } else {
-        Some(progress.clamp(0., 1.))
+        Some(progress.max(0.).clamp(0., 1.))
     }
 }
 
@@ -199,11 +204,13 @@ impl Widget for ProgressBar {
         let progress = self.progress.unwrap_or(1.);
         if progress > 0. {
             // The bar width is without the borders.
-            let bar_width = 2.0_f64.mul_add(-border_width.width.get(), border_box.width());
-            if bar_width > 0. {
+            let total_border = 2.0 * border_width.width.get();
+            if border_box.width() > total_border && border_box.height() > total_border {
+                let bg_rect = border_width.bg_rect(border_box, corner_radius);
+                let bounds = bg_rect.rect();
                 let bar_color = props.get::<BarColor>(cache).0;
                 // Paint with a gradient so we get a straight line slice of the rounded rect.
-                let gradient = Gradient::new_linear((0., 0.), (bar_width, 0.)).with_stops([
+                let gradient = Gradient::new_linear((bounds.x0, 0.), (bounds.x1, 0.)).with_stops([
                     (0., bar_color),
                     (progress as f32, bar_color),
                     (progress as f32, Color::TRANSPARENT),
@@ -213,8 +220,6 @@ impl Widget for ProgressBar {
                 // Currently bg_rect() gives a rect without borders, so we can use it.
                 // However in the future when bg_rect() gets expanded to include borders,
                 // we'll need to create a special sans-border rect for this fill.
-                let bg_rect = border_width.bg_rect(border_box, corner_radius);
-
                 painter.fill(bg_rect, &gradient).draw();
             }
         }
@@ -242,6 +247,7 @@ impl Widget for ProgressBar {
         node.set_max_numeric_value(1.0);
         if let Some(value) = self.progress {
             node.set_numeric_value(value);
+            node.set_value(Self::value(Some(value)).as_ref());
         }
     }
 
@@ -268,6 +274,83 @@ mod tests {
     use crate::properties::{BorderColor, CornerRadius};
     use crate::testing::{TestHarness, assert_render_snapshot};
     use crate::theme::test_property_set;
+
+    #[test]
+    fn subpercentage_updates_repaint_without_layout() {
+        use crate::core::WidgetTag;
+        use crate::testing::{ModularWidget, Record, TestWidgetExt};
+
+        let tag = WidgetTag::named("progress");
+        let parent = WidgetTag::named("progress-parent");
+        let child = ProgressBar::new(Some(0.25)).prepare().with_tag(tag);
+        let root = ModularWidget::new_parent(child)
+            .record()
+            .prepare()
+            .with_tag(parent);
+        let mut harness = TestHarness::create_with_size(test_property_set(), root, (150, 60));
+        let id = harness.get_widget(tag).unwrap().id();
+        let _ = harness.redraw();
+        harness.flush_records_of(parent).unwrap();
+
+        harness
+            .edit_widget(tag, |mut bar| {
+                ProgressBar::set_progress(&mut bar, Some(0.251))
+            })
+            .unwrap();
+        let _ = harness.redraw();
+        let records = harness.take_records_of(parent).unwrap();
+        assert!(
+            !records
+                .iter()
+                .any(|record| matches!(record, Record::Layout(_) | Record::Measure(_))),
+            "fractional updates retaining the same label must not trigger parent layout: {records:?}"
+        );
+        assert_eq!(
+            harness.access_node(id).unwrap().data().numeric_value(),
+            Some(0.251)
+        );
+
+        harness
+            .edit_widget(tag, |mut bar| {
+                ProgressBar::set_progress(&mut bar, Some(0.26))
+            })
+            .unwrap();
+        let _ = harness.redraw();
+        assert_eq!(harness.access_node(id).unwrap().data().value(), Some("26%"));
+        let label_id = harness.get_widget(tag).unwrap().label.id();
+        assert_eq!(
+            harness
+                .get_widget_with_id(label_id)
+                .unwrap()
+                .downcast::<Label>()
+                .unwrap()
+                .text()
+                .as_ref(),
+            "26%"
+        );
+    }
+
+    #[test]
+    fn symmetric_padding_does_not_shift_the_fill_boundary() {
+        use crate::properties::Padding;
+        let bar = |padding| {
+            ProgressBar::new(Some(0.25)).prepare().with_props((
+                Padding::horizontal(padding),
+                BorderWidth::all(2.px()),
+                BarColor(palette::css::RED),
+            ))
+        };
+        let mut without =
+            TestHarness::create_with_size(test_property_set(), bar(Length::ZERO), (150, 60));
+        let mut padded =
+            TestHarness::create_with_size(test_property_set(), bar(12.px()), (150, 60));
+        let original = without.render().unwrap();
+        let image = padded.render().unwrap();
+        assert!(
+            original == image,
+            "padding changes text layout space, not the inner-border fill geometry"
+        );
+    }
 
     #[test]
     fn indeterminate_progressbar() {
