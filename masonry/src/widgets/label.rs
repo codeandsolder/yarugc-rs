@@ -206,6 +206,19 @@ impl Label {
     pub const fn text(&self) -> &ArcStr {
         &self.text
     }
+
+    pub(crate) fn font_weight(&self) -> crate::parley::style::FontWeight {
+        use crate::parley::style::FontWeight;
+        let key = std::mem::discriminant(&StyleProperty::FontWeight(FontWeight::NORMAL));
+        match self.styles.inner().get(&key) {
+            Some(StyleProperty::FontWeight(weight)) => *weight,
+            _ => FontWeight::NORMAL,
+        }
+    }
+
+    pub(crate) const fn hint(&self) -> bool {
+        self.hint
+    }
 }
 
 // --- MARK: WIDGETMUT
