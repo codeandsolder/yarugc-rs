@@ -54,7 +54,7 @@ Like all of these, it uses lightweight view objects, diffing them to provide
 minimal updates to a retained UI. Like `SwiftUI`, it is strongly typed.
 
 The talk *[Xilem: Let's Build High Performance Rust UI](https://www.youtube.com/watch?v=OvfNipIcRiQ)* by Raph Levien
-was presented at the RustNL conference in 2024, and gives a video introduction to these ideas.
+was presented at the `RustNL` conference in 2024, and gives a video introduction to these ideas.
 Xilem is implemented as a reactive layer on top of [Masonry][masonry], a widget toolkit which is developed alongside Xilem.
 Masonry itself is built on top of a wide array of foundational Rust UI projects:
 
