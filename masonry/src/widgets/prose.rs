@@ -23,7 +23,6 @@ use crate::widgets::TextArea;
 /// selected within.
 ///
 /// The text can also be copied from, but cannot be modified by the user.
-/// Note that copying is not yet implemented.
 ///
 /// At runtime, most properties of the text will be set using [`text_mut`](Self::text_mut).
 /// This is because `Prose` largely serves as a wrapper around a [`TextArea`].
@@ -106,8 +105,10 @@ impl Prose {
     ///
     /// The runtime equivalent of [`with_clip`](Self::with_clip).
     pub fn set_clip(this: &mut WidgetMut<'_, Self>, clip: bool) {
-        this.widget.clip = clip;
-        this.ctx.request_layout();
+        if this.widget.clip != clip {
+            this.widget.clip = clip;
+            this.ctx.request_layout();
+        }
     }
 }
 

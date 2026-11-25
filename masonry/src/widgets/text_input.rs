@@ -65,6 +65,7 @@ impl TextInput {
     /// Creates a new `TextInput` from a styled text area.
     #[must_use = "Use the returned value."]
     pub fn from_text_area(text: NewWidget<TextArea<true>>) -> Self {
+        let text_alignment = text.widget.text_alignment();
         Self {
             text: text.into_pod(),
             placeholder: Label::new("")
@@ -73,7 +74,7 @@ impl TextInput {
                 .with_props(LineBreaking::Clip)
                 .into_pod(),
             placeholder_text: "".into(),
-            text_alignment: TextAlign::default(),
+            text_alignment,
             clip: false,
         }
     }
@@ -162,8 +163,10 @@ impl TextInput {
     ///
     /// The runtime equivalent of [`with_clip`](Self::with_clip).
     pub fn set_clip(this: &mut WidgetMut<'_, Self>, clip: bool) {
-        this.widget.clip = clip;
-        this.ctx.request_layout();
+        if this.widget.clip != clip {
+            this.widget.clip = clip;
+            this.ctx.request_layout();
+        }
     }
 
     /// Sets the text alignment for both the input text and placeholder.
@@ -258,6 +261,8 @@ impl Widget for TextInput {
                 self.property_changed(ctx, TypeId::of::<PlaceholderColor>());
                 ctx.mutate_self_later::<Self>(|mut input| {
                     let placeholder_text = input.widget.placeholder_text.clone();
+                    let alignment = input.widget.text_alignment;
+                    Self::set_text_alignment(&mut input, alignment);
                     if let Some(mut child) = Self::text_mut(&mut input) {
                         TextArea::set_placeholder(&mut child, placeholder_text);
                     }
@@ -421,6 +426,66 @@ mod tests {
         harness.animate_ms(500 + 1);
 
         assert_render_snapshot!(harness, "text_input_cursor_blink");
+    }
+
+    #[test]
+    fn initial_alignment_matches_runtime_alignment_for_text_and_placeholder() {
+        for contents in ["", "Typed text"] {
+            let make = || TextInput::new(contents).with_placeholder("Search");
+            let mut initial = TestHarness::create_with(
+                test_property_set(),
+                make().with_text_alignment(TextAlign::End).prepare(),
+                HARNESS_PARAMS,
+            );
+            let mut runtime =
+                TestHarness::create_with(test_property_set(), make().prepare(), HARNESS_PARAMS);
+            runtime
+                .edit_root_widget(|mut input| {
+                    TextInput::set_text_alignment(&mut input, TextAlign::End);
+                })
+                .unwrap();
+
+            let child_id = initial.root_widget().unwrap().area_pod().id();
+            let child = initial.get_widget_with_id(child_id).unwrap();
+            assert_eq!(
+                child.downcast::<TextArea<true>>().unwrap().text_alignment(),
+                TextAlign::End
+            );
+            assert_eq!(initial.render().unwrap(), runtime.render().unwrap());
+        }
+    }
+
+    #[test]
+    fn wrapper_preserves_preconfigured_text_alignment() {
+        let area = TextArea::new_editable("")
+            .with_text_alignment(TextAlign::Center)
+            .prepare();
+        let id = area.id();
+        let mut wrapped = TestHarness::create_with(
+            test_property_set(),
+            TextInput::from_text_area(area)
+                .with_placeholder("Search")
+                .prepare(),
+            HARNESS_PARAMS,
+        );
+        let mut explicit = TestHarness::create_with(
+            test_property_set(),
+            TextInput::new("")
+                .with_text_alignment(TextAlign::Center)
+                .with_placeholder("Search")
+                .prepare(),
+            HARNESS_PARAMS,
+        );
+        assert_eq!(
+            wrapped
+                .get_widget_with_id(id)
+                .unwrap()
+                .downcast::<TextArea<true>>()
+                .unwrap()
+                .text_alignment(),
+            TextAlign::Center
+        );
+        assert_eq!(wrapped.render().unwrap(), explicit.render().unwrap());
     }
 
     #[test]

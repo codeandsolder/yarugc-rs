@@ -66,6 +66,8 @@ pub(super) fn inherit_property<
 pub struct TextArea<const USER_EDITABLE: bool> {
     /// The underlying `PlainEditor`, which provides a high-level interface for us to dispatch into.
     editor: PlainEditor<BrushIndex>,
+    // Parley currently exposes only a setter for its alignment.
+    text_alignment: TextAlign,
     // Parley replaces the selection when composition starts. Retain that
     // text until commit so cancellation can restore the original selection.
     preedit_replaced: Option<String>,
@@ -144,6 +146,7 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
         editor.set_text(text);
         Self {
             editor,
+            text_alignment: TextAlign::default(),
             preedit_replaced: None,
             placeholder: "".into(),
             rendered_generation: Generation::default(),
@@ -214,6 +217,7 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
     /// To modify this on an active text area, use [`set_text_alignment`](Self::set_text_alignment).
     #[must_use = "Use the returned value."]
     pub fn with_text_alignment(mut self, text_alignment: TextAlign) -> Self {
+        self.text_alignment = text_alignment;
         self.editor.set_alignment(text_alignment);
         self
     }
@@ -285,6 +289,12 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
         committed.push_str(replaced);
         committed.push_str(&raw[range.end..]);
         Cow::Owned(committed)
+    }
+
+    /// Returns the text alignment currently configured for this area.
+    #[must_use = "Use the returned alignment."]
+    pub const fn text_alignment(&self) -> TextAlign {
+        self.text_alignment
     }
 
     /// Check if this text area holds nothing, including IME preedit content.
@@ -400,28 +410,37 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
     ///
     /// The runtime equivalent of [`with_word_wrap`](Self::with_word_wrap).
     pub fn set_word_wrap(this: &mut WidgetMut<'_, Self>, wrap_words: bool) {
-        this.widget.word_wrap = wrap_words;
-        this.ctx.request_layout();
+        if this.widget.word_wrap != wrap_words {
+            this.widget.word_wrap = wrap_words;
+            this.ctx.request_layout();
+        }
     }
 
     /// Sets the [text alignment](https://en.wikipedia.org/wiki/Typographic_alignment) of the text.
     ///
     /// The runtime equivalent of [`with_text_alignment`](Self::with_text_alignment).
     pub fn set_text_alignment(this: &mut WidgetMut<'_, Self>, text_alignment: TextAlign) {
-        this.widget.editor.set_alignment(text_alignment);
-
-        this.ctx.request_layout();
+        if this.widget.text_alignment != text_alignment {
+            this.widget.text_alignment = text_alignment;
+            this.widget.editor.set_alignment(text_alignment);
+            this.ctx.request_layout();
+        }
     }
 
     /// Configures how this text area handles the user pressing Enter <kbd>↵</kbd>.
     pub fn set_insert_newline(this: &mut WidgetMut<'_, Self>, insert_newline: InsertNewline) {
-        this.widget.insert_newline = insert_newline;
-        this.ctx.request_accessibility_update();
+        if this.widget.insert_newline != insert_newline {
+            this.widget.insert_newline = insert_newline;
+            this.ctx.request_accessibility_update();
+        }
     }
 
     pub(super) fn set_placeholder(this: &mut WidgetMut<'_, Self>, placeholder: impl Into<ArcStr>) {
-        this.widget.placeholder = placeholder.into();
-        this.ctx.request_accessibility_update();
+        let placeholder = placeholder.into();
+        if this.widget.placeholder != placeholder {
+            this.widget.placeholder = placeholder;
+            this.ctx.request_accessibility_update();
+        }
     }
 
     /// Sets whether [hinting](https://en.wikipedia.org/wiki/Font_hinting) will be used for this text area.
@@ -429,8 +448,10 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
     /// The runtime equivalent of [`with_hint`](Self::with_hint).
     /// For full documentation, see that method.
     pub fn set_hint(this: &mut WidgetMut<'_, Self>, hint: bool) {
-        this.widget.hint = hint;
-        this.ctx.request_paint_only();
+        if this.widget.hint != hint {
+            this.widget.hint = hint;
+            this.ctx.request_paint_only();
+        }
     }
 
     /// Sets the selection to the given byte range.
