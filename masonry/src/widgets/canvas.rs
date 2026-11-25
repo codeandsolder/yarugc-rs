@@ -17,14 +17,14 @@ const DEFAULT_LENGTH: Length = crate::layout::length!(100.);
 
 /// A widget allowing custom drawing.
 ///
-/// A canvas takes a painter callback; every time the canvas is repainted, that callback
-/// is run with an `imaging` [`record::Scene`](Scene).
-/// That recording is then replayed as the canvas contents.
+/// Use [`Canvas::update_scene`] to record drawing commands into the retained
+/// `imaging` [`record::Scene`](Scene). Painting replays that scene without invoking
+/// the drawing callback again.
 #[derive(Default)]
 pub struct Canvas {
     alt_text: Option<ArcStr>,
-    /// The drawable area size, which matches the widget's content-box.
-    size: Size,
+    /// The drawable area size after the first layout.
+    size: Option<Size>,
     scene: Scene,
 }
 
@@ -47,10 +47,13 @@ impl Canvas {
 
 // --- MARK: METHODS
 impl Canvas {
-    /// Returns the current size of the canvas, which matches its content-box size.
+    /// Returns the current content-box size, or zero before the first layout.
     #[must_use = "Use the returned value."]
     pub const fn size(&self) -> Size {
-        self.size
+        match self.size {
+            Some(size) => size,
+            None => Size::ZERO,
+        }
     }
 }
 
@@ -61,21 +64,25 @@ impl Canvas {
         this: &mut WidgetMut<'_, Self>,
         f: impl FnOnce(&mut MutateCtx<'_>, &mut Scene, Size),
     ) {
+        let size = this.widget.size();
         this.widget.scene.clear();
-        f(&mut this.ctx, &mut this.widget.scene, this.widget.size);
-        this.ctx.request_render();
+        f(&mut this.ctx, &mut this.widget.scene, size);
+        this.ctx.request_paint_only();
     }
 
     /// Sets the text that will describe the canvas to screen readers.
     ///
     /// See [`Canvas::with_alt_text`] for details.
     pub fn set_alt_text(this: &mut WidgetMut<'_, Self>, alt_text: Option<impl Into<ArcStr>>) {
-        this.widget.alt_text = alt_text.map(Into::into);
-        this.ctx.request_accessibility_update();
+        let alt_text = alt_text.map(Into::into);
+        if this.widget.alt_text != alt_text {
+            this.widget.alt_text = alt_text;
+            this.ctx.request_accessibility_update();
+        }
     }
 }
 
-/// The size of the canvas has changed.
+/// The canvas has been laid out for the first time or its size has changed.
 #[derive(Debug)]
 pub struct CanvasSizeChanged {
     /// The new size of the canvas
@@ -104,8 +111,8 @@ impl Widget for Canvas {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        if self.size != size {
-            self.size = size;
+        if self.size != Some(size) {
+            self.size = Some(size);
             ctx.submit_action::<Self::Action>(CanvasSizeChanged { size });
         }
         // We clip the contents we draw.
@@ -162,6 +169,38 @@ mod tests {
     };
     use crate::peniko::Color;
     use crate::testing::{TestHarness, TestHarnessParams};
+
+    #[test]
+    fn first_zero_size_layout_notifies_and_unchanged_size_does_not() {
+        use crate::layout::AsUnit;
+        use crate::properties::Dimensions;
+
+        let canvas = Canvas::default()
+            .prepare()
+            .with_props(Dimensions::fixed(0.px(), 0.px()));
+        let mut harness =
+            TestHarness::create_with_size(DefaultProperties::default(), canvas, (100, 100));
+        let (action, id) = harness.pop_action::<CanvasSizeChanged>().unwrap().unwrap();
+        assert_eq!(id, harness.root_id());
+        assert_eq!(action.size, Size::ZERO);
+        assert!(harness.pop_action::<CanvasSizeChanged>().unwrap().is_none());
+
+        harness
+            .edit_root_widget(|mut canvas| {
+                canvas.ctx.request_layout();
+            })
+            .unwrap();
+        assert!(harness.pop_action::<CanvasSizeChanged>().unwrap().is_none());
+
+        harness
+            .edit_root_widget(|mut canvas| {
+                canvas.insert_prop(Dimensions::fixed(30.px(), 20.px()));
+            })
+            .unwrap();
+        let (action, _) = harness.pop_action::<CanvasSizeChanged>().unwrap().unwrap();
+        assert_eq!(action.size, Size::new(30., 20.));
+        assert_eq!(harness.root_widget().unwrap().size(), action.size);
+    }
 
     #[test]
     fn simple_canvas() {
