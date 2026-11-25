@@ -32,7 +32,7 @@ impl ExtentCache {
 
     // Historical extents are estimates, not promises about unmaterialized
     // content. The next layout will remeasure the registered children.
-    pub(super) fn invalidate(&mut self) {
+    pub(super) const fn invalidate(&mut self) {
         self.geometry = None;
     }
 
