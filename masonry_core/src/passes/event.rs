@@ -375,18 +375,32 @@ pub(crate) fn run_on_access_event_pass(
     let _span = info_span!("access_event").entered();
     trace!("Running ON_ACCESS_EVENT pass with {}", event.short_name());
 
-    let skip_if_disabled = true;
-    let mut handled = run_event_pass(
-        root,
-        Some(target),
-        event,
-        skip_if_disabled,
-        false,
-        |widget, ctx, props, event| {
-            widget.on_access_event(ctx, props, event);
-        },
-        true,
-    );
+    // Accessibility events may be queued against a previous tree revision.
+    // A hidden target must not receive an event or activate a visible ancestor.
+    let Some(state) = root.widget_arena.get_state(target) else {
+        return Handled::No;
+    };
+    if state.is_stashed() {
+        return Handled::No;
+    }
+
+    let mut handled = if state.is_disabled() {
+        // A disabled node may still be inspected or scrolled into view, but
+        // it must not turn a stale activation into a click on its ancestor.
+        Handled::No
+    } else {
+        run_event_pass(
+            root,
+            Some(target),
+            event,
+            true,
+            false,
+            |widget, ctx, props, event| {
+                widget.on_access_event(ctx, props, event);
+            },
+            true,
+        )
+    };
 
     // Handle focus events
     match event.action {

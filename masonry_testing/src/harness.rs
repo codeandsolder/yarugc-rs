@@ -767,7 +767,7 @@ impl<W: Widget> TestHarness<W> {
     /// [`ScrollIntoView`]: masonry_core::accesskit::Action::ScrollIntoView
     #[track_caller]
     pub fn scroll_into_view(&mut self, id: WidgetId) {
-        self.render_root.handle_access_event(ActionRequest {
+        self.process_access_event(ActionRequest {
             action: Action::ScrollIntoView,
             target_tree: TreeId::ROOT,
             target_node: id.to_raw().into(),
@@ -781,16 +781,13 @@ impl<W: Widget> TestHarness<W> {
     /// which may have different behavior compared to a normal mouse click.
     ///
     /// Unlike [`Self::mouse_click_on`], the event will be routed to the target widget
-    /// even if it's not visible, or hidden behind other widgets.
-    ///
-    /// # Panics
-    ///
-    /// - If the widget is not found in the tree.
+    /// even if it is occluded by other widgets. Removed, stashed and disabled
+    /// targets are ignored.
     ///
     /// [`Click`]: masonry_core::accesskit::Action::Click
     #[track_caller]
     pub fn accessibility_click_on(&mut self, id: WidgetId) {
-        self.render_root.handle_access_event(ActionRequest {
+        self.process_access_event(ActionRequest {
             action: Action::Click,
             target_tree: TreeId::ROOT,
             target_node: id.to_raw().into(),

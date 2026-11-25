@@ -696,3 +696,43 @@ fn accessibility_requests_for_removed_widgets_are_ignored() {
     assert_eq!(harness.focused_widget_id(), None);
     assert!(harness.get_widget_with_id(id).is_none());
 }
+
+#[test]
+fn accessibility_activation_rejects_hidden_and_disabled_targets_without_bubbling() {
+    let child = NewWidget::new(Button::with_text(""));
+    let id = child.id();
+    let parent = ModularWidget::new_parent(child)
+        .access_event_fn(|_, ctx, _, event| {
+            if event.action == accesskit::Action::Click {
+                ctx.submit_untyped_action(Box::new(()));
+            }
+        })
+        .prepare();
+    let mut harness = TestHarness::create(test_property_set(), parent);
+
+    harness.accessibility_click_on(id);
+    assert!(
+        harness
+            .pop_action::<crate::widgets::ButtonPress>()
+            .unwrap()
+            .is_some()
+    );
+    assert!(harness.pop_action::<()>().unwrap().is_some());
+
+    harness
+        .edit_widget_with_id(id, |mut child| child.ctx.set_disabled(true))
+        .unwrap();
+    harness.accessibility_click_on(id);
+    assert!(harness.pop_action_erased().is_none());
+
+    harness
+        .edit_widget_with_id(id, |mut child| child.ctx.set_disabled(false))
+        .unwrap();
+    harness
+        .edit_root_widget(|mut parent| {
+            parent.ctx.set_stashed(&parent.widget.state, true);
+        })
+        .unwrap();
+    harness.accessibility_click_on(id);
+    assert!(harness.pop_action_erased().is_none());
+}
