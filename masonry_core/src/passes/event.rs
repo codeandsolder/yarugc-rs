@@ -8,7 +8,7 @@ use crate::core::keyboard::{Key, KeyState, NamedKey};
 use crate::core::{
     AccessEvent, EventCtx, Handled, Ime, PointerButtonEvent, PointerEvent, PointerGestureEvent,
     PointerInfo, PointerScrollEvent, PointerType, PointerUpdate, PropertiesMut, TextEvent, Widget,
-    WidgetId,
+    WidgetId, WidgetState,
 };
 use crate::dpi::{LogicalPosition, PhysicalPosition};
 use crate::passes::update::{find_next_focusable, run_update_pointer_pass};
@@ -504,7 +504,7 @@ pub(crate) fn run_on_access_event_pass(
                 && root
                     .widget_arena
                     .get_state(target)
-                    .is_some_and(|state| state.accepts_focus()) =>
+                    .is_some_and(WidgetState::accepts_focus) =>
         {
             root.global_state.next_focused_widget = Some(target);
             handled = Handled::Yes;
