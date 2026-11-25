@@ -183,6 +183,44 @@ fn cached_window_and_dynamic_layer_on_host_device() {
     assert_pixel(&pixels, 0, 5, [192, 128, 63, 255]);
     assert_pixel(&pixels, 3, 5, [0, 0, 255, 255]);
 
+    // Failed visual refreshes must not consume the incremental accessibility
+    // update: retry after removing an unsupported external layer.
+    let base_id = window.root().get_layer_root(0).unwrap().id();
+    let external = NewWidget::new(
+        masonry::testing::ModularWidget::new(())
+            .measure_fn(|_, _, _, _, _, _| masonry::layout::AsUnit::px(2.0))
+            .paint_fn(|_, ctx, _, _| {
+                ctx.set_paint_layer_mode(masonry_core::core::PaintLayerMode::External)
+            }),
+    );
+    let external_id = external.id();
+    window
+        .root()
+        .add_layer(external, masonry::kurbo::Point::ZERO);
+    window
+        .root()
+        .handle_window_event(WindowEvent::EnableAccessTree);
+    assert!(matches!(
+        window.refresh(&compositor, &mut renderer, &adapter, &device, &queue),
+        Err(yarugc::RefreshError::ExternalLayer)
+    ));
+    window.root().remove_layer(external_id);
+    let Refresh::Painted {
+        accessibility: Some(update),
+        ..
+    } = refresh(&mut window, &mut renderer)
+    else {
+        panic!("the successful retry must deliver accessibility");
+    };
+    assert!(
+        update.nodes.iter().any(|(id, _)| *id == base_id),
+        "retry must include the original base widget"
+    );
+    assert!(matches!(
+        refresh(&mut window, &mut renderer),
+        Refresh::Unchanged
+    ));
+
     // Resize invalidates the static texture; the next idle frame does not.
     window
         .root()
