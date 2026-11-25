@@ -228,6 +228,13 @@ pub trait Steppable: Debug + Copy + Clone + PartialEq + PartialOrd + Send + Sync
     #[must_use = "Use the configured value."]
     fn add_steps(&self, step: Self, count: i64, snap: Option<Self>) -> Self;
 
+    /// Returns the next representable snap-grid value in the given direction.
+    ///
+    /// The interval must be valid and positive. At a numeric domain boundary
+    /// the result saturates rather than wrapping or becoming non-finite.
+    #[must_use = "Use the next snapped value."]
+    fn adjacent_snap(&self, snap: Self, forward: bool) -> Self;
+
     /// Returns the number of steps required to reach `target` from `self`.
     ///
     /// The `target` can be safely assumed to always be equal or greater than `self`.
@@ -343,6 +350,15 @@ macro_rules! impl_steppable_int {
                     value
                 }
 
+                fn adjacent_snap(&self, snap: Self, forward: bool) -> Self {
+                    let remainder = self.rem_euclid(snap);
+                    if forward {
+                        self.saturating_add(snap - remainder)
+                    } else {
+                        self.saturating_sub(if remainder == 0 { snap } else { remainder })
+                    }
+                }
+
                 fn steps_to(&self, target: Self, step: Self) -> u64 {
                     let delta = self.abs_diff(target);
                     let steps = delta.div_ceil(unsigned_step!(step, $s));
@@ -394,6 +410,27 @@ fn snap_float(value: f64, snap: f64) -> f64 {
     snapped.copysign(value)
 }
 
+// The signed remainder avoids rounding a tiny negative residue up to an
+// entire interval, which rem_euclid can do for floating-point values.
+const fn adjacent_grid_by_remainder(value: f64, interval: f64, forward: bool) -> f64 {
+    let remainder = value % interval;
+    if forward {
+        let distance = if remainder < 0.0 {
+            -remainder
+        } else {
+            interval - remainder
+        };
+        value + distance
+    } else {
+        let distance = if remainder > 0.0 {
+            remainder
+        } else {
+            interval + remainder
+        };
+        value - distance
+    }
+}
+
 fn float_step_count(base: f64, target: f64, step: f64) -> u64 {
     let delta = target - base;
     let count = if delta.is_finite() {
@@ -420,6 +457,35 @@ macro_rules! impl_steppable_float {
                     let value = value.clamp($widen(Self::MIN), $widen(Self::MAX));
                     let value = snap.map_or(value, |snap| snap_float(value, $widen(snap)));
                     $narrow(value.clamp($widen(Self::MIN), $widen(Self::MAX)))
+                }
+
+                fn adjacent_snap(&self, snap: Self, forward: bool) -> Self {
+                    let value = $widen(*self);
+                    let interval = $widen(snap);
+                    let direction = if forward { 1.0 } else { -1.0 };
+                    let index = value / interval;
+                    let candidate = if index.abs() < EXACT_GRID_LIMIT {
+                        let nearest = index.round();
+                        let grid = $narrow(nearest * interval);
+                        let index = if (forward && grid > *self) || (!forward && grid < *self) {
+                            nearest
+                        } else {
+                            nearest + direction
+                        };
+                        index * interval
+                    } else {
+                        adjacent_grid_by_remainder(value, interval, forward)
+                    };
+                    let candidate = $narrow(candidate.clamp($widen(Self::MIN), $widen(Self::MAX)));
+                    // A grid interval can be smaller than one representable
+                    // increment. Advance by one ULP if rounding erased it.
+                    if forward && candidate <= *self {
+                        self.next_up().min(Self::MAX)
+                    } else if !forward && candidate >= *self {
+                        self.next_down().max(Self::MIN)
+                    } else {
+                        candidate
+                    }
                 }
 
                 fn steps_to(&self, target: Self, step: Self) -> u64 {
@@ -449,7 +515,7 @@ impl_steppable_float!(
 );
 
 /// Invalid numeric configuration for a step input.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InvalidStepInput<T> {
     /// Bounds must be valid and ordered.
     Bounds {
@@ -967,52 +1033,37 @@ impl<T: Steppable> StepInput<T> {
         }
     }
 
-    /// Sets the active value to the next snapped value.
-    ///
-    /// May increment ticks to achieve this.
-    ///
-    /// Returns `true` if the active value changed.
-    fn next_snap(&mut self) -> bool {
+    /// Moves to the next snap-grid point (or range endpoint) in the chosen
+    /// direction. A discrete snap is an explicit rebase: the next ordinary
+    /// step starts from the actual selected value, not an approximate tick.
+    fn step_snap(&mut self, forward: bool) -> bool {
         let Some(snap) = self.snap else {
-            return self.next_step();
+            return if forward {
+                self.next_step()
+            } else {
+                self.prev_step()
+            };
         };
         let old_value = self.value;
-        let (_, changed, hit_bounds) = self.update_ticks(TICKS_PER_STEP, true);
-
-        if changed && (self.value > old_value || hit_bounds) {
-            self.sync_ticks_to_value();
+        let target = if self.wrap && forward && old_value == self.max {
+            self.min
+        } else if self.wrap && !forward && old_value == self.min {
+            self.max
         } else {
-            // We need to add ~snap worth of ticks to get the next
-            let steps = T::zero().steps_to(snap, self.step);
-            let delta = Self::steps_to_positive_ticks(steps);
-            self.update_ticks(delta, true);
+            Self::clamp_value(old_value.adjacent_snap(snap, forward), self.min, self.max)
+        };
+        if target == old_value {
+            return false;
         }
-
-        old_value != self.value
+        self.set_base_impl(target)
     }
 
-    /// Sets the active value to the previous snapped value.
-    ///
-    /// May decrement ticks to achieve this.
-    ///
-    /// Returns `true` if the active value changed.
+    fn next_snap(&mut self) -> bool {
+        self.step_snap(true)
+    }
+
     fn prev_snap(&mut self) -> bool {
-        let Some(snap) = self.snap else {
-            return self.prev_step();
-        };
-        let old_value = self.value;
-        let (_, changed, hit_bounds) = self.update_ticks(TICKS_PER_STEP.wrapping_neg(), true);
-
-        if changed && (self.value < old_value || hit_bounds) {
-            self.sync_ticks_to_value();
-        } else {
-            // We need to subtract ~snap worth of ticks to get the previous
-            let steps = T::zero().steps_to(snap, self.step);
-            let delta = Self::steps_to_negative_ticks(steps);
-            self.update_ticks(delta, true);
-        }
-
-        old_value != self.value
+        self.step_snap(false)
     }
 
     /// Sets ticks to the amount needed to go from `base` to `value`.
@@ -2247,6 +2298,81 @@ mod tests {
         assert!(widget.next_step());
         assert_eq!(widget.value.to_bits(), max.to_bits());
         assert!(!widget.next_step());
+    }
+
+    #[test]
+    fn snap_navigation_matches_ordered_grid_and_range_endpoints() {
+        for min in -5_i32..=5 {
+            for max in min..=5 {
+                for snap in 1..=7 {
+                    let grid: Vec<_> = (min..=max)
+                        .filter(|&value| value == min || value == max || value % snap == 0)
+                        .collect();
+                    for base in min..=max {
+                        for step in [1, 3, 11] {
+                            for wrap in [false, true] {
+                                let make = || {
+                                    StepInput::new(base, step, min, max)
+                                        .with_snap(snap)
+                                        .with_wrap(wrap)
+                                };
+                                let expected_next = grid
+                                    .iter()
+                                    .copied()
+                                    .find(|&value| value > base)
+                                    .unwrap_or(if wrap { min } else { base });
+                                let expected_prev = grid
+                                    .iter()
+                                    .rev()
+                                    .copied()
+                                    .find(|&value| value < base)
+                                    .unwrap_or(if wrap { max } else { base });
+                                let mut next = make();
+                                assert_eq!(next.next_snap(), expected_next != base);
+                                assert_eq!(
+                                    next.value, expected_next,
+                                    "forward: {min}..={max}, base {base}, step {step}, snap {snap}, wrap {wrap}"
+                                );
+                                let mut prev = make();
+                                assert_eq!(prev.prev_snap(), expected_prev != base);
+                                assert_eq!(
+                                    prev.value, expected_prev,
+                                    "backward: {min}..={max}, base {base}, step {step}, snap {snap}, wrap {wrap}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn snapped_selection_rebases_normal_steps_and_preserves_float_direction() {
+        let mut integer = StepInput::new(1, 3, -10, 20).with_snap(5);
+        assert!(integer.next_snap());
+        assert_eq!(integer.value, 5);
+        assert!(integer.next_step());
+        assert_eq!(integer.value, 8);
+        assert!(integer.prev_snap());
+        assert_eq!(integer.value, 5);
+        assert!(integer.prev_step());
+        assert_eq!(integer.value, 2);
+
+        let mut float = StepInput::new(-0.27_f32, 0.03, -1.0, 1.0).with_snap(0.1);
+        for value in [-0.2_f32, -0.1, 0.0, 0.1, 0.2, 0.3] {
+            assert!(float.next_snap());
+            assert_eq!(float.value.to_bits(), value.to_bits());
+        }
+        for value in [0.2_f32, 0.1, 0.0, -0.1, -0.2, -0.3] {
+            assert!(float.prev_snap());
+            assert_eq!(float.value.to_bits(), value.to_bits());
+        }
+        let mut extreme = StepInput::new(1e300_f64, 1.0, -f64::MAX, f64::MAX).with_snap(1e-300);
+        assert!(extreme.next_snap());
+        assert_eq!(extreme.value.to_bits(), 1e300_f64.next_up().to_bits());
+        assert!(extreme.prev_snap());
+        assert_eq!(extreme.value.to_bits(), 1e300_f64.to_bits());
     }
 
     #[test]
