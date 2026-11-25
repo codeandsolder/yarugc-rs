@@ -3,18 +3,18 @@
 
 use std::any::TypeId;
 
-use accesskit::{Node, Role};
+use accesskit::{AriaCurrent, Node, Role};
 use tracing::{Span, trace_span};
 
 use crate::core::{
     AccessCtx, ActionCtx, ChildrenIds, ErasedAction, FromDynWidget, LayoutCtx, MeasureCtx,
-    MutateCtx, NewWidget, PaintCtx, PropertiesMut, PropertiesRef, RegisterCtx, Update, UpdateCtx,
-    Widget, WidgetId, WidgetMut, WidgetPod,
+    MutateCtx, NewWidget, PaintCtx, PointerButton, PropertiesMut, PropertiesRef, RegisterCtx,
+    Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Point, Size};
 use crate::layout::{LayoutSize, LenReq, Length, SizeDef};
-use crate::widgets::{Button, ButtonPress, Label};
+use crate::widgets::{Button, ButtonPress};
 
 /// Pagination for navigating between different page numbers.
 pub struct Pagination {
@@ -55,6 +55,12 @@ impl Pagination {
             buttons_total: 9,
             buttons: Vec::new(),
         }
+    }
+
+    /// Returns the currently active zero-based page, or zero if there are no pages.
+    #[must_use = "Use the current page index."]
+    pub const fn current_page(&self) -> usize {
+        self.active_page
     }
 
     /// Sets the currently active page.
@@ -108,6 +114,9 @@ impl Pagination {
     ///
     /// The active page index is clamped to this new total.
     pub fn set_page_count(this: &mut WidgetMut<'_, Self>, page_count: usize) {
+        if this.widget.page_count == page_count {
+            return;
+        }
         this.widget.page_count = page_count;
         this.widget.active_page = if page_count == 0 {
             0
@@ -124,17 +133,20 @@ impl Pagination {
     ///
     /// It is clamped to the total page count.
     pub fn set_active_page(this: &mut WidgetMut<'_, Self>, active_page: usize) {
-        this.widget.active_page = if this.widget.page_count == 0 {
-            0
-        } else {
-            active_page.min(this.widget.page_count - 1)
-        };
+        let active_page = active_page.min(this.widget.page_count.saturating_sub(1));
+        if this.widget.active_page == active_page {
+            return;
+        }
+        this.widget.active_page = active_page;
 
         this.widget.sync_buttons(&mut this.ctx);
     }
 
     /// Sets the maximum number of buttons to always show for the first pages.
     pub fn set_buttons_start(this: &mut WidgetMut<'_, Self>, buttons_start: u8) {
+        if this.widget.buttons_start == buttons_start {
+            return;
+        }
         this.widget.buttons_start = buttons_start;
 
         this.widget.sync_buttons(&mut this.ctx);
@@ -142,6 +154,9 @@ impl Pagination {
 
     /// Sets the maximum number of buttons to always show for the last pages.
     pub fn set_buttons_end(this: &mut WidgetMut<'_, Self>, buttons_end: u8) {
+        if this.widget.buttons_end == buttons_end {
+            return;
+        }
         this.widget.buttons_end = buttons_end;
 
         this.widget.sync_buttons(&mut this.ctx);
@@ -151,6 +166,9 @@ impl Pagination {
     ///
     /// The effective button limit also depends on the total page count.
     pub fn set_buttons_total(this: &mut WidgetMut<'_, Self>, buttons_total: u8) {
+        if this.widget.buttons_total == buttons_total {
+            return;
+        }
         this.widget.buttons_total = buttons_total;
 
         this.widget.sync_buttons(&mut this.ctx);
@@ -200,69 +218,65 @@ impl Pagination {
 
     /// Synchronizes all the child button widgets with the provided `button_pages`.
     fn sync_buttons<Ctx: SyncCtx>(&mut self, ctx: &mut Ctx) {
-        // Derive the currently active page indices for buttons.
-        let button_pages = self.derive_button_pages();
-
-        // Remove any excess buttons that were created before the total limit was reduced.
-        for button in self
-            .buttons
-            .drain(usize::from(self.buttons_total).min(self.buttons.len())..)
-        {
-            ctx.remove_child(button.widget);
-        }
+        let pages = self.derive_button_pages();
+        let old_ids = self.children_ids();
+        let mut old = core::mem::take(&mut self.buttons);
+        let capacity = usize::from(self.buttons_total);
         let mut visibility_changed = false;
-        // Stash all buttons that are within the limit but not in use.
-        for button in self
-            .buttons
-            .iter_mut()
-            .skip(button_pages.len())
-            .filter(|button| !button.stashed)
-        {
-            button.stashed = true;
-            ctx.set_stashed(&button.widget, true);
-            visibility_changed = true;
+
+        // Widget identity follows the logical page, not its position in the
+        // displayed window. A retained press or queued accessibility action
+        // must never be redirected to a different page.
+        for page_idx in pages {
+            let current = page_idx == self.active_page;
+            let button = if let Some(index) =
+                old.iter().position(|button| button.page_idx == page_idx)
+            {
+                let mut button = old.swap_remove(index);
+                if button.disabled != current {
+                    button.disabled = current;
+                    ctx.mutate_child_later(&button.widget, move |mut button| {
+                        button.ctx.set_disabled(current);
+                        Button::set_aria_current(&mut button, current.then_some(AriaCurrent::Page));
+                    });
+                }
+                if button.stashed {
+                    button.stashed = false;
+                    ctx.set_stashed(&button.widget, false);
+                    visibility_changed = true;
+                }
+                button
+            } else {
+                let mut button = Button::with_text((page_idx + 1).to_string());
+                if current {
+                    button = button.with_aria_current(AriaCurrent::Page);
+                }
+                PageButton {
+                    widget: NewWidget::new(button).disabled(current).into_pod(),
+                    disabled: current,
+                    stashed: false,
+                    page_idx,
+                }
+            };
+            self.buttons.push(button);
         }
-        // Make sure all the existing buttons have the correct info.
-        for (button, &page_idx) in self.buttons.iter_mut().zip(button_pages.iter()) {
-            if button.page_idx != page_idx {
-                button.page_idx = page_idx;
-                let new_text = format!("{}", page_idx + 1);
-                ctx.mutate_child_later(&button.widget, move |mut button| {
-                    let Some(mut btn_label) = Button::child_mut::<Label>(&mut button) else {
-                        return;
-                    };
-                    Label::set_text(&mut btn_label, new_text);
-                });
-            }
-            let disabled = button.page_idx == self.active_page;
-            if button.disabled != disabled {
-                button.disabled = disabled;
-                ctx.mutate_child_later(&button.widget, move |mut button| {
-                    button.ctx.set_disabled(disabled);
-                });
-            }
-            if button.stashed {
-                button.stashed = false;
-                ctx.set_stashed(&button.widget, false);
-                visibility_changed = true;
+
+        // Keep dormant page identities only while spare capacity remains.
+        // Never reassign one to another page.
+        old.sort_unstable_by_key(|button| button.page_idx);
+        for mut button in old {
+            if self.buttons.len() == capacity {
+                ctx.remove_child(button.widget);
+            } else {
+                if !button.stashed {
+                    button.stashed = true;
+                    ctx.set_stashed(&button.widget, true);
+                    visibility_changed = true;
+                }
+                self.buttons.push(button);
             }
         }
-        // Create any missing buttons.
-        let mut children_changed = false;
-        for page_idx in button_pages.into_iter().skip(self.buttons.len()) {
-            let text = format!("{}", page_idx + 1);
-            let disabled = page_idx == self.active_page;
-            let button = Button::with_text(text);
-            let button = NewWidget::new(button).disabled(disabled).into_pod();
-            self.buttons.push(PageButton {
-                widget: button,
-                disabled,
-                stashed: false,
-                page_idx,
-            });
-            children_changed = true;
-        }
-        if children_changed {
+        if old_ids != self.children_ids() {
             ctx.children_changed();
         } else if visibility_changed {
             ctx.request_layout();
@@ -285,16 +299,21 @@ impl Widget for Pagination {
         action: &ErasedAction,
         source: WidgetId,
     ) {
-        if action.is::<ButtonPress>()
+        if let Some(press) = action.downcast_ref::<ButtonPress>()
             && let Some(button) = self
                 .buttons
                 .iter()
-                .find(|button| button.widget.id() == source && !button.stashed && !button.disabled)
+                .find(|button| button.widget.id() == source)
         {
-            self.active_page = button.page_idx;
-            self.sync_buttons(ctx);
-            ctx.submit_action::<Self::Action>(PageChanged(self.active_page));
             ctx.set_handled();
+            if matches!(press.button, None | Some(PointerButton::Primary))
+                && !button.stashed
+                && !button.disabled
+            {
+                self.active_page = button.page_idx;
+                self.sync_buttons(ctx);
+                ctx.submit_action::<Self::Action>(PageChanged(self.active_page));
+            }
         }
     }
 
@@ -328,7 +347,11 @@ impl Widget for Pagination {
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);
 
         for button in self.buttons.iter_mut().filter(|button| !button.stashed) {
-            let auto_length = len_req.reduce(length).into();
+            let auto_length = match axis {
+                Axis::Horizontal => len_req.reduce(length),
+                Axis::Vertical => len_req,
+            }
+            .into();
             let button_length = ctx.compute_length(
                 &button.widget,
                 auto_length,
@@ -378,8 +401,7 @@ impl Widget for Pagination {
         _props: &PropertiesRef<'_>,
         _node: &mut Node,
     ) {
-        // TODO: How to build the node?
-        //       There doesn't seem to be any set_current_page or set_page_count.
+        // The current page is announced on the corresponding button.
     }
 
     fn children_ids(&self) -> ChildrenIds {
@@ -541,6 +563,70 @@ mod tests {
                 .count(),
             3
         );
+    }
+
+    #[test]
+    fn page_identity_and_accessibility_survive_window_changes() {
+        use crate::testing::TestHarness;
+        use crate::theme::test_property_set;
+        use accesskit::{Action, ActionRequest, TreeId};
+
+        let pagination = Pagination::new(10)
+            .buttons_start(0)
+            .buttons_end(0)
+            .buttons_total(3)
+            .active_page(2);
+        let mut harness = TestHarness::create(test_property_set(), pagination.prepare());
+        let root_id = harness.root_id();
+        let ids = harness.root_widget().unwrap().inner().children_ids();
+        let _ = harness.redraw();
+        assert_eq!(
+            harness.access_node(ids[1]).unwrap().data().aria_current(),
+            Some(AriaCurrent::Page)
+        );
+
+        // A secondary click on another page does not navigate.
+        harness.mouse_move_to(ids[2]).unwrap();
+        harness.mouse_button_press(Some(PointerButton::Secondary));
+        harness.mouse_button_release(Some(PointerButton::Secondary));
+        assert!(harness.pop_action::<PageChanged>().unwrap().is_none());
+
+        // Retain the press on page 1 while the visible window changes.
+        harness.mouse_move_to(ids[0]).unwrap();
+        harness.mouse_button_press(Some(PointerButton::Primary));
+        harness
+            .edit_root_widget(|mut widget| Pagination::set_active_page(&mut widget, 3))
+            .unwrap();
+        harness.mouse_button_release(Some(PointerButton::Primary));
+        assert!(harness.pop_action::<PageChanged>().unwrap().is_none());
+        let new_ids = harness.root_widget().unwrap().inner().children_ids();
+        assert_eq!(new_ids[0], ids[1]);
+        assert_eq!(new_ids[1], ids[2]);
+        assert!(!new_ids.contains(&ids[0]));
+        let _ = harness.redraw();
+        assert!(harness.access_node(ids[0]).is_none());
+        assert_eq!(
+            harness.access_node(ids[1]).unwrap().data().aria_current(),
+            None
+        );
+        assert_eq!(
+            harness.access_node(ids[2]).unwrap().data().aria_current(),
+            Some(AriaCurrent::Page)
+        );
+        let click = |id: WidgetId| ActionRequest {
+            action: Action::Click,
+            target_tree: TreeId::ROOT,
+            target_node: id.into(),
+            data: None,
+        };
+        harness.process_access_event(click(ids[0]));
+        assert!(harness.pop_action::<PageChanged>().unwrap().is_none());
+        harness.process_access_event(click(ids[1]));
+        assert_eq!(
+            harness.pop_action::<PageChanged>().unwrap(),
+            Some((PageChanged(2), root_id))
+        );
+        assert_eq!(harness.root_widget().unwrap().current_page(), 2);
     }
 
     #[test]

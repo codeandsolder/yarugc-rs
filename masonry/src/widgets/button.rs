@@ -4,7 +4,7 @@
 use std::any::TypeId;
 use std::sync::Arc;
 
-use accesskit::{Node, Role};
+use accesskit::{AriaCurrent, Node, Role};
 use include_doc_path::include_doc_path;
 use tracing::{Span, trace_span};
 
@@ -12,7 +12,7 @@ use super::selection_control::{Activation, ActivationButtons, ActivationKeys};
 use crate::core::pointer::PointerButton;
 use crate::core::{
     AccessCtx, AccessEvent, EventCtx, NewWidget, PointerEvent, PropertiesMut, PropertiesRef,
-    TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetPod,
+    TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::layout::{Length, UnitPoint};
 use crate::theme;
@@ -30,6 +30,7 @@ use crate::widgets::Label;
 pub struct Button {
     child: WidgetPod<dyn Widget>,
     activation: Activation,
+    aria_current: Option<AriaCurrent>,
 }
 
 // --- MARK: BUILDERS
@@ -52,7 +53,15 @@ impl Button {
         Self {
             child: child.erased().into_pod(),
             activation: Activation::new(),
+            aria_current: None,
         }
+    }
+
+    /// Marks this button as the current item in a navigation or related set.
+    #[must_use = "Use the configured button."]
+    pub const fn with_aria_current(mut self, current: AriaCurrent) -> Self {
+        self.aria_current = Some(current);
+        self
     }
 
     /// Creates a new button with a label widget.
@@ -73,6 +82,14 @@ impl Button {
 // --- MARK: WIDGETMUT
 impl Button {
     child_accessors!(child, set_child, child_mut, erased);
+
+    /// Sets the accessible current-item state independently of enabled state.
+    pub fn set_aria_current(this: &mut WidgetMut<'_, Self>, current: Option<AriaCurrent>) {
+        if this.widget.aria_current != current {
+            this.widget.aria_current = current;
+            this.ctx.request_accessibility_update();
+        }
+    }
 }
 
 /// A button was pressed.
@@ -149,6 +166,9 @@ impl Widget for Button {
         _props: &PropertiesRef<'_>,
         node: &mut Node,
     ) {
+        if let Some(current) = self.aria_current {
+            node.set_aria_current(current);
+        }
         node.add_action(accesskit::Action::Click);
     }
 
