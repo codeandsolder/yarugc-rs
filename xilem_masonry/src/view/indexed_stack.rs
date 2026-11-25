@@ -84,23 +84,6 @@ impl<Seq, State, Action> IndexedStack<Seq, State, Action> {
     }
 }
 
-mod hidden {
-    use super::IndexedStackElement;
-    use crate::core::AppendVec;
-
-    #[doc(hidden)]
-    #[expect(
-        unnameable_types,
-        reason = "Implementation detail, public because of trait visibility rules"
-    )]
-    pub struct IndexedStackState<SeqState> {
-        pub(crate) seq_state: SeqState,
-        pub(crate) scratch: AppendVec<IndexedStackElement>,
-    }
-}
-
-use hidden::IndexedStackState;
-
 impl<Seq, State, Action> ViewMarker for IndexedStack<Seq, State, Action> {}
 
 impl<State, Action, Seq> View<State, Action, ViewCtx> for IndexedStack<Seq, State, Action>
@@ -111,7 +94,7 @@ where
 {
     type Element = Pod<widgets::IndexedStack>;
 
-    type ViewState = IndexedStackState<Seq::SeqState>;
+    type ViewState = super::CollectionState<Seq::SeqState, IndexedStackElement>;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let mut elements = AppendVec::default();
@@ -124,7 +107,7 @@ where
         let pod = Pod::new(widget);
         (
             pod,
-            IndexedStackState {
+            super::CollectionState {
                 seq_state,
                 scratch: elements,
             },
@@ -134,16 +117,19 @@ where
     fn rebuild(
         &self,
         prev: &Self,
-        IndexedStackState { seq_state, scratch }: &mut Self::ViewState,
+        view_state: &mut Self::ViewState,
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) {
         {
-            let mut splice = IndexedStackSplice::new(element.reborrow_mut(), scratch);
-            self.sequence
-                .seq_rebuild(&prev.sequence, seq_state, ctx, &mut splice, app_state);
-            debug_assert!(scratch.is_empty());
+            view_state.rebuild(
+                &self.sequence,
+                &prev.sequence,
+                ctx,
+                element.reborrow_mut(),
+                app_state,
+            );
         }
 
         // set the active child after updating the sequence to
@@ -158,28 +144,21 @@ where
 
     fn teardown(
         &self,
-        IndexedStackState { seq_state, scratch }: &mut Self::ViewState,
+        view_state: &mut Self::ViewState,
         ctx: &mut ViewCtx,
         element: Mut<'_, Self::Element>,
     ) {
-        let mut splice = IndexedStackSplice::new(element, scratch);
-        self.sequence.seq_teardown(seq_state, ctx, &mut splice);
-        debug_assert!(scratch.is_empty());
+        view_state.teardown(&self.sequence, ctx, element);
     }
 
     fn message(
         &self,
-        IndexedStackState { seq_state, scratch }: &mut Self::ViewState,
+        view_state: &mut Self::ViewState,
         message: &mut MessageCtx,
         element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let mut splice = IndexedStackSplice::new(element, scratch);
-        let result = self
-            .sequence
-            .seq_message(seq_state, message, &mut splice, app_state);
-        debug_assert!(scratch.is_empty());
-        result
+        view_state.message(&self.sequence, message, element, app_state)
     }
 }
 

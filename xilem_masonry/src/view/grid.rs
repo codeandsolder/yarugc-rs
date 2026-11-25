@@ -102,18 +102,7 @@ impl<Seq, Col, Row, State, Action> Grid<Seq, Col, Row, State, Action> {
 }
 
 mod hidden {
-    use super::{GridElement, GridTrackSize};
-    use crate::core::AppendVec;
-
-    #[doc(hidden)]
-    #[expect(
-        unnameable_types,
-        reason = "Implementation detail, public because of trait visibility rules"
-    )]
-    pub struct GridState<SeqState> {
-        pub(crate) seq_state: SeqState,
-        pub(crate) scratch: AppendVec<GridElement>,
-    }
+    use super::GridTrackSize;
 
     #[doc(hidden)]
     #[expect(
@@ -195,7 +184,7 @@ mod hidden {
     impl_grid_tracks!(M0, Seq0, 0; M1, Seq1, 1; M2, Seq2, 2; M3, Seq3, 3; M4, Seq4, 4; M5, Seq5, 5; M6, Seq6, 6; M7, Seq7, 7; M8, Seq8, 8; M9, Seq9, 9; M10, Seq10, 10; M11, Seq11, 11; M12, Seq12, 12; M13, Seq13, 13; M14, Seq14, 14; M15, Seq15, 15);
 }
 
-use hidden::{GridState, GridTracks};
+use hidden::GridTracks;
 
 impl<Seq, Col, Row, State, Action> ViewMarker for Grid<Seq, Col, Row, State, Action> {}
 
@@ -210,7 +199,7 @@ where
 {
     type Element = Pod<widgets::Grid>;
 
-    type ViewState = GridState<Seq::SeqState>;
+    type ViewState = super::CollectionState<Seq::SeqState, GridElement>;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let mut elements = AppendVec::default();
@@ -224,7 +213,7 @@ where
         let pod = Pod::new(widget);
         (
             pod,
-            GridState {
+            super::CollectionState {
                 seq_state,
                 scratch: elements,
             },
@@ -234,7 +223,7 @@ where
     fn rebuild(
         &self,
         prev: &Self,
-        GridState { seq_state, scratch }: &mut Self::ViewState,
+        view_state: &mut Self::ViewState,
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
@@ -246,36 +235,26 @@ where
             widgets::Grid::set_columns(&mut element, self.columns.to_tracks().collect());
         }
 
-        let mut splice = GridSplice::new(element, scratch);
-        self.sequence
-            .seq_rebuild(&prev.sequence, seq_state, ctx, &mut splice, app_state);
-        debug_assert!(scratch.is_empty());
+        view_state.rebuild(&self.sequence, &prev.sequence, ctx, element, app_state);
     }
 
     fn teardown(
         &self,
-        GridState { seq_state, scratch }: &mut Self::ViewState,
+        view_state: &mut Self::ViewState,
         ctx: &mut ViewCtx,
         element: Mut<'_, Self::Element>,
     ) {
-        let mut splice = GridSplice::new(element, scratch);
-        self.sequence.seq_teardown(seq_state, ctx, &mut splice);
-        debug_assert!(scratch.is_empty());
+        view_state.teardown(&self.sequence, ctx, element);
     }
 
     fn message(
         &self,
-        GridState { seq_state, scratch }: &mut Self::ViewState,
+        view_state: &mut Self::ViewState,
         message: &mut MessageCtx,
         element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let mut splice = GridSplice::new(element, scratch);
-        let result = self
-            .sequence
-            .seq_message(seq_state, message, &mut splice, app_state);
-        debug_assert!(scratch.is_empty());
-        result
+        view_state.message(&self.sequence, message, element, app_state)
     }
 }
 

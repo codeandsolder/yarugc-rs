@@ -194,6 +194,65 @@ impl<'w, 's, W: masonry::core::Widget, E> CollectionSplice<'w, 's, W, E> {
     }
 }
 
+/// Shared retained state for a widget collection.
+#[doc(hidden)]
+pub struct CollectionState<S, E> {
+    seq_state: S,
+    scratch: crate::core::AppendVec<E>,
+}
+
+impl<S, E: crate::core::ViewElement> CollectionState<S, E> {
+    fn rebuild<State, Action, Seq, W>(
+        &mut self,
+        sequence: &Seq,
+        prev: &Seq,
+        ctx: &mut crate::ViewCtx,
+        element: masonry::core::WidgetMut<'_, W>,
+        app_state: &mut State,
+    ) where
+        W: masonry::core::Widget,
+        Seq: crate::core::ViewSequence<State, Action, crate::ViewCtx, E, SeqState = S>,
+        for<'w, 's> CollectionSplice<'w, 's, W, E>: crate::core::ElementSplice<E>,
+    {
+        let mut splice = CollectionSplice::new(element, &mut self.scratch);
+        sequence.seq_rebuild(prev, &mut self.seq_state, ctx, &mut splice, app_state);
+        debug_assert!(self.scratch.is_empty());
+    }
+
+    fn teardown<State, Action, Seq, W>(
+        &mut self,
+        sequence: &Seq,
+        ctx: &mut crate::ViewCtx,
+        element: masonry::core::WidgetMut<'_, W>,
+    ) where
+        W: masonry::core::Widget,
+        Seq: crate::core::ViewSequence<State, Action, crate::ViewCtx, E, SeqState = S>,
+        for<'w, 's> CollectionSplice<'w, 's, W, E>: crate::core::ElementSplice<E>,
+    {
+        let mut splice = CollectionSplice::new(element, &mut self.scratch);
+        sequence.seq_teardown(&mut self.seq_state, ctx, &mut splice);
+        debug_assert!(self.scratch.is_empty());
+    }
+
+    fn message<State, Action, Seq, W>(
+        &mut self,
+        sequence: &Seq,
+        message: &mut crate::core::MessageCtx,
+        element: masonry::core::WidgetMut<'_, W>,
+        app_state: &mut State,
+    ) -> crate::core::MessageResult<Action>
+    where
+        W: masonry::core::Widget,
+        Seq: crate::core::ViewSequence<State, Action, crate::ViewCtx, E, SeqState = S>,
+        for<'w, 's> CollectionSplice<'w, 's, W, E>: crate::core::ElementSplice<E>,
+    {
+        let mut splice = CollectionSplice::new(element, &mut self.scratch);
+        let result = sequence.seq_message(&mut self.seq_state, message, &mut splice, app_state);
+        debug_assert!(self.scratch.is_empty());
+        result
+    }
+}
+
 // Action-producing wrappers must release their own action source even when the child is absent.
 macro_rules! action_child_teardown {
     ($widget:ident, $field:ident, $id:ident) => {
