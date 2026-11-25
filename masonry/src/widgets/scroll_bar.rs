@@ -92,8 +92,8 @@ impl ScrollBar {
 
     /// Returns `(cursor_length, empty_space_length)`.
     ///
-    /// `cursor_Length` is guaranteed to be at least `min_length`
-    /// and the remainder of the layout length is `empty_space_length`.
+    /// On an overflowing track, the preferred minimum thumb length is
+    /// limited by the track size so the thumb always has room to move.
     fn lengths(&self, layout_size: Size, min_length: f64) -> (f64, f64) {
         let size_ratio = if self.content_size == Length::ZERO {
             1.
@@ -103,7 +103,8 @@ impl ScrollBar {
         let size_ratio = size_ratio.clamp(0.0, 1.0);
 
         let track = layout_size.get_coord(self.axis).max(0.);
-        let cursor_length = (size_ratio * track).max(min_length).min(track);
+        let minimum = min_length.min(track * 0.5);
+        let cursor_length = (size_ratio * track).max(minimum).min(track);
         let empty_space_length = track - cursor_length;
 
         (cursor_length, empty_space_length)
@@ -489,8 +490,12 @@ impl Widget for ScrollBar {
         } else {
             cursor_padding + scrollbar_width / 2.
         };
-        let (leading_x, leading_y) = self.axis.pack_xy(0.0, inset_start);
-        let (trailing_x, trailing_y) = self.axis.pack_xy(0.0, cursor_padding);
+        // Preserve some painted thumb width even if the parent allocates less
+        // space than the preferred padding alone.
+        let minor = size.get_coord(self.axis.cross());
+        let padding_scale = (minor / (inset_start + cursor_padding + edge_width)).min(1.0);
+        let (leading_x, leading_y) = self.axis.pack_xy(0.0, inset_start * padding_scale);
+        let (trailing_x, trailing_y) = self.axis.pack_xy(0.0, cursor_padding * padding_scale);
         let cursor_rect = self
             .cursor_rect(size, cursor_min_length)
             .inset((-leading_x, -leading_y, -trailing_x, -trailing_y))
@@ -657,6 +662,39 @@ mod tests {
             "scrollbar_horizontal",
             "scrollbar_horizontal_middle",
         );
+    }
+
+    #[test]
+    fn short_overflowing_tracks_retain_thumb_travel() {
+        for axis in [Axis::Vertical, Axis::Horizontal] {
+            let mut bar = ScrollBar::new(axis, 10.px(), 1000.px());
+            for length in [1.0, 12.0, 44.0, 90.0, 200.0] {
+                let size = axis.pack_size(length, 4.0);
+                let (thumb, travel) = bar.lengths(size, theme::SCROLLBAR_MIN_SIZE);
+                assert!(
+                    thumb > 0.0 && travel > 0.0,
+                    "overflowing track of length {length} must remain draggable"
+                );
+                let start = axis.pack_point(0.0, 2.0);
+                let end = axis.pack_point(length, 2.0);
+                assert!(
+                    bar.progress_from_mouse_pos(size, theme::SCROLLBAR_MIN_SIZE, 0.5, start)
+                        .abs()
+                        < 1e-9
+                );
+                assert!(
+                    (bar.progress_from_mouse_pos(size, theme::SCROLLBAR_MIN_SIZE, 0.5, end) - 1.0)
+                        .abs()
+                        < 1e-9
+                );
+            }
+            bar.synchronize(100.px(), 100.px(), 0.0);
+            let (thumb, travel) = bar.lengths(axis.pack_size(12.0, 4.0), theme::SCROLLBAR_MIN_SIZE);
+            assert!(
+                (thumb - 12.0).abs() < 1e-9 && travel.abs() < 1e-9,
+                "non-overflowing thumb fills its track"
+            );
+        }
     }
 
     #[test]
