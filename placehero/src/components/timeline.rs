@@ -10,7 +10,7 @@ use xilem::masonry::core::ArcStr;
 use xilem::masonry::layout::AsUnit;
 use xilem::palette::css;
 use xilem::style::{Padding, Style};
-use xilem::tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use xilem::tokio::sync::mpsc::{Receiver, Sender};
 use xilem::view::{
     MainAxisAlignment, flex_col, flex_row, prose, sized_box, spinner, virtual_scroll, worker_raw,
 };
@@ -38,7 +38,7 @@ pub(crate) struct Timeline {
     at_end: bool,
     error: Option<String>,
     /// The sender for newly requested items.
-    requests: Option<UnboundedSender<TimelineContinuationRequest>>,
+    requests: Option<Sender<TimelineContinuationRequest>>,
     // We can't cache here due to Avatars not being cache busting ready.
     // /// Cached views for each status, as their input won't change.
     // cached_statuses: HashMap<i64, Arc<AnyWidgetView<Timeline, Navigation>>>,
@@ -85,7 +85,7 @@ impl Timeline {
                             max_id: timeline.statuses.last().map(|status| status.id.clone()),
                         };
                         if let Some(sender) = timeline.requests.as_ref() {
-                            if sender.send(request).is_ok() {
+                            if sender.try_send(request).is_ok() {
                                 timeline.pending_id = true;
                             } else {
                                 timeline.error = Some("Timeline worker stopped".to_owned());
@@ -121,12 +121,13 @@ impl Timeline {
                 },
             ),
             worker_raw(
-                move |proxy, mut recv: UnboundedReceiver<TimelineContinuationRequest>| {
+                std::num::NonZeroUsize::MIN,
+                move |proxy, mut recv: Receiver<TimelineContinuationRequest>| {
                     let user = user.clone();
                     let mastodon = mastodon.clone();
                     async move {
                         // For every request we receive (there should only ever be one
-                        // at a time, but worker only supports unbounded queues at the moment)
+                        // at a time, but the queue is bounded to one request)
                         // we load the requested statuses
                         while let Some(next) = recv.recv().await {
                             let result = mastodon
