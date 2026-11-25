@@ -83,8 +83,7 @@ impl ExtentCache {
             }
         }
 
-        let rebuild = geometry_changed || excess != 0;
-        if !rebuild && changes.is_empty() && !self.truncated {
+        if !geometry_changed && excess == 0 && changes.is_empty() && !self.truncated {
             return;
         }
         self.truncated = false;
@@ -94,11 +93,37 @@ impl ExtentCache {
         for (count, &extent) in self.measured.values().enumerate() {
             mean += (extent - mean) / crate::layout_count(count + 1);
         }
+        let old_default = list.model().default_extent();
+        let default_extent = if mean > 0. {
+            mean
+        } else if geometry_changed || self.measured.is_empty() {
+            // Zero-length rows are valid, but unknown rows must not all be
+            // estimated at zero (which can materialize the entire list).
+            DEFAULT_MEAN_ITEM_LENGTH
+        } else {
+            old_default
+        };
+        let default_changed = default_extent.to_bits() != old_default.to_bits();
+
+        // The model stores overrides, not observations. In a uniform list
+        // every measured row equals the default, so prefix queries need no
+        // sparse entries at all. Changing the default may change which
+        // observations need an override, so rebuild in that case.
+        let rebuild = geometry_changed
+            || excess != 0
+            || default_changed
+            || changes
+                .iter()
+                .any(|(_, extent)| extent.to_bits() == default_extent.to_bits());
+        if !rebuild && changes.is_empty() {
+            return;
+        }
         let model = list.model_mut();
         if rebuild {
             model.rebuild(
                 self.measured
                     .iter()
+                    .filter(|(_, extent)| extent.to_bits() != default_extent.to_bits())
                     .map(|(&index, &extent)| (index, extent)),
                 &|extent| *extent,
             );
@@ -107,12 +132,8 @@ impl ExtentCache {
                 model.set_extent(index, extent);
             }
         }
-        if mean > 0. {
-            model.set_default_extent(mean);
-        } else if geometry_changed {
-            // Zero-length rows are valid, but unknown rows must not all be
-            // estimated at zero (which can materialize the entire list).
-            model.set_default_extent(DEFAULT_MEAN_ITEM_LENGTH);
+        if default_changed {
+            model.set_default_extent(default_extent);
         }
     }
 }
@@ -120,6 +141,38 @@ impl ExtentCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sparse_overrides_match_observations_after_default_changes() {
+        let mut list = VirtualList::new(SparsePrefixSumExtentModel::new(180., 10), 100., 0.);
+        let mut cache = ExtentCache::default();
+        let geometry = (Axis::Vertical, Size::new(100., 100.));
+
+        let cases: &[&[(usize, f64)]] = &[
+            &[(0, 20.), (1, 20.), (2, 20.)],
+            &[(3, 40.), (6, 0.)],
+            &[(1, 40.), (3, 20.)],
+            &[(0, 0.), (1, 0.), (2, 0.), (3, 0.), (6, 0.)],
+            &[(0, 30.), (1, 30.), (2, 30.), (3, 30.), (6, 30.)],
+            &[(2, 50.), (3, 10.)],
+            &[(2, 30.), (3, 30.)],
+        ];
+        for observations in cases {
+            cache.sync(&mut list, geometry, 0, observations.iter().copied());
+            let mut expected_offset = 0.;
+            for index in 0..list.len() {
+                let expected_extent = cache
+                    .measured
+                    .get(&index)
+                    .copied()
+                    .unwrap_or(list.model().default_extent());
+                assert!((list.extent_of(index) - expected_extent).abs() < 1e-10);
+                assert!((list.offset_of(index) - expected_offset).abs() < 1e-8);
+                expected_offset += expected_extent;
+            }
+            assert!((list.total_extent() - expected_offset).abs() < 1e-8);
+        }
+    }
 
     #[test]
     fn history_is_bounded_and_invalidated_with_geometry_or_length() {

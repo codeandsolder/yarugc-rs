@@ -1487,7 +1487,7 @@ mod tests {
             .unwrap();
         drive_to_fixpoint(&mut harness, id, driver);
         harness
-            .edit_root_widget(|mut scroll| {
+            .edit_root_widget(|scroll| {
                 let (index, offset) = scroll.widget.current_anchor();
                 assert_eq!(index, 20);
                 assert!((offset - 25.).abs() < 1e-8);
