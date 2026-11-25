@@ -282,6 +282,14 @@ fn selector_theme(properties: &mut DefaultProperties) {
     {
         let mut stack = PropertyStack::new();
         stack.push_layer(
+            Selector::new().with_hovered(true),
+            Background::Color(ZYNC_800),
+        );
+        stack.push_layer(
+            Selector::classes(&["#highlighted"]),
+            Background::Color(ZYNC_700),
+        );
+        stack.push_layer(
             Selector::new().with_active(true),
             Background::Color(ZYNC_800),
         );

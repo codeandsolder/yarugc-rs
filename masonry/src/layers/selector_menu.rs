@@ -1,13 +1,14 @@
 // Copyright 2026 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use accesskit::Role;
+use accesskit::{Node, Role};
 use tracing::{Span, trace_span};
 
+use crate::core::keyboard::NamedKey;
 use crate::core::{
-    AccessEvent, ChildrenIds, EventCtx, Layer, LayoutCtx, MeasureCtx, NoAction, PointerButton,
-    PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, UsesProperty,
-    Widget, WidgetId, WidgetPod,
+    AccessCtx, AccessEvent, ChildrenIds, EventCtx, Layer, LayoutCtx, MeasureCtx, NoAction,
+    PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx,
+    UsesProperty, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::kurbo::{Axis, Point, Size};
 use crate::layout::{AsUnit, LayoutSize, LenDef, LenReq, Length, SizeDef};
@@ -19,18 +20,59 @@ pub struct SelectorMenu {
     creator: WidgetId,
     children: Vec<WidgetPod<SelectorItem>>,
     pressed: Option<usize>,
+    highlighted: usize,
 }
 
 impl SelectorMenu {
-    pub(crate) fn new(creator: WidgetId, options: &[String]) -> Self {
+    pub(crate) fn new(creator: WidgetId, options: &[String], selected: usize) -> Self {
         Self {
             creator,
             children: options
                 .iter()
-                .map(|option| SelectorItem::new(option.clone()).prepare().into_pod())
+                .enumerate()
+                .map(|(index, option)| {
+                    SelectorItem::new(option.clone())
+                        .with_selection(index == selected)
+                        .prepare()
+                        .into_pod()
+                })
                 .collect(),
             pressed: None,
+            highlighted: selected,
         }
+    }
+
+    pub(crate) fn navigate(this: &mut WidgetMut<'_, Self>, key: NamedKey) {
+        let last = this.widget.children.len().saturating_sub(1);
+        let previous = this.widget.highlighted;
+        let next = match key {
+            NamedKey::ArrowDown => previous.saturating_add(1).min(last),
+            NamedKey::ArrowUp => previous.saturating_sub(1),
+            NamedKey::Home => 0,
+            NamedKey::End => last,
+            _ => return,
+        };
+        if previous == next {
+            return;
+        }
+        this.widget.highlighted = next;
+        for (index, highlighted) in [(previous, false), (next, true)] {
+            if let Some(child) = this.widget.children.get(index)
+                && let Some(mut item) = this.ctx.get_mut::<SelectorItem>(child.id())
+            {
+                SelectorItem::set_highlighted(&mut item, highlighted);
+            }
+        }
+        this.ctx.request_accessibility_update();
+    }
+
+    pub(crate) fn commit_highlight(this: &mut WidgetMut<'_, Self>) {
+        let menu = this.id();
+        let index = this.widget.highlighted;
+        this.ctx
+            .mutate_later::<Selector>(this.widget.creator, move |mut selector| {
+                Selector::pick_from_menu(&mut selector, menu, index);
+            });
     }
 
     fn dismiss(&self, ctx: &mut EventCtx<'_>) {
@@ -75,6 +117,7 @@ impl Widget for SelectorMenu {
                 ..
             }) => {
                 self.pressed = self.target_index(ctx);
+                ctx.set_focus(self.creator);
                 ctx.set_handled();
             }
             PointerEvent::Up(PointerButtonEvent {
@@ -186,7 +229,18 @@ impl Widget for SelectorMenu {
     }
 
     fn accessibility_role(&self) -> Role {
-        Role::Menu
+        Role::ListBox
+    }
+
+    fn accessibility(
+        &mut self,
+        _ctx: &mut AccessCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        node: &mut Node,
+    ) {
+        if let Some(item) = self.children.get(self.highlighted) {
+            node.set_active_descendant(item.id().into());
+        }
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {

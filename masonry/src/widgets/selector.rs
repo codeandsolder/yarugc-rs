@@ -174,6 +174,16 @@ pub struct SelectionChanged {
 // --- MARK: HELPERS
 
 impl Selector {
+    fn activate_keyboard(&self, ctx: &mut EventCtx<'_>) {
+        if let Some(menu) = ctx.get_attached_layer::<SelectorMenu>() {
+            ctx.mutate_later::<SelectorMenu>(menu, |mut menu| {
+                SelectorMenu::commit_highlight(&mut menu)
+            });
+        } else {
+            self.toggle_selector_layer(ctx);
+        }
+    }
+
     fn toggle_selector_layer(&self, ctx: &mut EventCtx<'_>) {
         if let Some(id) = ctx.get_attached_layer::<SelectorMenu>() {
             ctx.remove_layer(id);
@@ -186,7 +196,7 @@ impl Selector {
             options: self.options.clone(),
             selected_option,
         };
-        let menu = SelectorMenu::new(ctx.widget_id(), &self.options).prepare();
+        let menu = SelectorMenu::new(ctx.widget_id(), &self.options, selected_option).prepare();
         let border = ctx.border_box();
         let position = ctx.local_to_window(Point::new(border.x0, border.y1));
         ctx.create_attached_layer(layer_type, menu, position);
@@ -244,11 +254,25 @@ impl Widget for Selector {
         if let TextEvent::Keyboard(event) = event
             && ctx.is_focus_target()
             && event.state.is_down()
-            && !event.repeat
         {
             match event.key {
-                Key::Named(NamedKey::Enter) if self.selected_option.is_some() => {
-                    self.toggle_selector_layer(ctx);
+                Key::Named(NamedKey::Enter) if !event.repeat && self.selected_option.is_some() => {
+                    self.activate_keyboard(ctx);
+                    ctx.set_handled();
+                }
+                Key::Named(
+                    key
+                    @ (NamedKey::ArrowUp | NamedKey::ArrowDown | NamedKey::Home | NamedKey::End),
+                ) if self.selected_option.is_some() => {
+                    if let Some(menu) = ctx.get_attached_layer::<SelectorMenu>() {
+                        ctx.mutate_later::<SelectorMenu>(menu, move |mut menu| {
+                            SelectorMenu::navigate(&mut menu, key)
+                        });
+                    } else if matches!(key, NamedKey::ArrowUp | NamedKey::ArrowDown) {
+                        self.toggle_selector_layer(ctx);
+                    } else {
+                        return;
+                    }
                     ctx.set_handled();
                 }
                 Key::Named(NamedKey::Escape) => {
@@ -261,7 +285,7 @@ impl Widget for Selector {
             }
         }
         if self.activation.keyboard(ctx, event) && self.selected_option.is_some() {
-            self.toggle_selector_layer(ctx);
+            self.activate_keyboard(ctx);
         }
     }
 
@@ -283,7 +307,9 @@ impl Widget for Selector {
             Update::WidgetAdded => {
                 ctx.mutate_self_later::<Self>(|mut selector| Self::update_label(&mut selector));
             }
-            Update::DisabledChanged(true) | Update::StashedChanged(true) => {
+            Update::DisabledChanged(true)
+            | Update::StashedChanged(true)
+            | Update::FocusChanged(false) => {
                 if let Some(id) = ctx.get_attached_layer::<SelectorMenu>() {
                     ctx.remove_layer(id);
                 }
@@ -291,7 +317,7 @@ impl Widget for Selector {
             }
             Update::HoveredChanged(_)
             | Update::ActiveChanged(_)
-            | Update::FocusChanged(_)
+            | Update::FocusChanged(true)
             | Update::DisabledChanged(false) => {
                 ctx.request_paint_only();
             }
@@ -519,6 +545,87 @@ mod tests {
         assert!(attached(&harness, id).is_some());
         harness.mouse_click_on(id, None).unwrap();
         assert_eq!(attached(&harness, id), None);
+    }
+
+    #[test]
+    fn keyboard_preview_commits_only_on_activation_and_closes_on_focus_loss() {
+        use crate::widgets::{Button, Flex};
+
+        let selector = Selector::new(vec!["A".into(), "B".into(), "C".into()]).prepare();
+        let id = selector.id();
+        let other = Button::with_text("Other").prepare();
+        let other_id = other.id();
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            Flex::column()
+                .with_fixed(selector)
+                .with_fixed(other)
+                .prepare(),
+            (200, 240),
+        );
+        harness.focus_on(Some(id));
+
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
+        let menu = attached(&harness, id).unwrap();
+        let items = harness
+            .get_widget_with_id(menu)
+            .unwrap()
+            .children()
+            .iter()
+            .map(|item| item.id())
+            .collect::<Vec<_>>();
+        let _ = harness.redraw();
+        assert_eq!(
+            harness
+                .access_node(menu)
+                .unwrap()
+                .data()
+                .active_descendant(),
+            Some(items[0].into())
+        );
+        assert_eq!(
+            harness.access_node(items[0]).unwrap().data().is_selected(),
+            Some(true)
+        );
+
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::End)));
+        let _ = harness.redraw();
+        assert_eq!(
+            harness
+                .access_node(menu)
+                .unwrap()
+                .data()
+                .active_descendant(),
+            Some(items[2].into())
+        );
+        assert_eq!(harness.access_node(id).unwrap().data().value(), Some("A"));
+        assert!(harness.pop_action_erased().is_none());
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::Escape)));
+        assert!(attached(&harness, id).is_none());
+
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::Enter)));
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::End)));
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::ArrowUp)));
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::Enter)));
+        assert_eq!(
+            harness.pop_action::<SelectionChanged>().unwrap(),
+            Some((
+                SelectionChanged {
+                    selected_content: "B".into(),
+                    index: 1
+                },
+                id
+            )),
+        );
+        assert!(attached(&harness, id).is_none());
+        assert_eq!(harness.focused_widget_id(), Some(id));
+
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::Enter)));
+        let menu = attached(&harness, id).unwrap();
+        harness.focus_on(Some(other_id));
+        assert!(attached(&harness, id).is_none());
+        assert!(harness.get_widget_with_id(menu).is_none());
+        assert!(harness.pop_action_erased().is_none());
     }
 
     #[test]

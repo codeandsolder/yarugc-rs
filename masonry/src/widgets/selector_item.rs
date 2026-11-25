@@ -14,6 +14,8 @@ use crate::widgets::Label;
 /// An option in a [`SelectorMenu`](crate::layers::SelectorMenu).
 pub struct SelectorItem {
     child: WidgetPod<Label>,
+    selected: bool,
+    highlighted: bool,
 }
 
 // --- MARK: BUILDERS
@@ -23,12 +25,31 @@ impl SelectorItem {
     pub fn new(text: String) -> Self {
         Self {
             child: WidgetPod::new(Label::new(text)),
+            selected: false,
+            highlighted: false,
         }
+    }
+
+    pub(crate) const fn with_selection(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self.highlighted = selected;
+        self
     }
 }
 
 // --- MARK: WIDGETMUT
 impl SelectorItem {
+    pub(crate) fn set_highlighted(this: &mut WidgetMut<'_, Self>, highlighted: bool) {
+        if this.widget.highlighted != highlighted {
+            this.widget.highlighted = highlighted;
+            if highlighted {
+                this.ctx.add_class("#highlighted");
+            } else {
+                this.ctx.remove_class("#highlighted");
+            }
+        }
+    }
+
     /// Returns a mutable reference to the child.
     pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, Label>> {
         this.ctx.get_mut(this.widget.child.id())
@@ -43,6 +64,7 @@ impl Widget for SelectorItem {
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
+            Update::WidgetAdded if self.highlighted => ctx.add_class("#highlighted"),
             Update::HoveredChanged(_)
             | Update::ActiveChanged(_)
             | Update::FocusChanged(_)
@@ -54,7 +76,7 @@ impl Widget for SelectorItem {
     }
 
     fn accessibility_role(&self) -> Role {
-        Role::MenuItem
+        Role::ListBoxOption
     }
 
     fn accessibility(
@@ -64,6 +86,7 @@ impl Widget for SelectorItem {
         node: &mut Node,
     ) {
         node.add_action(accesskit::Action::Click);
+        node.set_selected(self.selected);
     }
 
     fn make_trace_span(&self, id: WidgetId) -> Span {
