@@ -88,8 +88,14 @@ where
     S: BuildHasher + 'static,
 {
     fn styles_iter(&self) -> impl Iterator<Item = (CowStr, Option<CowStr>)> {
-        self.iter()
-            .map(|s| (s.0.clone().into(), s.1.clone().into()))
+        // Equality ignores the hash table's iteration order, but retained
+        // modifier indices and CSS declaration order cannot.
+        let mut entries: Vec<_> = self
+            .iter()
+            .map(|(key, value)| (key.clone().into(), value.clone().into()))
+            .collect();
+        entries.sort_unstable();
+        entries.into_iter()
     }
 }
 
@@ -704,5 +710,41 @@ where
         app_state: &mut State,
     ) -> MessageResult<Action> {
         self.el.message(view_state, message, element, app_state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn equivalent_hash_maps_have_the_same_modifier_order() {
+        let first = HashMap::from([
+            ("margin", Some(CowStr::from("4px"))),
+            ("margin-left", Some(CowStr::from("21px"))),
+            ("color", Some(CowStr::from("red"))),
+        ]);
+        let second = HashMap::from([
+            ("color", Some(CowStr::from("red"))),
+            ("margin-left", Some(CowStr::from("21px"))),
+            ("margin", Some(CowStr::from("4px"))),
+        ]);
+        assert_eq!(first, second);
+        let expected = [
+            ("color", Some(CowStr::from("red"))),
+            ("margin", Some(CowStr::from("4px"))),
+            ("margin-left", Some(CowStr::from("21px"))),
+        ];
+        assert_eq!(
+            first.styles_iter().collect::<Vec<_>>(),
+            expected
+                .into_iter()
+                .map(|(key, value)| (CowStr::from(key), value))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            first.styles_iter().collect::<Vec<_>>(),
+            second.styles_iter().collect::<Vec<_>>()
+        );
     }
 }

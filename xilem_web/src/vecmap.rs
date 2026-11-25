@@ -207,11 +207,7 @@ impl<K, V> VecMap<K, V> {
         K: Ord,
     {
         match self.0.binary_search_by_key(&&key, |(n, _)| n) {
-            Ok(pos) => {
-                let mut val = (key, value);
-                std::mem::swap(&mut self.0[pos], &mut val);
-                Some(val.1)
-            }
+            Ok(pos) => Some(std::mem::replace(&mut self.0[pos].1, value)),
             Err(pos) => {
                 self.0.insert(pos, (key, value));
                 None
