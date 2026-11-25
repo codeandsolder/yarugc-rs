@@ -9,7 +9,7 @@
 //! minimal updates to a retained UI. Like `SwiftUI`, it is strongly typed.
 //!
 //! The talk *[Xilem: Let's Build High Performance Rust UI](https://www.youtube.com/watch?v=OvfNipIcRiQ)* by Raph Levien
-//! was presented at the RustNL conference in 2024, and gives a video introduction to these ideas.
+//! was presented at the `RustNL` conference in 2024, and gives a video introduction to these ideas.
 //! Xilem is implemented as a reactive layer on top of [Masonry][masonry], a widget toolkit which is developed alongside Xilem.
 //! Masonry itself is built on top of a wide array of foundational Rust UI projects:
 //!
@@ -28,7 +28,7 @@
 //! A simple incrementing counter application looks like:
 //!
 //! ```rust,no_run
-//! use winit::error::EventLoopError;
+//! use xilem::RunError;
 //! use xilem::view::{text_button, flex_col, label};
 //! use xilem::{EventLoop, WindowOptions, WidgetView, Xilem};
 //!
@@ -41,7 +41,7 @@
 //!     ))
 //! }
 //!
-//! fn main() -> Result<(), EventLoopError> {
+//! fn main() -> Result<(), RunError> {
 //!     let app = Xilem::new_simple(Counter(0), app_logic, WindowOptions::new("Counter app"));
 //!     app.run_in(EventLoop::with_user_event())?;
 //!     Ok(())
@@ -169,12 +169,24 @@ pub use xilem_masonry::{
     AnyWidgetView, InitialRootWidget, MasonryRoot, Pod, ViewCtx, WidgetView, WidgetViewSequence,
 };
 
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Internal cross-module types are not public API."
+)]
 mod app;
 mod driver;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Internal cross-module types are not public API."
+)]
 mod window_options;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Internal cross-module types are not public API."
+)]
 mod window_view;
 
-pub use app::{AppState, ExitOnClose, Xilem};
+pub use app::{AppState, ExitOnClose, RunError, Xilem};
 pub use driver::{MasonryDriver, async_action};
 pub use window_options::WindowOptions;
 pub use window_view::{PodWindow, WindowView, window};

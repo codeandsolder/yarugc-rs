@@ -5,7 +5,7 @@
 
 use std::f64::consts::{PI, TAU};
 
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::core::one_of::Either;
 use xilem::masonry::kurbo::{Affine, Vec2};
 use xilem::style::Style;
@@ -107,7 +107,7 @@ impl TransformsGame {
     }
 }
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     let app = Xilem::new_simple(
         TransformsGame {
             rotation: PI * 0.25,

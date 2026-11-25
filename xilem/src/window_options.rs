@@ -12,6 +12,7 @@ use winit::window::{Cursor, Icon, Window, WindowAttributes, WindowButtons, Windo
 /// they can also be used to update the attributes/callbacks in the running application,
 /// except if the attribute name starts with `initial_`. Attempting to change an initial-only attribute
 /// won't have any effect and will result in a warning being logged.
+#[must_use = "Window options must be supplied to the window."]
 pub struct WindowOptions<State> {
     pub(crate) reactive: ReactiveWindowAttrs,
     pub(crate) initial: InitialAttrs,
@@ -29,6 +30,7 @@ pub(crate) struct ReactiveWindowAttrs {
     max_inner_size: Option<Size>,
     window_level: WindowLevel,
     decorations: bool,
+    #[cfg(windows)]
     platform_specific: PlatformSpecificReactiveWindowAttrs,
 }
 
@@ -40,11 +42,14 @@ pub(crate) struct InitialAttrs {
     transparent: bool,
     // TODO: move window_icon to ReactiveWindowAttrs once the winit type implements PartialEq
     window_icon: Option<Icon>,
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     platform_specific: PlatformSpecificInitialWindowAttrs,
 }
 
+type CloseCallback<State> = Box<dyn Fn(&mut State)>;
+
 pub(crate) struct WindowCallbacks<State> {
-    pub(crate) on_close: Option<Box<dyn Fn(&mut State)>>,
+    pub(crate) on_close: Option<CloseCallback<State>>,
 }
 impl<S> Default for WindowCallbacks<S> {
     fn default() -> Self {
@@ -65,6 +70,7 @@ impl<State> WindowOptions<State> {
                 max_inner_size: None,
                 window_level: WindowLevel::default(),
                 decorations: true,
+                #[cfg(windows)]
                 platform_specific: PlatformSpecificReactiveWindowAttrs::default(),
             },
             initial: InitialAttrs {
@@ -72,6 +78,7 @@ impl<State> WindowOptions<State> {
                 position: None,
                 transparent: false,
                 window_icon: None,
+                #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
                 platform_specific: PlatformSpecificInitialWindowAttrs::default(),
             },
             callbacks: WindowCallbacks::default(),
@@ -87,7 +94,7 @@ impl<State> WindowOptions<State> {
     /// Sets whether the window is resizable or not.
     ///
     /// The default is `true`.
-    pub fn with_resizable(mut self, resizable: bool) -> Self {
+    pub const fn with_resizable(mut self, resizable: bool) -> Self {
         self.reactive.resizable = resizable;
         self
     }
@@ -95,7 +102,7 @@ impl<State> WindowOptions<State> {
     /// Sets the enabled window buttons.
     ///
     /// The default is [`WindowButtons::all`]
-    pub fn with_enabled_buttons(mut self, enabled_buttons: WindowButtons) -> Self {
+    pub const fn with_enabled_buttons(mut self, enabled_buttons: WindowButtons) -> Self {
         self.reactive.enabled_buttons = enabled_buttons;
         self
     }
@@ -123,7 +130,7 @@ impl<State> WindowOptions<State> {
     /// This is just a hint to the OS, and the system could ignore it.
     ///
     /// The default is [`WindowLevel::Normal`].
-    pub fn with_window_level(mut self, window_level: WindowLevel) -> Self {
+    pub const fn with_window_level(mut self, window_level: WindowLevel) -> Self {
         self.reactive.window_level = window_level;
         self
     }
@@ -131,7 +138,7 @@ impl<State> WindowOptions<State> {
     /// Sets whether the window should have a border, a title bar, etc.
     ///
     /// The default is `true`.
-    pub fn with_decorations(mut self, decorations: bool) -> Self {
+    pub const fn with_decorations(mut self, decorations: bool) -> Self {
         self.reactive.decorations = decorations;
         self
     }
@@ -164,7 +171,7 @@ impl<State> WindowOptions<State> {
     /// buffer.
     ///
     /// The default is `false`.
-    pub fn with_transparent(mut self, transparent: bool) -> Self {
+    pub const fn with_transparent(mut self, transparent: bool) -> Self {
         self.initial.transparent = transparent;
         self
     }
@@ -192,9 +199,11 @@ impl<State> WindowOptions<State> {
         if let Some(position) = self.initial.position {
             attrs = attrs.with_position(position);
         }
-        self.initial
-            .platform_specific
-            .build(self.reactive.platform_specific.build(attrs))
+        #[cfg(windows)]
+        let attrs = self.reactive.platform_specific.build(attrs);
+        #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+        let attrs = self.initial.platform_specific.build(attrs);
+        attrs
     }
 
     pub(crate) fn rebuild(&self, prev: &Self, window: &Window) {
@@ -231,6 +240,7 @@ impl<State> WindowOptions<State> {
             window.set_decorations(current.decorations);
         }
 
+        #[cfg(windows)]
         current
             .platform_specific
             .rebuild(&prev.platform_specific, window);
@@ -262,6 +272,7 @@ impl<State> WindowOptions<State> {
             );
         }
 
+        #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
         current.platform_specific.warn(&prev.platform_specific);
     }
 }
@@ -430,6 +441,7 @@ mod windows {
         /// - An owned window is hidden when its owner is minimized.
         ///
         /// For more information, see <https://docs.microsoft.com/en-us/windows/win32/winmsg/window-features#owned-windows>
+        #[must_use = "Use the configured window options."]
         fn with_owner_window(self, parent: HWND) -> Self;
 
         /// Sets a menu on the window to be created.
@@ -442,12 +454,15 @@ mod windows {
         /// the menus look.
         // / If you use this, it is recommended that you combine it with
         // / `with_theme(Some(Theme::Light))` to avoid a jarring effect.
+        #[must_use = "Use the configured window options."]
         fn with_menu(self, menu: HMENU) -> Self;
 
         /// This sets `ICON_BIG`. A good ceiling here is 256x256.
+        #[must_use = "Use the configured window options."]
         fn with_taskbar_icon(self, taskbar_icon: Option<Icon>) -> Self;
 
         /// This sets `WS_EX_NOREDIRECTIONBITMAP`.
+        #[must_use = "Use the configured window options."]
         fn with_no_redirection_bitmap(self, flag: bool) -> Self;
 
         /// Enables or disables drag and drop support (enabled by default). Will interfere with other
@@ -456,46 +471,56 @@ mod windows {
         /// attempt to initialize COM API regardless of this option. Currently only fullscreen mode
         /// does that, but there may be more in the future. If you need COM API with
         /// `COINIT_MULTITHREADED` you must initialize it before calling any winit functions. See <https://docs.microsoft.com/en-us/windows/win32/api/objbase/nf-objbase-coinitialize#remarks> for more information.
+        #[must_use = "Use the configured window options."]
         fn with_drag_and_drop(self, flag: bool) -> Self;
 
         /// Whether show or hide the window icon in the taskbar.
+        #[must_use = "Use the configured window options."]
         fn with_skip_taskbar(self, skip: bool) -> Self;
 
         /// Customize the window class name.
+        #[must_use = "Use the configured window options."]
         fn with_class_name<S: Into<String>>(self, class_name: S) -> Self;
 
         /// Shows or hides the background drop shadow for undecorated windows.
         ///
         /// The shadow is hidden by default.
         /// Enabling the shadow causes a thin 1px line to appear on the top of the window.
+        #[must_use = "Use the configured window options."]
         fn with_undecorated_shadow(self, shadow: bool) -> Self;
 
         /// Sets system-drawn backdrop type.
         ///
         /// Requires Windows 11 build 22523+.
+        #[must_use = "Use the configured window options."]
         fn with_system_backdrop(self, backdrop_type: BackdropType) -> Self;
 
         /// This sets or removes `WS_CLIPCHILDREN` style.
+        #[must_use = "Use the configured window options."]
         fn with_clip_children(self, flag: bool) -> Self;
 
         /// Sets the color of the window border.
         ///
         /// Supported starting with Windows 11 Build 22000.
+        #[must_use = "Use the configured window options."]
         fn with_border_color(self, color: Option<Color>) -> Self;
 
         /// Sets the background color of the title bar.
         ///
         /// Supported starting with Windows 11 Build 22000.
+        #[must_use = "Use the configured window options."]
         fn with_title_background_color(self, color: Option<Color>) -> Self;
 
         /// Sets the color of the window title.
         ///
         /// Supported starting with Windows 11 Build 22000.
+        #[must_use = "Use the configured window options."]
         fn with_title_text_color(self, color: Color) -> Self;
 
         /// Sets the preferred style of the window corners.
         ///
         /// Supported starting with Windows 11 Build 22000.
+        #[must_use = "Use the configured window options."]
         fn with_corner_preference(self, corners: CornerPreference) -> Self;
     }
 
@@ -589,7 +614,7 @@ mod windows {
 #[cfg(target_os = "macos")]
 mod macos {
     use winit::platform::macos::WindowAttributesExtMacOS;
-    use winit::window::{Window, WindowAttributes};
+    use winit::window::WindowAttributes;
 
     #[derive(Debug, Clone, Default)]
     pub(crate) struct PlatformSpecificInitialWindowAttrs {
@@ -599,9 +624,6 @@ mod macos {
         pub(crate) titlebar_transparent: bool,
         pub(crate) movable_by_window_background: bool,
     }
-
-    #[derive(Debug, Clone, Default)]
-    pub(crate) struct PlatformSpecificReactiveWindowAttrs {}
 
     impl PlatformSpecificInitialWindowAttrs {
         pub(crate) fn build(&self, attrs: WindowAttributes) -> WindowAttributes {
@@ -642,32 +664,29 @@ mod macos {
         }
     }
 
-    impl PlatformSpecificReactiveWindowAttrs {
-        pub(crate) fn build(&self, attrs: WindowAttributes) -> WindowAttributes {
-            attrs
-        }
-
-        pub(crate) fn rebuild(&self, _prev: &Self, _window: &Window) {}
-    }
-
     /// Extension setters for macOS-specific window options.
     pub trait WindowOptionsExtMacOS {
         /// Hides the window titlebar while keeping the traffic-light buttons and border.
         ///
         /// Combine with [`with_fullsize_content_view`] and [`with_title_hidden`] to get a
         /// clean window that still has native decorations.
+        #[must_use = "Use the configured window options."]
         fn with_titlebar_hidden(self, hidden: bool) -> Self;
 
         /// Hides the window title.
+        #[must_use = "Use the configured window options."]
         fn with_title_hidden(self, hidden: bool) -> Self;
 
         /// Allows the window content to extend into the titlebar area.
+        #[must_use = "Use the configured window options."]
         fn with_fullsize_content_view(self, enabled: bool) -> Self;
 
         /// Makes the titlebar background transparent so content shows through it.
+        #[must_use = "Use the configured window options."]
         fn with_titlebar_transparent(self, transparent: bool) -> Self;
 
         /// Lets the user drag the window by clicking anywhere on the background.
+        #[must_use = "Use the configured window options."]
         fn with_movable_by_window_background(self, movable: bool) -> Self;
     }
 
@@ -708,7 +727,7 @@ mod macos {
 mod linux {
     use winit::platform::wayland::WindowAttributesExtWayland;
     use winit::platform::x11::WindowAttributesExtX11;
-    use winit::window::{Window, WindowAttributes};
+    use winit::window::WindowAttributes;
 
     #[derive(Debug, Clone, Default)]
     pub(crate) struct PlatformSpecificInitialWindowAttrs {
@@ -716,9 +735,6 @@ mod linux {
         /// the X11 `WM_CLASS`.
         pub(crate) name: Option<(String, String)>,
     }
-
-    #[derive(Debug, Clone, Default)]
-    pub(crate) struct PlatformSpecificReactiveWindowAttrs {}
 
     impl PlatformSpecificInitialWindowAttrs {
         pub(crate) fn build(&self, attrs: WindowAttributes) -> WindowAttributes {
@@ -742,14 +758,6 @@ mod linux {
         }
     }
 
-    impl PlatformSpecificReactiveWindowAttrs {
-        pub(crate) fn build(&self, attrs: WindowAttributes) -> WindowAttributes {
-            attrs
-        }
-
-        pub(crate) fn rebuild(&self, _prev: &Self, _window: &Window) {}
-    }
-
     /// Extension setters for Linux-specific window options.
     pub trait WindowOptionsExtLinux {
         /// Sets the window's application identifier.
@@ -758,6 +766,7 @@ mod linux {
         /// X11 `WM_CLASS`); `instance` becomes the X11 instance name and is
         /// ignored on Wayland. Compositors commonly use this identifier to match
         /// a window to its desktop entry or to apply window-management rules.
+        #[must_use = "Use the configured window options."]
         fn with_name(self, general: impl Into<String>, instance: impl Into<String>) -> Self;
     }
 
@@ -770,33 +779,6 @@ mod linux {
     }
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-mod dummy_platform {
-    use winit::window::{Window, WindowAttributes};
-
-    #[derive(Debug, Clone, Default)]
-    pub(crate) struct PlatformSpecificInitialWindowAttrs {}
-
-    #[derive(Debug, Clone, Default)]
-    pub(crate) struct PlatformSpecificReactiveWindowAttrs {}
-
-    impl PlatformSpecificInitialWindowAttrs {
-        pub(crate) fn build(&self, attrs: WindowAttributes) -> WindowAttributes {
-            attrs
-        }
-
-        pub(crate) fn warn(&self, _prev: &Self) {}
-    }
-
-    impl PlatformSpecificReactiveWindowAttrs {
-        pub(crate) fn build(&self, attrs: WindowAttributes) -> WindowAttributes {
-            attrs
-        }
-
-        pub(crate) fn rebuild(&self, _prev: &Self, _window: &Window) {}
-    }
-}
-
 #[cfg(target_os = "macos")]
 pub use macos::*;
 
@@ -805,6 +787,3 @@ pub use windows::*;
 
 #[cfg(target_os = "linux")]
 pub use linux::*;
-
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-pub(crate) use dummy_platform::*;

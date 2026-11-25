@@ -4,7 +4,7 @@
 //! An example showcasing the capabilities of the Portal widget.
 
 use masonry::layout::AsUnit;
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::peniko::color::AlphaColor;
 use xilem::style::Style;
 use xilem::view::{
@@ -153,7 +153,7 @@ fn app_logic(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
     portal(content)
 }
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     let app = Xilem::new_simple(AppState::default(), app_logic, WindowOptions::new("Scroll"));
     app.run_in(EventLoop::with_user_event())?;
     Ok(())

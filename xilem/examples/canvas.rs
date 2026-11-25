@@ -5,11 +5,11 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use xilem::RunError;
 use xilem::kurbo::{Circle, Size};
 use xilem::masonry::imaging::{Painter, record::Scene};
 use xilem::peniko::Color;
 use xilem::view::{canvas, text_button, zstack};
-use xilem::winit::error::EventLoopError;
 use xilem::{EventLoop, WidgetView, WindowOptions, Xilem};
 
 /// Simple but suboptimal pseudo-random function, you shouldn't use this in production
@@ -52,7 +52,7 @@ impl Circles {
     }
 }
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     Xilem::new_simple(
         Circles::default(),
         Circles::view,

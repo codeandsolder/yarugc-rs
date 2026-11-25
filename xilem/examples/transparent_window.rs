@@ -4,7 +4,7 @@
 //! Showcase a trasnsparent window.
 
 use masonry::layout::AsUnit;
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::style::Style;
 use xilem::view::*;
 use xilem::{Color, EventLoop, WindowId, WindowView, Xilem};
@@ -52,7 +52,7 @@ fn app_logic(state: &mut AppState) -> impl Iterator<Item = WindowView<AppState>>
     )
 }
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     Xilem::new(
         AppState {
             window_id: WindowId::next(),

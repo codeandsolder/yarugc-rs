@@ -4,7 +4,7 @@
 //! A simple emoji picker.
 
 use masonry::layout::{AsUnit, Dim};
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::core::View;
 use xilem::style::Style;
 use xilem::view::{
@@ -130,7 +130,7 @@ struct EmojiPagination {
     emoji: Vec<EmojiInfo>,
 }
 
-pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
+pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
     let emoji = EmojiInfo::parse_file();
     let data = EmojiPagination {
         size: 4,
@@ -177,6 +177,6 @@ const EMOJI_NAMES_CSV: &str = include_str!(concat!(
 
 // Boilerplate code: Identical across all applications which support Android
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     run(EventLoop::with_user_event())
 }

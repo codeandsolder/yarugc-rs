@@ -3,6 +3,7 @@
 
 //! A to-do-list app, loosely inspired by todomvc.
 
+use xilem::RunError;
 use xilem::kurbo::Axis;
 use xilem::masonry::layout::{AsUnit, Length};
 use xilem::masonry::theme::{DEFAULT_GAP, ZYNC_800};
@@ -12,7 +13,6 @@ use xilem::view::{
     FlexExt, FlexSpacer, MainAxisAlignment, button, checkbox, divider, divider_h, flex_col,
     flex_row, label, text_button, text_input,
 };
-use xilem::winit::error::EventLoopError;
 use xilem::{EventLoop, EventLoopBuilder, InsertNewline, WidgetView, WindowOptions, Xilem};
 
 struct Task {
@@ -137,7 +137,7 @@ fn app_logic(task_list: &mut TaskList) -> impl WidgetView<TaskList> + use<> {
     .padding(50.px())
 }
 
-pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
+pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
     let data = TaskList {
         // Add a placeholder task for Android, whilst the
         next_task: "My Next Task".into(),
@@ -164,6 +164,6 @@ pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
 
 // Boilerplate code: Identical across all applications which support Android
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     run(EventLoop::with_user_event())
 }

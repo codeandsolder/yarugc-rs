@@ -14,7 +14,7 @@ use masonry_winit::app::{EventLoop, EventLoopBuilder};
 use tokio::time;
 use tracing::warn;
 use usvg::Tree;
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::core::fork;
 use xilem::core::one_of::Either;
 use xilem::style::Style;
@@ -220,7 +220,7 @@ fn lap_reset_button(data: &mut Stopwatch) -> impl WidgetView<Stopwatch> + use<> 
     }
 }
 
-pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
+pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
     let tree = Tree::from_str(STOPWATCH_SVG, &usvg::Options::default()).unwrap();
     let mut data = Stopwatch {
         active: false,
@@ -244,6 +244,6 @@ pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
 
 // Boilerplate code: Identical across all applications which support Android
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     run(EventLoop::with_user_event())
 }

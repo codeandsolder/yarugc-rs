@@ -10,7 +10,7 @@ use masonry::layout::{AsUnit, Dim};
 use time::error::IndeterminateOffset;
 use time::macros::format_description;
 use time::{OffsetDateTime, UtcOffset};
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::core::fork;
 use xilem::style::Style as _;
 use xilem::view::{
@@ -186,7 +186,7 @@ const ROBOTO_FLEX: &[u8] = include_bytes!(concat!(
     "RobotoFlex-Subset.ttf"
 ));
 
-pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
+pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
     let data = Clocks {
         weight: FontWeight::BLACK.value(),
         // TODO: We can't get this on Android, because
@@ -243,6 +243,6 @@ const TIMEZONES: &[TimeZone] = &[
 
 // Boilerplate code: Identical across all applications which support Android
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     run(EventLoop::with_user_event())
 }

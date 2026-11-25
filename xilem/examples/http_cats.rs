@@ -12,7 +12,7 @@ use masonry::layout::{AsUnit, Length, UnitPoint};
 use masonry::properties::{LineBreaking, Padding};
 use tokio::sync::mpsc::UnboundedSender;
 use winit::dpi::LogicalSize;
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::core::fork;
 use xilem::core::one_of::OneOf3;
 use xilem::peniko::{Blob, ImageAlphaType, ImageData, ImageFormat};
@@ -215,7 +215,7 @@ impl Status {
     }
 }
 
-pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
+pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
     let data = HttpCats {
         statuses: Status::parse_file(),
         selected_code: None,
@@ -260,6 +260,6 @@ const STATUS_CODES_CSV: &str = include_str!(concat!(
 
 // Boilerplate code: Identical across all applications which support Android
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     run(EventLoop::with_user_event())
 }

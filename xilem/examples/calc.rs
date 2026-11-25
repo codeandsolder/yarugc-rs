@@ -8,7 +8,7 @@ use masonry::layout::{AsUnit, Length};
 use masonry::properties::types::{CrossAxisAlignment, MainAxisAlignment};
 use masonry::theme::default_property_set;
 use winit::dpi::LogicalSize;
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::style::{BorderColor, Style};
 use xilem::view::{
     FlexSequence, FlexSpacer, GridExt, GridParams, GridSequence, GridTrackSize, button, flex_row,
@@ -294,7 +294,7 @@ fn digit_button(digit: &'static str) -> impl WidgetView<Calculator> {
     .corner_radius(10.px())
 }
 
-pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
+pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
     let data = Calculator {
         current_num_index: 0,
         clear_current_entry_on_input: false,
@@ -328,6 +328,6 @@ pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
 
 // Boilerplate code: Identical across all applications which support Android
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     run(EventLoop::with_user_event())
 }

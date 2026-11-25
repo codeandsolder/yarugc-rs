@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::view::{flex_col, label, text_button, text_input};
 use xilem::{AppState, Color, EventLoop, EventLoopBuilder, WindowId, WindowView, Xilem, window};
 
@@ -109,7 +109,7 @@ fn app_logic(state: &mut State) -> impl Iterator<Item = WindowView<State>> + use
     .into_iter()
 }
 
-fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
+fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
     let data = State {
         new_counter_name: String::new(),
         counters: HashMap::new(),
@@ -120,6 +120,6 @@ fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
     app.run_in(event_loop)
 }
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     run(EventLoop::with_user_event())
 }

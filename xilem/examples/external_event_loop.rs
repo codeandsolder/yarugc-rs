@@ -11,9 +11,9 @@ use masonry::properties::types::{CrossAxisAlignment, MainAxisAlignment};
 use masonry::theme::default_property_set;
 use masonry_winit::app::{AppDriver, MasonryUserEvent};
 use winit::application::ApplicationHandler;
-use winit::error::EventLoopError;
 use winit::event::ElementState;
 use winit::keyboard::{KeyCode, PhysicalKey};
+use xilem::RunError;
 use xilem::style::Style;
 use xilem::view::{Label, button, flex_row, label, sized_box};
 use xilem::{EventLoop, WidgetView, WindowOptions, Xilem};
@@ -94,16 +94,16 @@ impl ApplicationHandler<MasonryUserEvent> for ExternalApp {
     }
 }
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     let window_size = winit::dpi::LogicalSize::new(800.0, 800.0);
     let window_options = WindowOptions::new("External event loop").with_min_inner_size(window_size);
 
     let xilem = Xilem::new_simple(0, app_logic, window_options);
 
-    let event_loop = EventLoop::with_user_event().build().unwrap();
+    let event_loop = EventLoop::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
     let (driver, windows) =
-        xilem.into_driver_and_windows(move |event| proxy.send_event(event).map_err(|err| err.0));
+        xilem.into_driver_and_windows(move |event| proxy.send_event(event).map_err(|err| err.0))?;
     let masonry_state = masonry_winit::app::MasonryState::new(
         event_loop.create_proxy(),
         event_loop.owned_display_handle(),
@@ -115,5 +115,5 @@ fn main() -> Result<(), EventLoopError> {
         masonry_state,
         app_driver: Box::new(driver),
     };
-    event_loop.run_app(&mut app)
+    Ok(event_loop.run_app(&mut app)?)
 }

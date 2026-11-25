@@ -14,7 +14,7 @@ use masonry::core::ArcStr;
 use masonry::layout::{AsUnit, Dim, UnitPoint};
 use masonry::properties::{LineBreaking, Padding};
 use winit::dpi::LogicalSize;
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::core::fork;
 use xilem::core::one_of::{OneOf, OneOf3};
 use xilem::palette::css::{BLACK, WHITE};
@@ -155,7 +155,7 @@ async fn image_from_url(url: &str) -> anyhow::Result<ImageData> {
     })
 }
 
-fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
+fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
     let data = VirtualCats {
         statuses: Status::parse_file(),
     };
@@ -198,6 +198,6 @@ const STATUS_CODES_CSV: &str = include_str!(concat!(
 ));
 
 // TODO: This example doesn't support Android because the virtual scroll component doesn't have gesture support.
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     run(EventLoop::with_user_event())
 }

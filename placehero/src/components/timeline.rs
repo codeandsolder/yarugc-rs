@@ -28,6 +28,7 @@ struct TimelineContinuationRequest {
 }
 
 /// The state needed to load and display a single timeline (i.e. a sequence of unrelated posts)
+#[derive(Default)]
 pub(crate) struct Timeline {
     /// The currently loaded statuses in the timeline.
     statuses: Vec<Status>,
@@ -57,7 +58,11 @@ impl Timeline {
         }
     }
 
-    pub(crate) fn view(&mut self, mastodon: Mastodon) -> impl WidgetView<Self, Navigation> + use<> {
+    pub(crate) fn has_account(&self) -> bool {
+        !self.user_id.is_empty()
+    }
+
+    pub(crate) fn view(&self, mastodon: Mastodon) -> impl WidgetView<Self, Navigation> + use<> {
         // We clone the relevant user id for use in `worker_raw`
         // (We plan for the function which makes the future to have access to the app state, but that hasn't happened yet)
         let user = self.user_id.clone();
@@ -179,14 +184,12 @@ impl Timeline {
 // It also wouldn't need to handle reblogs (the API doesn't provide any way to make a reply status which is a reblog).
 // N.b. API wise, there's no reason that you can't reply to a "reblog" status. TODO: Confirm this
 pub(crate) fn timeline_status(status: &Status) -> impl WidgetView<Timeline, Navigation> + use<> {
-    let (info_line, primary_status) = if let Some(reblog) = status.reblog.as_ref() {
+    let (info_line, primary_status) = status.reblog.as_ref().map_or((None, status), |reblog| {
         (
             Some(prose(format!("🔄 {} boosted", status.account.display_name))),
             &**reblog,
         )
-    } else {
-        (None, status)
-    };
+    });
     // Use a wrapping sized box for margin
     sized_box(
         sized_box(flex_col((info_line, base_status(primary_status))))

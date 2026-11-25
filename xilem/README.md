@@ -73,7 +73,7 @@ There is also a [blog post][xilem_blog] from when Xilem was first introduced.
 A simple incrementing counter application looks like:
 
 ```rust
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::view::{text_button, flex_col, label};
 use xilem::{EventLoop, WindowOptions, WidgetView, Xilem};
 
@@ -86,7 +86,7 @@ fn app_logic(data: &mut Counter) -> impl WidgetView<Counter> + use<> {
     ))
 }
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     let app = Xilem::new_simple(Counter(0), app_logic, WindowOptions::new("Counter app"));
     app.run_in(EventLoop::with_user_event())?;
     Ok(())

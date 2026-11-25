@@ -6,7 +6,7 @@
 use masonry::dpi::LogicalSize;
 use masonry::layout::{AsUnit, Length};
 use masonry_winit::app::{EventLoop, EventLoopBuilder};
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::style::Style as _;
 use xilem::view::{
     FlexSpacer, MainAxisAlignment, checkbox, collapse_panel, flex_col, flex_row, indexed_stack,
@@ -124,7 +124,7 @@ fn app_logic(data: &mut WidgetGallery) -> impl WidgetView<WidgetGallery> + use<>
     .padding(SPACER_WIDTH)
 }
 
-fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
+fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
     // Set up the initial state of the app
     let data = WidgetGallery {
         tab: GalleryTab::Progress,
@@ -149,7 +149,7 @@ fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
 
 // Boilerplate code: Identical across all applications which support Android
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     run(EventLoop::with_user_event())
 }
 #[cfg(target_os = "android")]

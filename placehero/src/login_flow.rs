@@ -14,7 +14,7 @@ use crate::login_flow::login_model::LoginData;
 mod login_model;
 
 pub(crate) struct PlaceheroWithLogin {
-    login: Option<LoginData>,
+    login: anyhow::Result<LoginData>,
 }
 
 impl PlaceheroWithLogin {
@@ -28,9 +28,9 @@ impl PlaceheroWithLogin {
 pub(crate) fn app_logic(
     state: &mut PlaceheroWithLogin,
 ) -> impl WidgetView<PlaceheroWithLogin> + use<> {
-    let Some(_login) = &mut state.login else {
+    if let Err(err) = &state.login {
         return Either::A(flex_col((
-            prose("Error: Placehero not ran using cargo run.")
+            prose(format!("Could not load login data: {err}"))
                 .text_size(25.)
                 .text_alignment(xilem::TextAlign::Center)
                 .flex(CrossAxisAlignment::Center),
@@ -43,7 +43,7 @@ pub(crate) fn app_logic(
             ).text_alignment(xilem::TextAlign::Left)
                 .flex(CrossAxisAlignment::Start),
         )));
-    };
+    }
 
     // If auto-login, login to that account
     // If no accounts, go-to "new account" flow

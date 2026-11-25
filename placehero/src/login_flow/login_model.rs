@@ -47,51 +47,42 @@ impl LoginData {
     ///
     /// See the module level data for information about where the login data is stored.
     ///
-    /// This function returns `None` if we're not executed by using `cargo run`.
+    /// This function returns an error if the login file cannot be loaded or parsed.
     // TODO: Would it be worth loading this async? Probably not.
-    pub(super) fn load() -> Option<Self> {
-        let file_path = login_file_path()?;
+    pub(super) fn load() -> anyhow::Result<Self> {
+        let file_path = login_file_path().ok_or_else(|| {
+            anyhow::anyhow!("Run Placehero with cargo run from its example project")
+        })?;
         let data = match std::fs::read_to_string(&file_path) {
             Ok(data) => data,
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                return Some(Self {
+                return Ok(Self {
                     file_path,
                     servers: BTreeMap::new(),
                     accounts: Vec::new(),
                 });
             }
-            Err(e) => {
-                // TODO: Handle through GUI?
-                panic!("TODO: Handle {e:?} whilst loading user data.")
-            }
+            Err(e) => return Err(e.into()),
         };
-        let stored_data = match serde_json::from_str::<StoredLoginData>(&data) {
-            Ok(stored_data) => stored_data,
-            Err(e) => {
-                // TODO: Handle through GUI?
-                // We intentionally *don't* backup this data.
-                panic!("Stored login data is not valid JSON or not in an expected format: {e:?}");
-            }
-        };
+        let stored_data = serde_json::from_str::<StoredLoginData>(&data).map_err(|_| {
+            anyhow::anyhow!("Stored login data has an invalid format; the file was not changed")
+        })?;
         // We currently only have V0, so just unwrap it.
         let StoredLoginData::V0(mut data) = stored_data;
         data.file_path = file_path;
         for account in &mut data.accounts {
             // This should be completely impossible, but given how scary it is, better to be safe than sorry.
-            assert!(
-                account.oauth_token.is_none(),
-                "OAuth token was unexpectedly saved in login data.\n\
-                This indicates a critical bug in Placehero, please report it at https://github.com/linebender/xilem.\n\
-                You might want to invalidate that token (by logging into the account\
-                (on https://{}) and removing the Placehero app's authorisation.",
-                account.server_url
-            );
+            if account.oauth_token.is_some() {
+                return Err(anyhow::anyhow!(
+                    "Unexpected stored OAuth token; login data was not changed"
+                ));
+            }
             account.oauth_token = account.persisted_token.clone();
         }
-        Some(data)
+        Ok(data)
     }
 
-    pub(super) fn servers(&self) -> &BTreeMap<ArcStr, MastodonServer> {
+    pub(super) const fn servers(&self) -> &BTreeMap<ArcStr, MastodonServer> {
         &self.servers
     }
 }
@@ -112,12 +103,7 @@ fn login_file_path() -> Option<PathBuf> {
             manifest_path = ?path,
             "Placehero code might have been copied to different project."
         );
-        assert!(
-            path.ends_with("placehero"),
-            "Placehero's login data storage is only designed for its use as an example.\n\
-            If you wish to adapt this code for another project, you should ensure that you evaluate where you store the data\
-            (e.g. in a location idiomatic to your target platform, with sufficient token security in place).",
-        );
+        return None;
     }
     path.push("user_data/login.json");
     Some(path)
@@ -201,7 +187,7 @@ enum AccountKind {
 const ALL_REQUIRED_SCOPES: [&str; 2] = ["profile", "read"];
 
 impl AccountKind {
-    fn required_scopes(self) -> &'static [&'static str] {
+    const fn required_scopes(self) -> &'static [&'static str] {
         match self {
             // TODO: Split into finer grained scopes.
             Self::ReadOnly => &["profile", "read"],

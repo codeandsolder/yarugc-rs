@@ -55,17 +55,15 @@ impl Avatars {
                 if let Some(Some(image_)) = this.icons.get(&url) {
                     return Either::A(image(image_.clone()).dims((width, height)));
                 }
-                if !this.icons.contains_key(&url) {
-                    if let Some(requester) = this.requester.as_ref() {
-                        if requester
-                            .send(AvatarRequest {
-                                avatar_url: url.clone(),
-                            })
-                            .is_ok()
-                        {
-                            this.icons.insert(url.clone(), None);
-                        }
-                    }
+                if !this.icons.contains_key(&url)
+                    && let Some(requester) = this.requester.as_ref()
+                    && requester
+                        .send(AvatarRequest {
+                            avatar_url: url.clone(),
+                        })
+                        .is_ok()
+                {
+                    this.icons.insert(url.clone(), None);
                 }
             }
             Either::B(
@@ -149,8 +147,9 @@ impl Avatars {
             ),
             // Convert to the user-defined action type by ignoring any action we actually submit.
             |_, action| match action {
-                MessageResult::Action(_) => MessageResult::RequestRebuild,
-                MessageResult::RequestRebuild => MessageResult::RequestRebuild,
+                MessageResult::Action(()) | MessageResult::RequestRebuild => {
+                    MessageResult::RequestRebuild
+                }
                 MessageResult::Nop => MessageResult::Nop,
                 MessageResult::Stale => MessageResult::Stale,
             },

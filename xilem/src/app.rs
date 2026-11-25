@@ -15,6 +15,47 @@ use crate::core::map_state;
 use crate::window_options::WindowCallbacks;
 use crate::{MasonryDriver, WidgetView, WindowOptions, WindowView};
 
+/// Error during application startup or execution.
+#[derive(Debug)]
+pub enum RunError {
+    /// Failed to create the async runtime.
+    Runtime(std::io::Error),
+    /// The window event loop could not be started or run.
+    EventLoop(EventLoopError),
+}
+
+impl std::fmt::Display for RunError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Runtime(err) => write!(f, "Could not start async runtime: {err}"),
+            Self::EventLoop(err) => err.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for RunError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Runtime(err) => Some(err),
+            Self::EventLoop(err) => Some(err),
+        }
+    }
+}
+
+impl From<std::io::Error> for RunError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Runtime(err)
+    }
+}
+
+impl From<EventLoopError> for RunError {
+    fn from(err: EventLoopError) -> Self {
+        Self::EventLoop(err)
+    }
+}
+
+pub(crate) type StartCallback = Box<dyn FnOnce(&mut MasonryState)>;
+
 // TODO - Rename to `AppLauncher` or something.
 
 /// Runtime builder.
@@ -22,13 +63,13 @@ use crate::{MasonryDriver, WidgetView, WindowOptions, WindowView};
 pub struct Xilem<State, Logic> {
     state: State,
     logic: Logic,
-    runtime: Arc<TokioRuntime>,
+    runtime: Option<Arc<TokioRuntime>>,
     default_properties: Option<DefaultProperties>,
     default_base_color: Color,
     // Font data to include in loading.
     fonts: Vec<Blob<u8>>,
     // Callback invoked once on startup, after windows creation.
-    on_start: Option<Box<dyn FnOnce(&mut MasonryState)>>,
+    on_start: Option<StartCallback>,
 }
 
 /// State type used by [`Xilem::new_simple`].
@@ -62,20 +103,27 @@ impl<State>
     where
         View: WidgetView<State>,
     {
-        Self::new_simple_with_tokio(
-            state,
-            logic,
-            window_options,
-            Arc::new(TokioRuntime::new().unwrap()),
-        )
+        Self::new_simple_inner(state, logic, window_options, None)
     }
 
     /// Same as [`Self::new_simple`] but allows passing an existing tokio runtime.
     pub fn new_simple_with_tokio<View>(
         state: State,
-        mut logic: impl FnMut(&mut State) -> View + 'static,
+        logic: impl FnMut(&mut State) -> View + 'static,
         window_options: WindowOptions<State>,
         tokio_rt: Arc<TokioRuntime>,
+    ) -> Self
+    where
+        View: WidgetView<State>,
+    {
+        Self::new_simple_inner(state, logic, window_options, Some(tokio_rt))
+    }
+
+    fn new_simple_inner<View>(
+        state: State,
+        mut logic: impl FnMut(&mut State) -> View + 'static,
+        window_options: WindowOptions<State>,
+        tokio_rt: Option<Arc<TokioRuntime>>,
     ) -> Self
     where
         View: WidgetView<State>,
@@ -138,10 +186,10 @@ where
     where
         State: AppState,
     {
-        Self::new_inner(state, logic, Arc::new(TokioRuntime::new().unwrap()))
+        Self::new_inner(state, logic, None)
     }
 
-    fn new_inner(state: State, logic: Logic, runtime: Arc<TokioRuntime>) -> Self {
+    fn new_inner(state: State, logic: Logic, runtime: Option<Arc<TokioRuntime>>) -> Self {
         Self {
             state,
             logic,
@@ -170,7 +218,7 @@ where
 
     // TODO: Find better ways to customize default base color.
     /// Sets default base color of windows.
-    pub fn with_default_base_color(mut self, default_base_color: Color) -> Self {
+    pub const fn with_default_base_color(mut self, default_base_color: Color) -> Self {
         self.default_base_color = default_base_color;
         self
     }
@@ -182,34 +230,49 @@ where
     }
 
     /// Run app with custom window attributes.
-    pub fn run_in(mut self, mut event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
+    ///
+    /// # Errors
+    /// Returns an error if the async runtime or event loop cannot be created or run.
+    pub fn run_in(mut self, mut event_loop: EventLoopBuilder) -> Result<(), RunError> {
         let event_loop = event_loop.build()?;
         let proxy = event_loop.create_proxy();
         let default_properties = self
             .default_properties
             .take()
             .unwrap_or_else(default_property_set);
-        let (driver, windows) =
-            self.into_driver_and_windows(move |event| proxy.send_event(event).map_err(|err| err.0));
-        masonry_winit::app::run_with(event_loop, windows, driver, default_properties)
+        let (driver, windows) = self
+            .into_driver_and_windows(move |event| proxy.send_event(event).map_err(|err| err.0))?;
+        Ok(masonry_winit::app::run_with(
+            event_loop,
+            windows,
+            driver,
+            default_properties,
+        )?)
     }
 
     /// Builds the [`MasonryDriver`] and the initial windows.
     ///
     /// The given event sink function sends the given event to the event loop
     /// and returns the given event as an error in case the event loop is stopped.
+    ///
+    /// # Errors
+    /// Returns an I/O error if creating the Tokio runtime fails.
     pub fn into_driver_and_windows(
         self,
         proxy: impl Fn(MasonryUserEvent) -> Result<(), MasonryUserEvent> + Send + Sync + 'static,
-    ) -> (MasonryDriver<State, Logic>, Vec<NewWindow>) {
-        MasonryDriver::new(
+    ) -> std::io::Result<(MasonryDriver<State, Logic>, Vec<NewWindow>)> {
+        let runtime = match self.runtime {
+            Some(runtime) => runtime,
+            None => Arc::new(TokioRuntime::new()?),
+        };
+        Ok(MasonryDriver::new(
             self.state,
             self.logic,
             proxy,
-            self.runtime,
+            runtime,
             self.default_base_color,
             self.fonts,
             self.on_start,
-        )
+        ))
     }
 }

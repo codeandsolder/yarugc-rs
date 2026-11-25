@@ -14,7 +14,7 @@ use masonry::peniko::Color;
 use masonry::properties::types::CrossAxisAlignment;
 use masonry::properties::{ThumbColor, ThumbRadius, TrackColor};
 use winit::dpi::LogicalSize;
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::style::Style;
 use xilem::view::{
     FlexExt, FlexSpacer, MainAxisAlignment, canvas, checkbox, flex, flex_col, flex_row, label,
@@ -164,7 +164,7 @@ fn app_logic(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
 
 // --- Application Entry Point ---
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     let app_data = AppState::default();
     let min_window_size = LogicalSize::new(440., 300.);
     let window_options =

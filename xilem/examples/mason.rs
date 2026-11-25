@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use masonry::layout::{AsUnit, Dim, Length};
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::core::{Resource, fork, provides, run_once, with_context, without_elements};
 use xilem::kurbo::{Axis, Size};
 use xilem::style::Style as _;
@@ -201,7 +201,7 @@ struct AppData {
     observed_size: Size,
 }
 
-pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
+pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
     let data = AppData {
         count: 0,
         text_input_contents: "Not quite a placeholder".into(),
@@ -217,6 +217,6 @@ pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
 
 // Boilerplate code: Identical across all applications which support Android
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     run(EventLoop::with_user_event())
 }

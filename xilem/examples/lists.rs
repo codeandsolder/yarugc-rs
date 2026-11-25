@@ -3,7 +3,7 @@
 
 //! Displaying a variable length list is achieved using a [Vec] `FlexSequence`.
 
-use winit::error::EventLoopError;
+use xilem::RunError;
 use xilem::view::{MainAxisAlignment, flex_col, prose, text_button};
 use xilem::{EventLoop, WidgetView, WindowOptions, Xilem};
 
@@ -28,7 +28,7 @@ fn app_logic(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
     .main_axis_alignment(MainAxisAlignment::Start) // Aligned to the left
 }
 
-fn main() -> Result<(), EventLoopError> {
+fn main() -> Result<(), RunError> {
     let app = Xilem::new_simple(AppState::default(), app_logic, WindowOptions::new("Lists"));
     app.run_in(EventLoop::with_user_event())?;
     Ok(())
