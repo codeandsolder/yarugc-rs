@@ -381,6 +381,17 @@ impl ScrollDirection {
         matches!(self, Self::BottomToTop | Self::RightToLeft)
     }
 
+    // Backward and forward relative to index order, not screen coordinates.
+    const fn access_actions(self) -> (accesskit::Action, accesskit::Action) {
+        use accesskit::Action::{ScrollDown, ScrollLeft, ScrollRight, ScrollUp};
+        match self {
+            Self::TopToBottom => (ScrollUp, ScrollDown),
+            Self::BottomToTop => (ScrollDown, ScrollUp),
+            Self::LeftToRight => (ScrollLeft, ScrollRight),
+            Self::RightToLeft => (ScrollRight, ScrollLeft),
+        }
+    }
+
     fn appropriate(self, delta: f64) -> f64 {
         if self.is_reverse() { -delta } else { delta }
     }
@@ -462,8 +473,10 @@ impl VirtualScroll {
     ///
     /// Adjusts pixel snapping for animations.
     pub fn set_scrolling(this: &mut WidgetMut<'_, Self>, scrolling: bool) {
-        this.widget.scrolling = scrolling;
-        this.ctx.request_render();
+        if this.widget.scrolling != scrolling {
+            this.widget.scrolling = scrolling;
+            this.ctx.request_compose();
+        }
     }
 
     /// Forcefully aligns the top of the item at `idx` with the top of the
@@ -575,11 +588,8 @@ impl Widget for VirtualScroll {
         _props: &mut PropertiesMut<'_>,
         event: &TextEvent,
     ) {
-        // We use an unreasonably large delta (logical pixels) here to allow testing that the case
-        // where the scrolling "jumps" the area is handled correctly.
-        // In future, this manual testing would be achieved through use of a scrollbar.
-        const DELTA_PAGE: f64 = 2000.;
         const DELTA_LINE: f64 = 20.;
+        let page = self.virtual_list.viewport_extent();
 
         // To get to this state, you currently need to press "tab" to focus this widget in the
         // example.
@@ -598,12 +608,12 @@ impl Widget for VirtualScroll {
         // For BottomToTop and RightToLeft, direction.appropriate() negates the delta so that
         // the arrow key which moves visually "forward" still increases the scroll offset correctly.
         let delta = match (key, self.direction.axis()) {
-            (NamedKey::PageDown, _) => Some((DELTA_PAGE, true)),
-            (NamedKey::PageUp, _) => Some((-DELTA_PAGE, true)),
-            (NamedKey::ArrowDown, Axis::Vertical) | (NamedKey::ArrowLeft, Axis::Horizontal) => {
+            (NamedKey::PageDown, _) => Some((page, true)),
+            (NamedKey::PageUp, _) => Some((-page, true)),
+            (NamedKey::ArrowDown, Axis::Vertical) | (NamedKey::ArrowRight, Axis::Horizontal) => {
                 Some((DELTA_LINE, false))
             }
-            (NamedKey::ArrowUp, Axis::Vertical) | (NamedKey::ArrowRight, Axis::Horizontal) => {
+            (NamedKey::ArrowUp, Axis::Vertical) | (NamedKey::ArrowLeft, Axis::Horizontal) => {
                 Some((-DELTA_LINE, false))
             }
             _ => None,
@@ -629,22 +639,23 @@ impl Widget for VirtualScroll {
         _props: &mut PropertiesMut<'_>,
         event: &AccessEvent,
     ) {
-        // TODO: I don't know if this behavior is correct.
-        // Should we consider `dierction` here?
-        let backscroll = match event.action {
-            accesskit::Action::ScrollLeft | accesskit::Action::ScrollUp => true,
-            accesskit::Action::ScrollRight | accesskit::Action::ScrollDown => false,
-            _ => return,
+        let (backward, forward) = self.direction.access_actions();
+        let sign = if event.action == backward {
+            -1.
+        } else if event.action == forward {
+            1.
+        } else {
+            return;
         };
-
         let delta = match event.data {
             Some(accesskit::ActionData::ScrollUnit(accesskit::ScrollUnit::Page)) => {
-                ctx.content_box().size().get_coord(self.direction.axis())
+                self.virtual_list.viewport_extent()
             }
             _ => self.virtual_list.extent_of(self.anchor_index),
         };
 
-        if self.scroll_by(if backscroll { delta } else { -delta }) {
+        self.virtual_list.scroll_by(sign * delta);
+        if self.needs_layout() {
             ctx.request_layout();
         }
         ctx.request_compose();
@@ -821,45 +832,36 @@ impl Widget for VirtualScroll {
             Axis::Horizontal => accesskit::Orientation::Horizontal,
             Axis::Vertical => accesskit::Orientation::Vertical,
         });
-        // Even when we support infinite scroll in both directions, we need
-        // to set the scroll position somehow, so the platform adapter can know when
-        // scrolling happened and fire the appropriate platform event;
-        // this is particularly important on Android. Here, we assume that
-        // in practice, the anchor index is in range for an f64.
-        // TBD: Is there a better way to do this?
-        if self.anchor_index != 0 && self.anchor_index != usize::MAX {
-            let pos = crate::layout_count(self.anchor_index).mul_add(
-                self.virtual_list.model().default_extent(),
-                self.scroll_offset_from_anchor(),
-            );
-            match self.direction.axis() {
-                Axis::Horizontal => node.set_scroll_x(pos),
-                Axis::Vertical => node.set_scroll_y(pos),
+        // Use the same bounds as VirtualList::clamp_scroll_to_content. Unlike a
+        // visible index range, these distinguish partial visibility at the end.
+        let maximum =
+            (self.virtual_list.total_extent() - self.virtual_list.viewport_extent()).max(0.);
+        let offset = self.virtual_list.scroll_offset().clamp(0., maximum);
+        let (minimum, maximum_visual, position) = if self.direction.is_reverse() {
+            (-maximum, 0., -offset)
+        } else {
+            (0., maximum, offset)
+        };
+
+        match self.direction.axis() {
+            Axis::Horizontal => {
+                node.set_scroll_x_min(minimum);
+                node.set_scroll_x_max(maximum_visual);
+                node.set_scroll_x(position);
+            }
+            Axis::Vertical => {
+                node.set_scroll_y_min(minimum);
+                node.set_scroll_y_max(maximum_visual);
+                node.set_scroll_y(position);
             }
         }
-        // not at top
-        if self.anchor_index != 0 || self.scroll_offset_from_anchor() > 0. {
-            node.add_action(match self.direction {
-                ScrollDirection::TopToBottom => accesskit::Action::ScrollUp,
-                ScrollDirection::BottomToTop => accesskit::Action::ScrollDown,
-                ScrollDirection::LeftToRight => accesskit::Action::ScrollLeft,
-                ScrollDirection::RightToLeft => accesskit::Action::ScrollRight,
-            });
+
+        let (backward, forward) = self.direction.access_actions();
+        if offset > 0. {
+            node.add_action(backward);
         }
-        let viewport = self.virtual_list.viewport_strip();
-        let at_end = viewport.end == self.virtual_list.len()
-            && viewport.content_extent
-                - viewport.after_extent
-                - self.virtual_list.scroll_offset()
-                - self.virtual_list.viewport_extent()
-                != 0.;
-        if !at_end {
-            node.add_action(match self.direction {
-                ScrollDirection::TopToBottom => accesskit::Action::ScrollDown,
-                ScrollDirection::BottomToTop => accesskit::Action::ScrollUp,
-                ScrollDirection::LeftToRight => accesskit::Action::ScrollRight,
-                ScrollDirection::RightToLeft => accesskit::Action::ScrollLeft,
-            });
+        if offset < maximum {
+            node.add_action(forward);
         }
         node.add_child_action(accesskit::Action::ScrollIntoView);
     }
@@ -912,6 +914,170 @@ mod tests {
                 return action;
             }
         }
+    }
+
+    fn fixed_size_driver(
+        action: VirtualScrollFetchAction,
+        mut scroll: WidgetMut<'_, VirtualScroll>,
+    ) {
+        use crate::layout::AsUnit;
+        use crate::widgets::SizedBox;
+
+        let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &action).unwrap();
+        for idx in action.removed() {
+            assert!(fetch.remove_child(idx));
+        }
+        for idx in action.added() {
+            assert!(fetch.add_child(
+                idx,
+                SizedBox::empty().size(50.px(), 50.px()).prepare().erased()
+            ));
+        }
+    }
+
+    #[test]
+    fn keyboard_and_accessibility_scroll_follow_visual_direction() {
+        use accesskit::{Action, ActionData, ActionRequest, ScrollUnit, TreeId};
+
+        let cases = [
+            (
+                ScrollDirection::TopToBottom,
+                NamedKey::ArrowDown,
+                NamedKey::ArrowUp,
+                Action::ScrollDown,
+                Action::ScrollUp,
+                1.,
+            ),
+            (
+                ScrollDirection::BottomToTop,
+                NamedKey::ArrowUp,
+                NamedKey::ArrowDown,
+                Action::ScrollUp,
+                Action::ScrollDown,
+                -1.,
+            ),
+            (
+                ScrollDirection::LeftToRight,
+                NamedKey::ArrowRight,
+                NamedKey::ArrowLeft,
+                Action::ScrollRight,
+                Action::ScrollLeft,
+                1.,
+            ),
+            (
+                ScrollDirection::RightToLeft,
+                NamedKey::ArrowLeft,
+                NamedKey::ArrowRight,
+                Action::ScrollLeft,
+                Action::ScrollRight,
+                -1.,
+            ),
+        ];
+        for (direction, forward_key, back_key, forward, back, sign) in cases {
+            let mut harness = TestHarness::create_with_size(
+                test_property_set(),
+                VirtualScroll::new(0, 10)
+                    .with_direction(direction)
+                    .prepare(),
+                (200, 200),
+            );
+            let id = harness.root_id();
+            drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+            let _ = harness.redraw();
+            let node = harness.access_node(id).unwrap();
+            assert!(node.data().supports_action(forward));
+            assert!(!node.data().supports_action(back));
+
+            harness.focus_on(Some(id));
+            harness.process_text_event(&TextEvent::key_down(Key::Named(forward_key)));
+            assert_eq!(
+                harness.root_widget().unwrap().virtual_list.scroll_offset(),
+                20.
+            );
+            let _ = harness.redraw();
+            let node = harness.access_node(id).unwrap();
+            let (position, minimum, maximum) = match direction.axis() {
+                Axis::Vertical => (
+                    node.data().scroll_y(),
+                    node.data().scroll_y_min(),
+                    node.data().scroll_y_max(),
+                ),
+                Axis::Horizontal => (
+                    node.data().scroll_x(),
+                    node.data().scroll_x_min(),
+                    node.data().scroll_x_max(),
+                ),
+            };
+            assert_eq!(position, Some(sign * 20.));
+            assert_eq!(minimum, Some(if sign < 0. { -300. } else { 0. }));
+            assert_eq!(maximum, Some(if sign < 0. { 0. } else { 300. }));
+            assert!(node.data().supports_action(back));
+            harness.process_text_event(&TextEvent::key_down(Key::Named(back_key)));
+            assert_eq!(
+                harness.root_widget().unwrap().virtual_list.scroll_offset(),
+                0.
+            );
+
+            harness.process_access_event(ActionRequest {
+                action: forward,
+                target_tree: TreeId::ROOT,
+                target_node: id.into(),
+                data: Some(ActionData::ScrollUnit(ScrollUnit::Page)),
+            });
+            drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+            assert_eq!(
+                harness.root_widget().unwrap().virtual_list.scroll_offset(),
+                200.
+            );
+
+            harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::PageDown)));
+            drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+            assert_eq!(
+                harness.root_widget().unwrap().virtual_list.scroll_offset(),
+                300.
+            );
+            let _ = harness.redraw();
+            let node = harness.access_node(id).unwrap();
+            assert!(node.data().supports_action(back));
+            assert!(!node.data().supports_action(forward));
+        }
+    }
+
+    #[test]
+    fn ending_scroll_animation_resnaps_existing_child() {
+        use crate::kurbo::Point;
+
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            VirtualScroll::new(0, 10).prepare(),
+            (200, 200),
+        );
+        let id = harness.root_id();
+        drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+        let child_id = harness.root_widget().unwrap().items[&0].id();
+        let origin = |harness: &TestHarness<VirtualScroll>| {
+            harness
+                .get_widget_with_id(child_id)
+                .unwrap()
+                .ctx()
+                .window_transform()
+                * Point::ORIGIN
+        };
+        let original = origin(&harness);
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::set_scrolling(&mut scroll, true);
+                assert!(!scroll.widget.scroll_by(-0.25));
+                scroll.ctx.request_compose();
+            })
+            .unwrap();
+        assert_eq!(origin(&harness), original - Vec2::new(0., 0.25));
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::set_scrolling(&mut scroll, false);
+            })
+            .unwrap();
+        assert_eq!(origin(&harness), original);
     }
 
     #[test]
