@@ -1678,8 +1678,10 @@ impl_context_method!(
         ///
         /// [`is_disabled`]: EventCtx::is_disabled
         pub const fn set_disabled(&mut self, disabled: bool) {
-            self.widget_state.set_needs_update_disabled(true);
-            self.widget_state.set_is_explicitly_disabled(disabled);
+            if self.widget_state.is_explicitly_disabled() != disabled {
+                self.widget_state.set_needs_update_disabled(true);
+                self.widget_state.set_is_explicitly_disabled(disabled);
+            }
         }
 
         /// Sets the local transform for this widget.

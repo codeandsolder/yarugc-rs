@@ -147,6 +147,11 @@ impl PathStatus {
                 Self::Hovered => Update::ChildHoveredChanged(value),
                 Self::Focused => Update::ChildFocusChanged(value),
             };
+            match self {
+                Self::Active => ctx.widget_state.set_has_active(value),
+                Self::Hovered => ctx.widget_state.set_has_hovered(value),
+                Self::Focused => ctx.widget_state.set_has_focus_target(value),
+            }
             widget.update(ctx, props, &event);
             if matches!(self, Self::Focused) {
                 ctx.widget_state
@@ -156,11 +161,6 @@ impl PathStatus {
                 ctx.widget_state.set_request_update_props(true);
                 ctx.widget_state.set_needs_update_props(true);
             }
-        }
-        match self {
-            Self::Active => ctx.widget_state.set_has_active(value),
-            Self::Hovered => ctx.widget_state.set_has_hovered(value),
-            Self::Focused => ctx.widget_state.set_has_focus_target(value),
         }
     }
 }
@@ -435,7 +435,9 @@ fn update_disabled_for_widget(
         return;
     }
 
+    state.set_needs_update_disabled(false);
     if disabled != state.is_disabled() {
+        state.set_is_disabled(disabled);
         notify_inherited_state_change(
             global_state,
             default_properties,
@@ -445,7 +447,6 @@ fn update_disabled_for_widget(
             (widget, properties, class_set),
             &Update::DisabledChanged(disabled),
         );
-        state.set_is_disabled(disabled);
         state.class_diff.pseudo.set(PseudoClass::Disabled, disabled);
         state.set_request_update_props(true);
         state.set_needs_update_props(true);
@@ -453,8 +454,6 @@ fn update_disabled_for_widget(
         state.set_request_accessibility(true);
         state.set_needs_accessibility(true);
     }
-
-    state.set_needs_update_disabled(false);
 
     let parent_state = state;
     recurse_on_children(id, widget, children, |mut node| {
@@ -521,7 +520,9 @@ fn update_stashed_for_widget(
         return;
     }
 
+    state.set_needs_update_stashed(false);
     if stashed != state.is_stashed() {
+        state.set_is_stashed(stashed);
         notify_inherited_state_change(
             global_state,
             default_properties,
@@ -531,7 +532,6 @@ fn update_stashed_for_widget(
             (widget, properties, class_set),
             &Update::StashedChanged(stashed),
         );
-        state.set_is_stashed(stashed);
         state.set_needs_update_focusable(true);
 
         // Items may have been changed while they were stashed in ways that require a
@@ -546,10 +546,9 @@ fn update_stashed_for_widget(
         }
     }
 
-    state.set_needs_update_stashed(false);
-
     let parent_state = state;
     recurse_on_children(id, widget, children, |mut node| {
+        let was_stashed = node.item.state.is_stashed();
         update_stashed_for_widget(
             global_state,
             default_properties,
@@ -557,12 +556,26 @@ fn update_stashed_for_widget(
             node.reborrow_mut(),
             stashed,
         );
+        if was_stashed != node.item.state.is_stashed() {
+            // The parent owns the visible child list and the union of its
+            // children's paint bounds. A visibility change affects both.
+            parent_state.set_request_accessibility(true);
+            parent_state.set_needs_accessibility(true);
+            parent_state.set_needs_paint(true);
+            parent_state.set_needs_compose(true);
+        }
         parent_state.merge_up(&node.item.state);
     });
 }
 
 pub(crate) fn run_update_stashed_pass(root: &mut RenderRoot) {
     let _span = info_span!("update_stashed").entered();
+    if root
+        .root_state()
+        .is_some_and(WidgetState::needs_update_stashed)
+    {
+        root.global_state.set_needs_pointer_pass(true);
+    }
 
     let Some(root_node) = root.widget_arena.nodes.find_mut(root.root_id()) else {
         return;
@@ -768,6 +781,7 @@ pub(crate) fn run_update_focus_pass(root: &mut RenderRoot) {
     }
 
     let next_focused = root.global_state.next_focused_widget;
+    root.global_state.focused_widget = next_focused;
 
     // "Focused path" means the focused widget, and all its parents.
     let prev_focused_path = std::mem::take(&mut root.global_state.focused_path);
@@ -808,7 +822,6 @@ pub(crate) fn run_update_focus_pass(root: &mut RenderRoot) {
         root.global_state.focus_anchor = next_focused;
     }
 
-    root.global_state.focused_widget = next_focused;
     root.global_state.focused_path = next_focused_path;
 }
 

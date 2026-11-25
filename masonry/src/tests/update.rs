@@ -1108,3 +1108,40 @@ fn property_change_callbacks_preserve_followup_invalidations() {
         white
     );
 }
+
+#[test]
+fn status_callbacks_observe_the_new_state() {
+    let tag = WidgetTag::named("status");
+    let child = ModularWidget::new(())
+        .accepts_focus(true)
+        .measure_fn(|_, _, _, _, _, _| 20.px())
+        .update_fn(|_, ctx, _, event| match event {
+            Update::DisabledChanged(value) => assert_eq!(ctx.is_disabled(), *value),
+            Update::StashedChanged(value) => assert_eq!(ctx.is_stashed(), *value),
+            Update::ChildFocusChanged(value) => assert_eq!(ctx.has_focus_target(), *value),
+            Update::FocusChanged(value) => assert_eq!(ctx.is_focus_target(), *value),
+            Update::ChildHoveredChanged(value) => assert_eq!(ctx.has_hovered(), *value),
+            Update::HoveredChanged(value) => assert_eq!(ctx.is_hovered(), *value),
+            _ => {}
+        })
+        .prepare()
+        .with_tag(tag);
+    let mut harness = TestHarness::create(
+        test_property_set(),
+        ModularWidget::new_multi_parent(vec![child]).prepare(),
+    );
+    let id = harness.get_widget(tag).unwrap().id();
+    harness.focus_on(Some(id));
+    harness.mouse_move_to(id).unwrap();
+    harness.set_disabled(tag, true).unwrap();
+    harness.set_disabled(tag, false).unwrap();
+    harness
+        .edit_root_widget(|mut parent| parent.ctx.set_stashed(&parent.widget.state[0], true))
+        .unwrap();
+    assert!(!harness.get_widget(tag).unwrap().ctx().is_hovered());
+    harness
+        .edit_root_widget(|mut parent| parent.ctx.set_stashed(&parent.widget.state[0], false))
+        .unwrap();
+    harness.focus_on(Some(id));
+    harness.focus_on(None);
+}
