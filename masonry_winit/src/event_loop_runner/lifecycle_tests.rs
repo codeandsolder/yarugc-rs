@@ -163,6 +163,17 @@ impl Lifecycle {
             "device configuration must stay frozen after initial allocation"
         );
 
+        self.exercise_replacement_device(event_loop, first, second, old, &device);
+    }
+
+    fn exercise_replacement_device(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        first: WindowId,
+        second: WindowId,
+        old: GpuDeviceId,
+        device: &wgpu::Device,
+    ) {
         let new = self.prepare_surface(first);
         assert_ne!(new, old, "replacement device must have a fresh identity");
         assert_eq!(
@@ -181,7 +192,7 @@ impl Lifecycle {
             "replacement device must be announced exactly once"
         );
         assert_ne!(
-            self.driver.devices[1], device,
+            &self.driver.devices[1], device,
             "replacement must use a distinct WGPU device"
         );
         // Late duplicate loss notification cannot discard replacement surfaces.
@@ -287,6 +298,10 @@ impl Lifecycle {
             "runtime base-color update must take effect"
         );
 
+        self.exercise_suspension(event_loop, live);
+    }
+
+    fn exercise_suspension(&mut self, event_loop: &ActiveEventLoop, live: WindowId) {
         self.state.handle_suspended(event_loop);
         let pending = hidden_window();
         let pending_id = pending.id;
