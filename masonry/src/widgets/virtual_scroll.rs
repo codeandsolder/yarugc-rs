@@ -186,6 +186,10 @@ pub struct VirtualScroll {
     /// The single outstanding request, identified by its shared allocation.
     pending_fetch: Option<Arc<FetchRequest>>,
 
+    // The strip used by the last layout, independent of what the driver has
+    // acknowledged. Scrolling within one large item can change its bounds.
+    laid_out_range: Range<usize>,
+
     items: BTreeMap<usize, WidgetPod<dyn Widget>>,
 
     anchor_index: usize,
@@ -204,6 +208,7 @@ impl std::fmt::Debug for VirtualScroll {
             .field("virtual_list", &self.virtual_list)
             .field("active_range", &self.active_range)
             .field("pending_fetch", &self.pending_fetch)
+            .field("laid_out_range", &self.laid_out_range)
             .field("items", &self.items.keys().collect::<Vec<_>>())
             .field("anchor_index", &self.anchor_index)
             .field("range_in_viewport", &self.range_in_viewport)
@@ -241,6 +246,7 @@ impl VirtualScroll {
             // This range starts intentionally empty, as no items have been loaded.
             active_range: initial_anchor..initial_anchor,
             pending_fetch: None,
+            laid_out_range: initial_anchor..initial_anchor,
             items: BTreeMap::default(),
             anchor_index: initial_anchor,
             range_in_viewport: initial_anchor..initial_anchor,
@@ -260,6 +266,7 @@ impl VirtualScroll {
         self.virtual_list
             .scroll_to_index(self.anchor_index, ScrollAlign::Start);
         self.active_range = self.anchor_index..self.anchor_index;
+        self.laid_out_range = self.active_range.clone();
         self.range_in_viewport = self.active_range.clone();
         self
     }
@@ -326,9 +333,7 @@ impl VirtualScroll {
         }
     }
 
-    /// Ensures that the correct follow-up passes are requested after the scroll position changes.
-    ///
-    /// `size` is the current viewport's size.
+    /// Layout is necessary when the coordinate anchor or materialized strip changes.
     fn needs_layout(&mut self) -> bool {
         self.virtual_list.clamp_scroll_to_content();
 
@@ -336,6 +341,7 @@ impl VirtualScroll {
         let offset_of_anchor = self.virtual_list.offset_of(self.anchor_index);
         scroll_offset < offset_of_anchor
             || scroll_offset >= offset_of_anchor + self.virtual_list.extent_of(self.anchor_index)
+            || self.virtual_list.materialized_range() != self.laid_out_range
     }
 
     fn scroll_offset_from_anchor(&mut self) -> f64 {
@@ -765,10 +771,17 @@ impl Widget for VirtualScroll {
         // Calculate the sizes of all children
         self.virtual_list.model_mut().clear();
         let mut sizes = Vec::with_capacity(self.items.len());
+        let len = self.virtual_list.len();
         for (idx, child) in &self.items {
+            // A shrink can leave old widgets registered while their teardown
+            // request is in flight. They must not affect the size model.
+            if *idx >= len {
+                sizes.push(None);
+                continue;
+            }
             let auto_size = SizeDef::fit(size).with(self.direction.axis(), LenDef::MaxContent);
             let child_size = ctx.compute_size(child, auto_size, size.into());
-            sizes.push(child_size);
+            sizes.push(Some(child_size));
             let child_length = child_size.get_coord(self.direction.axis());
             self.virtual_list.model_mut().set_extent(*idx, child_length);
             total_children_length += child_length;
@@ -800,6 +813,7 @@ impl Widget for VirtualScroll {
         // Keep one outstanding request until the driver accepts it. Frame count
         // is not a timeout: delayed drivers may legitimately take many redraws.
         let materialized = self.virtual_list.materialized_range();
+        self.laid_out_range = materialized.clone();
         if self.pending_fetch.is_none() && self.active_range != materialized {
             let request = Arc::new(FetchRequest {
                 old_active: self.active_range.clone(),
@@ -814,9 +828,9 @@ impl Widget for VirtualScroll {
         // place children
         let offset_of_anchor = self.virtual_list.offset_of(self.anchor_index);
         for ((idx, child), child_size) in self.items.iter_mut().zip(sizes) {
-            let visible = materialized.contains(idx);
-            ctx.set_stashed(child, !visible);
-            if visible {
+            let child_size = child_size.filter(|_| materialized.contains(idx));
+            ctx.set_stashed(child, child_size.is_none());
+            if let Some(child_size) = child_size {
                 ctx.run_layout(child, child_size);
                 let pos = self.virtual_list.offset_of(*idx) - offset_of_anchor;
                 let placed_pos = if self.direction.is_reverse() {
@@ -840,7 +854,7 @@ impl Widget for VirtualScroll {
             -self.direction.appropriate(offset)
         };
         let translation = self.direction.axis().pack_vec2(offset, 0.);
-        for (_, child) in self.items.range_mut(self.active_range.clone()) {
+        for (_, child) in self.items.range_mut(self.laid_out_range.clone()) {
             if self.scrolling {
                 ctx.set_animated_child_scroll_translation(child, translation);
             } else {
@@ -1184,6 +1198,62 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn intra_item_scroll_fetches_newly_materialized_neighbors() {
+        use crate::layout::AsUnit;
+        use crate::widgets::SizedBox;
+
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            VirtualScroll::new(0, 100).prepare(),
+            (100, 100),
+        );
+        let id = harness.root_id();
+        let driver = |action: VirtualScrollFetchAction,
+                      mut scroll: WidgetMut<'_, VirtualScroll>| {
+            let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &action).unwrap();
+            for idx in action.removed() {
+                assert!(fetch.remove_child(idx));
+            }
+            for idx in action.added() {
+                let height = if idx == 0 { 1000.px() } else { 50.px() };
+                assert!(fetch.add_child(
+                    idx,
+                    SizedBox::empty().size(50.px(), height).prepare().erased()
+                ));
+            }
+        };
+        drive_to_fixpoint(&mut harness, id, driver);
+        assert_eq!(
+            harness.root_widget().unwrap().active_range,
+            0..1,
+            "large first item initially covers the materialized strip"
+        );
+        harness
+            .edit_root_widget(|mut scroll| {
+                assert!(VirtualScroll::scroll_by(&mut scroll, 800.0));
+            })
+            .unwrap();
+        let request = next_fetch(&mut harness);
+        assert!(
+            request.target().contains(&1),
+            "newly materialized neighbor must be requested without crossing the anchor"
+        );
+        assert_eq!(
+            harness.root_widget().unwrap().anchor_index,
+            0,
+            "scroll remains inside the first item"
+        );
+        harness
+            .edit_root_widget(|scroll| driver(request, scroll))
+            .unwrap();
+        drive_to_fixpoint(&mut harness, id, driver);
+        assert!(
+            harness.root_widget().unwrap().items.contains_key(&1),
+            "neighbor is materialized before reaching it"
+        );
     }
 
     #[test]
