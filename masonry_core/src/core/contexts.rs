@@ -1652,6 +1652,23 @@ impl_context_method!(
             self.global_state.set_needs_pointer_pass(true);
         }
 
+        /// Changes whether this widget participates in sequential keyboard focus.
+        ///
+        /// The initial value comes from [`Widget::accepts_focus`]. Disabling
+        /// the tab stop also relinquishes any focus currently assigned to
+        /// this widget, without affecting independently focused descendants.
+        pub fn set_tab_focusable(&mut self, focusable: bool) {
+            if self.widget_state.accepts_focus() == focusable {
+                return;
+            }
+            self.widget_state.set_accepts_focus(focusable);
+            self.widget_state.set_needs_update_focusable(true);
+            self.request_accessibility_update();
+            if !focusable && self.global_state.next_focused_widget == Some(self.widget_state.id) {
+                self.global_state.next_focused_widget = None;
+            }
+        }
+
         /// Indicates that your children have changed.
         ///
         /// Widgets must call this method after adding a new child.

@@ -498,7 +498,14 @@ pub(crate) fn run_on_access_event_pass(
 
     // Handle focus events
     match event.action {
-        accesskit::Action::Focus if !handled.is_handled() && root.is_still_interactive(target) => {
+        accesskit::Action::Focus
+            if !handled.is_handled()
+                && root.is_still_interactive(target)
+                && root
+                    .widget_arena
+                    .get_state(target)
+                    .is_some_and(|state| state.accepts_focus()) =>
+        {
             root.global_state.next_focused_widget = Some(target);
             handled = Handled::Yes;
         }
