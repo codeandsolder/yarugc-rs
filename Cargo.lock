@@ -2774,7 +2774,7 @@ dependencies = [
  "imaging_wgpu",
  "kurbo",
  "peniko",
- "thiserror 2.0.18",
+ "thiserror 2.0.21",
  "wgpu",
 ]
 
