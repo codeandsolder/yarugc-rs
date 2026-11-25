@@ -24,6 +24,7 @@ pub struct VirtualScroll<State, Action, ChildrenViews, F, G> {
     anchor_index: Option<usize>,
     len: usize,
     viewport: ViewportRange,
+    extent_revision: u64,
     direction: ScrollDirection,
     scrolling: bool,
     on_scroll: G,
@@ -68,6 +69,7 @@ where
         anchor_index: None,
         len,
         viewport: ViewportRange::FULL,
+        extent_revision: 0,
         direction: ScrollDirection::TopToBottom,
         scrolling: false,
         on_scroll: private::do_nothing::<State, Action>,
@@ -96,6 +98,7 @@ where
         anchor_index: None,
         len: usize::MAX,
         viewport: ViewportRange::FULL,
+        extent_revision: 0,
         direction: ScrollDirection::TopToBottom,
         scrolling: false,
         on_scroll: private::do_nothing::<State, Action>,
@@ -116,6 +119,16 @@ impl<State, Action, ChildrenViews, F, G> VirtualScroll<State, Action, ChildrenVi
     #[must_use = "Use the configured view."]
     pub const fn viewport(mut self, viewport: ViewportRange) -> Self {
         self.viewport = viewport;
+        self
+    }
+
+    /// Changes the revision of the underlying item collection.
+    ///
+    /// Change this value when replacing or reordering data to discard remembered
+    /// size estimates for unmaterialized items. Retained items are remeasured.
+    #[must_use = "Use the configured view."]
+    pub const fn extent_revision(mut self, revision: u64) -> Self {
+        self.extent_revision = revision;
         self
     }
 
@@ -145,6 +158,7 @@ impl<State, Action, ChildrenViews, F, G> VirtualScroll<State, Action, ChildrenVi
             anchor_index: self.anchor_index,
             len: self.len,
             viewport: self.viewport,
+            extent_revision: self.extent_revision,
             direction: self.direction,
             scrolling: self.scrolling,
             on_scroll,
@@ -290,6 +304,10 @@ where
             && let Some(idx) = self.anchor_index
         {
             widgets::VirtualScroll::scroll_to(&mut element, idx);
+        }
+
+        if self.extent_revision != prev.extent_revision {
+            widgets::VirtualScroll::invalidate_extents(&mut element);
         }
 
         if self.viewport != prev.viewport {

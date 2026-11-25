@@ -18,6 +18,9 @@ use crate::dpi::PhysicalPosition;
 use crate::kurbo::{Axis, Size};
 use crate::layout::{LenDef, LenReq, Length, SizeDef};
 
+mod extent_cache;
+use extent_cache::ExtentCache;
+
 /// Request to update the materialized children of a [`VirtualScroll`].
 ///
 /// Use [`VirtualScroll::begin_fetch`] to accept the request before modifying
@@ -220,6 +223,7 @@ impl Default for ViewportRange {
 /// touch screens).
 pub struct VirtualScroll {
     virtual_list: VirtualList<SparsePrefixSumExtentModel<f64>>,
+    extent_cache: ExtentCache,
 
     /// The range in the id space which is "active", i.e. which the virtual scrolling has decided
     /// are in the range of the viewport and should be shown on screen.
@@ -250,6 +254,7 @@ impl std::fmt::Debug for VirtualScroll {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VirtualScroll")
             .field("virtual_list", &self.virtual_list)
+            .field("extent_cache", &self.extent_cache)
             .field("active_range", &self.active_range)
             .field("pending_fetch", &self.pending_fetch)
             .field("laid_out_range", &self.laid_out_range)
@@ -286,6 +291,7 @@ impl VirtualScroll {
         virtual_list.scroll_to_index(initial_anchor, ScrollAlign::Start);
         Self {
             virtual_list,
+            extent_cache: ExtentCache::default(),
             // This range starts intentionally empty, as no items have been loaded.
             active_range: initial_anchor..initial_anchor,
             pending_fetch: None,
@@ -382,6 +388,22 @@ impl VirtualScroll {
         scroll_offset < offset_of_anchor
             || scroll_offset >= offset_of_anchor + self.virtual_list.extent_of(self.anchor_index)
             || self.virtual_list.materialized_range() != self.laid_out_range
+    }
+
+    // Before changing the extent model, capture the actual logical item under
+    // the viewport, not the placement anchor from the previous layout.
+    fn current_anchor(&mut self) -> (usize, f64) {
+        if self.virtual_list.is_empty() {
+            return (0, 0.);
+        }
+        let offset = self.virtual_list.scroll_offset();
+        let previous = self.anchor_index.min(self.virtual_list.len() - 1);
+        let relative = offset - self.virtual_list.offset_of(previous);
+        if relative >= 0. && (relative == 0. || relative < self.virtual_list.extent_of(previous)) {
+            return (previous, relative);
+        }
+        let index = self.virtual_list.index_at_offset(offset);
+        (index, (offset - self.virtual_list.offset_of(index)).max(0.))
     }
 
     fn scroll_offset_from_anchor(&mut self) -> f64 {
@@ -508,7 +530,16 @@ impl VirtualScroll {
         if this.widget.virtual_list.len() == len {
             return;
         }
-        this.widget.virtual_list.set_len(len);
+        let state = &mut *this.widget;
+        let (anchor, _) = state.current_anchor();
+        state.virtual_list.set_len(len);
+        state.extent_cache.truncate(len);
+        if len == 0 || anchor >= len {
+            state.anchor_index = len.saturating_sub(1);
+            state
+                .virtual_list
+                .scroll_to_index(state.anchor_index, ScrollAlign::Start);
+        }
         if this
             .widget
             .pending_fetch
@@ -517,6 +548,15 @@ impl VirtualScroll {
         {
             this.widget.pending_fetch = None;
         }
+        this.ctx.request_layout();
+    }
+
+    /// Discards remembered estimates for unmaterialized content.
+    ///
+    /// Use this when the underlying item collection changes without changing
+    /// its length, such as after reordering or replacing all items.
+    pub fn invalidate_extents(this: &mut WidgetMut<'_, Self>) {
+        this.widget.extent_cache.invalidate();
         this.ctx.request_layout();
     }
 
@@ -804,36 +844,33 @@ impl Widget for VirtualScroll {
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         ctx.set_clip_path(size.to_rect());
 
-        let offset_of_anchor_re_viewport = self.scroll_offset_from_anchor();
+        let (anchor, intra_item_offset) = self.current_anchor();
+        let maximum =
+            (self.virtual_list.total_extent() - self.virtual_list.viewport_extent()).max(0.);
+        let at_end = maximum > 0. && self.virtual_list.scroll_offset() >= maximum;
 
-        let mut total_children_length = 0.;
-        let mut total_children_count = 0_usize;
-
-        // Calculate the sizes of all children
-        self.virtual_list.model_mut().clear();
-        let mut sizes = Vec::with_capacity(self.items.len());
+        // Measure registered children under the current constraints. The
+        // core already caches child measurement; only changed main-axis
+        // extents should invalidate the virtual list's prefix/strip caches.
+        let axis = self.direction.axis();
+        let auto_size = SizeDef::fit(size).with(axis, LenDef::MaxContent);
         let len = self.virtual_list.len();
-        for (idx, child) in &self.items {
-            // A shrink can leave old widgets registered while their teardown
-            // request is in flight. They must not affect the size model.
-            if *idx >= len {
-                sizes.push(None);
-                continue;
-            }
-            let auto_size = SizeDef::fit(size).with(self.direction.axis(), LenDef::MaxContent);
-            let child_size = ctx.compute_size(child, auto_size, size.into());
-            sizes.push(Some(child_size));
-            let child_length = child_size.get_coord(self.direction.axis());
-            self.virtual_list.model_mut().set_extent(*idx, child_length);
-            total_children_length += child_length;
-            total_children_count += 1;
-        }
-
-        if total_children_length != 0. && total_children_count != 0 {
-            self.virtual_list.model_mut().set_default_extent(
-                total_children_length / crate::layout_count(total_children_count),
-            );
-        }
+        let sizes: Vec<_> = self
+            .items
+            .iter()
+            .map(|(&index, child)| {
+                // Pending driver teardown may leave out-of-range children registered.
+                (index < len).then(|| ctx.compute_size(child, auto_size, size.into()))
+            })
+            .collect();
+        let live = self
+            .items
+            .keys()
+            .copied()
+            .zip(sizes.iter())
+            .filter_map(|(index, size)| size.map(|size| (index, size.get_coord(axis))));
+        self.extent_cache
+            .sync(&mut self.virtual_list, (axis, size), anchor, live);
 
         let main_axis_length = size.get_coord(self.direction.axis());
         let start_at = self.viewport.start() * main_axis_length;
@@ -844,12 +881,20 @@ impl Widget for VirtualScroll {
             main_axis_length.mul_add(3., -end_at),
         );
 
-        let offset_of_anchor = self.virtual_list.offset_of(self.anchor_index);
-        self.virtual_list
-            .set_scroll_offset(offset_of_anchor_re_viewport + offset_of_anchor);
+        let offset = if at_end {
+            (self.virtual_list.total_extent() - self.virtual_list.viewport_extent()).max(0.)
+        } else {
+            self.virtual_list.offset_of(anchor)
+                + intra_item_offset.min(self.virtual_list.extent_of(anchor))
+        };
+        self.virtual_list.set_scroll_offset(offset);
         self.virtual_list.clamp_scroll_to_content();
 
-        self.anchor_index = self.virtual_list.viewport_range().start;
+        self.anchor_index = self
+            .virtual_list
+            .viewport_range()
+            .start
+            .min(len.saturating_sub(1));
 
         // Keep one outstanding request until the driver accepts it. Frame count
         // is not a timeout: delayed drivers may legitimately take many redraws.
@@ -1393,6 +1438,61 @@ mod tests {
             harness.root_widget().unwrap().range_in_viewport.is_empty(),
             "empty list has no visible items"
         );
+    }
+
+    #[test]
+    fn changing_extent_estimates_preserves_the_actual_scroll_anchor() {
+        use crate::layout::AsUnit;
+        use crate::widgets::SizedBox;
+
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            VirtualScroll::new(0, 1000).prepare(),
+            (100, 200),
+        );
+        let id = harness.root_id();
+        let driver = |action: VirtualScrollFetchAction,
+                      mut scroll: WidgetMut<'_, VirtualScroll>| {
+            let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &action).unwrap();
+            for index in action.removed() {
+                assert!(fetch.remove_child(index));
+            }
+            for index in action.added() {
+                let height = if index < 15 { 50. } else { 120. };
+                assert!(
+                    fetch.add_child(
+                        index,
+                        SizedBox::empty()
+                            .size(50.px(), height.px())
+                            .prepare()
+                            .erased()
+                    )
+                );
+            }
+        };
+        drive_to_fixpoint(&mut harness, id, driver);
+        harness
+            .edit_root_widget(|mut scroll| {
+                assert!(VirtualScroll::scroll_by(&mut scroll, 1025.));
+            })
+            .unwrap();
+        drive_to_fixpoint(&mut harness, id, driver);
+        harness
+            .edit_root_widget(|mut scroll| {
+                let (index, offset) = scroll.widget.current_anchor();
+                assert_eq!(index, 20);
+                assert!((offset - 25.).abs() < 1e-8);
+                VirtualScroll::invalidate_extents(&mut scroll);
+            })
+            .unwrap();
+        drive_to_fixpoint(&mut harness, id, driver);
+        harness
+            .edit_root_widget(|mut scroll| {
+                let (index, offset) = scroll.widget.current_anchor();
+                assert_eq!(index, 20);
+                assert!((offset - 25.).abs() < 1e-8);
+            })
+            .unwrap();
     }
 
     #[test]
