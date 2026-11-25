@@ -405,46 +405,6 @@ fn select_present_mode(supported: &[PresentMode], requested: PresentMode) -> Pre
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn presentation_fallback_preserves_supported_preferences_and_tearing_policy() {
-        let all = [
-            PresentMode::AutoVsync,
-            PresentMode::AutoNoVsync,
-            PresentMode::Fifo,
-            PresentMode::FifoRelaxed,
-            PresentMode::Immediate,
-            PresentMode::Mailbox,
-        ];
-        for requested in all {
-            assert_eq!(select_present_mode(&all, requested), requested);
-        }
-        let supported = [PresentMode::Fifo];
-        for requested in [
-            PresentMode::AutoVsync,
-            PresentMode::AutoNoVsync,
-            PresentMode::Fifo,
-        ] {
-            assert_eq!(select_present_mode(&supported, requested), requested);
-        }
-        assert_eq!(
-            select_present_mode(&supported, PresentMode::Immediate),
-            PresentMode::AutoNoVsync
-        );
-        assert_eq!(
-            select_present_mode(&supported, PresentMode::Mailbox),
-            PresentMode::Fifo
-        );
-        assert_eq!(
-            select_present_mode(&supported, PresentMode::FifoRelaxed),
-            PresentMode::Fifo
-        );
-    }
-}
-
 /// Masonry renders into an intermediate texture because surface textures are not suitable for all
 /// backend paths directly.
 ///
@@ -507,6 +467,41 @@ impl std::fmt::Debug for RenderSurface<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn presentation_fallback_preserves_supported_preferences_and_tearing_policy() {
+        let all = [
+            PresentMode::AutoVsync,
+            PresentMode::AutoNoVsync,
+            PresentMode::Fifo,
+            PresentMode::FifoRelaxed,
+            PresentMode::Immediate,
+            PresentMode::Mailbox,
+        ];
+        for requested in all {
+            assert_eq!(select_present_mode(&all, requested), requested);
+        }
+        let supported = [PresentMode::Fifo];
+        for requested in [
+            PresentMode::AutoVsync,
+            PresentMode::AutoNoVsync,
+            PresentMode::Fifo,
+        ] {
+            assert_eq!(select_present_mode(&supported, requested), requested);
+        }
+        assert_eq!(
+            select_present_mode(&supported, PresentMode::Immediate),
+            PresentMode::AutoNoVsync
+        );
+        assert_eq!(
+            select_present_mode(&supported, PresentMode::Mailbox),
+            PresentMode::Fifo
+        );
+        assert_eq!(
+            select_present_mode(&supported, PresentMode::FifoRelaxed),
+            PresentMode::Fifo
+        );
+    }
 
     #[test]
     fn automatic_modes_fall_back_and_explicit_modes_require_support() {

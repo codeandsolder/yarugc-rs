@@ -794,12 +794,7 @@ fn accessibility_activation_rejects_hidden_and_disabled_targets_without_bubbling
     let mut harness = TestHarness::create(test_property_set(), parent);
 
     harness.accessibility_click_on(id);
-    assert!(
-        harness
-            .pop_action::<crate::widgets::ButtonPress>()
-            .unwrap()
-            .is_some()
-    );
+    assert!(harness.pop_action::<ButtonPress>().unwrap().is_some());
     assert!(harness.pop_action::<()>().unwrap().is_some());
 
     harness

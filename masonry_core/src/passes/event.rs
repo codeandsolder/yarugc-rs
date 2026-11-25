@@ -143,9 +143,11 @@ impl PointerPress {
     // Capture owns a single pointer/button interaction. Identity-free cancellation
     // is a window-wide synthetic cancel; an unrelated contact is not.
     fn accepts_event(self, event: &PointerEvent) -> bool {
-        let same_pointer = |pointer: &PointerInfo| match self.pointer.pointer_id {
-            Some(id) => pointer.pointer_id == Some(id),
-            None => *pointer == self.pointer,
+        let same_pointer = |pointer: &PointerInfo| {
+            self.pointer.pointer_id.map_or_else(
+                || *pointer == self.pointer,
+                |id| pointer.pointer_id == Some(id),
+            )
         };
         match event {
             PointerEvent::Down(_) => false,
