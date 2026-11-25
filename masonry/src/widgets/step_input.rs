@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::any::TypeId;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 use accesskit::{Action, Node, Role};
 use masonry_core::anymore::AnyDebug;
@@ -21,6 +21,7 @@ use crate::peniko::Gradient;
 use crate::properties::{BackwardColor, ContentColor, ForwardColor, HeatColor, StepInputStyle};
 use crate::theme;
 use crate::widgets::Label;
+use crate::widgets::numeric_grid::{EXACT_GRID_LIMIT, step_sum};
 
 /// How much accidental sliding is allowed to still consider it a simple click.
 ///
@@ -163,16 +164,13 @@ fn nonnegative_steps(value: f64) -> u64 {
     }
 }
 
-#[expect(
-    clippy::cast_sign_loss,
-    reason = "Decimal precision is bounded to a nonnegative finite range"
-)]
-fn decimal_precision(step: f64) -> usize {
-    if step.is_finite() && step > 0. && step < 1. {
-        (-step.log10().floor()).clamp(0., 324.) as usize
-    } else {
-        0
-    }
+// Float Display uses the shortest round-tripping decimal representation in
+// fixed notation. Unlike log10, this retains all digits in steps such as
+// 0.25 or 2.5, without widening f32 into a longer f64 decimal.
+fn decimal_precision(step: impl Display) -> usize {
+    step.to_string()
+        .split_once('.')
+        .map_or(0, |(_, fraction)| fraction.len())
 }
 
 #[derive(Clone, Copy)]
@@ -209,9 +207,17 @@ pub type DisplayFn<T> = Box<dyn Fn(StepState<T>) -> String>;
 
 /// Data that can be stepped through in a [`StepInput`].
 pub trait Steppable: Debug + Copy + Clone + PartialEq + PartialOrd + Send + Sync + 'static {
+    /// Whether this value belongs to the valid ordered numeric domain.
+    /// Floating implementations must reject NaN and infinities.
+    fn is_valid(self) -> bool;
+
+    /// The additive identity of the numeric domain.
+    fn zero() -> Self;
+
     /// Returns `self` with the given number of steps added.
     ///
-    /// The addition needs to be saturating and not overflow.
+    /// The addition needs to be saturating and not overflow. The receiver,
+    /// step and snap must be valid, with positive step and snap intervals.
     ///
     /// This method is always called on the base value,
     /// so there is no risk of cumulative addings causing errors.
@@ -294,6 +300,10 @@ macro_rules! impl_steppable_int {
     ($(($t:ty, $u:ty, $s:tt)),+) => {
         $(
             impl Steppable for $t {
+                fn is_valid(self) -> bool { true }
+
+                fn zero() -> Self { 0 }
+
                 fn add_steps(&self, step: Self, count: i64, snap: Option<Self>) -> Self {
                     // Add the steps
                     // * Use unsigned delta so we can go from signed::MIN -> signed::MAX
@@ -364,15 +374,34 @@ impl_steppable_int!(
     (usize, usize, u)
 );
 
-// Keep the separately rounded step displacement: it preserves exact cancellation
-// for UI steps such as 1_000_000 * 0.0001 added to -100. A fused operation exposes
-// the binary representation error at the zero crossing.
-#[expect(
-    clippy::suboptimal_flops,
-    reason = "The step displacement is intentionally rounded before adding to the base"
-)]
-fn add_float_steps(base: f64, step: f64, count: i64) -> f64 {
-    base + step * ticks_as_float(count)
+// Snap in the wider floating domain. When a grid index is too large to
+// represent exactly, use the remainder instead of overflowing value / snap
+// or rounding away significant low bits of the grid index.
+fn snap_float(value: f64, snap: f64) -> f64 {
+    let magnitude = value.abs();
+    let index = magnitude / snap;
+    let snapped = if index < EXACT_GRID_LIMIT {
+        index.round() * snap
+    } else {
+        let remainder = magnitude % snap;
+        let up = snap - remainder;
+        if remainder < up {
+            magnitude - remainder
+        } else {
+            magnitude + up
+        }
+    };
+    snapped.copysign(value)
+}
+
+fn float_step_count(base: f64, target: f64, step: f64) -> u64 {
+    let delta = target - base;
+    let count = if delta.is_finite() {
+        delta / step
+    } else {
+        base.mul_add(-0.5, target * 0.5) / (step * 0.5)
+    };
+    nonnegative_steps(count)
 }
 
 /// Implement `Steppable` for float types.
@@ -382,31 +411,27 @@ macro_rules! impl_steppable_float {
     ($(($t:ty, $widen:path, $narrow:path)),+) => {
         $(
             impl Steppable for $t {
+                fn is_valid(self) -> bool { self.is_finite() }
+
+                fn zero() -> Self { 0.0 }
+
                 fn add_steps(&self, step: Self, count: i64, snap: Option<Self>) -> Self {
-                    // Add the steps
-                    // * Do the math in f64 for more precision in case numbers are bit-heavy
-                    // * Casting to small float is ok, overflow won't truncate and will be infinite.
-                    let mut value = $narrow(add_float_steps($widen(*self), $widen(step), count));
-                    // Potential snapping
-                    if let Some(snap) = snap {
-                        value = (value / snap).round() * snap;
-                    }
-                    // Return the result
-                    value
+                    let value = step_sum($widen(*self), $widen(step), ticks_as_float(count));
+                    let value = value.clamp($widen(Self::MIN), $widen(Self::MAX));
+                    let value = snap.map_or(value, |snap| snap_float(value, $widen(snap)));
+                    $narrow(value.clamp($widen(Self::MIN), $widen(Self::MAX)))
                 }
 
                 fn steps_to(&self, target: Self, step: Self) -> u64 {
-                    let delta = $widen(target) - $widen(*self);
-                    let steps = delta / $widen(step);
-                    nonnegative_steps(steps)
+                    float_step_count($widen(*self), $widen(target), $widen(step))
                 }
 
                 fn min_step() -> Self {
-                    Self::EPSILON
+                    Self::from_bits(1)
                 }
 
                 fn display(&self, step: Self, _min: Self, _max: Self) -> String {
-                    let precision = decimal_precision($widen(step));
+                    let precision = decimal_precision(step);
                     format!("{self:.0$}", precision)
                 }
             }
@@ -423,47 +448,105 @@ impl_steppable_float!(
     (f64, std::convert::identity, std::convert::identity)
 );
 
+/// Invalid numeric configuration for a step input.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum InvalidStepInput<T> {
+    /// Bounds must be valid and ordered.
+    Bounds {
+        /// Lower bound.
+        min: T,
+        /// Upper bound.
+        max: T,
+    },
+    /// The base must be valid and inside the range.
+    Base(T),
+    /// The step or snap interval must be valid and positive.
+    Interval(T),
+}
+
+impl<T: Debug> Display for InvalidStepInput<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Bounds { min, max } => write!(f, "invalid step input bounds {min:?}..={max:?}"),
+            Self::Base(base) => write!(f, "invalid step input base {base:?}"),
+            Self::Interval(step) => write!(f, "invalid step input interval {step:?}"),
+        }
+    }
+}
+
+impl<T: Debug> std::error::Error for InvalidStepInput<T> {}
+
 // --- MARK: BUILDERS
 impl<T: Steppable> StepInput<T> {
-    /// Creates a new [`StepInput`].
-    ///
-    /// Takes the following inputs:
-    /// * `base` - value that we're stepping from.
-    ///   `base` must be greater or equal to `min`, or it will fall back to `min`.
-    ///   `base` must be less than or equal to `max`, or it will fall back to `max`.
-    /// * `step` - positive value added to `base` for each step.
-    ///   `step` must be greater than zero, or it will fall back to `T::min_step`.
-    /// * `min` - minimum value that can be stepped to.
-    ///   `min` must be less than or equal to `max`, or it will fall back to `max`.
-    /// * `max` - maximum value that can be stepped to.
+    /// Creates a step input from validated application values.
     ///
     /// # Panics
     ///
-    /// Panics if `min` is greater than `max` and debug assertions are enabled.
-    ///
-    /// Panics if `base` is less than `min` and debug assertions are enabled.
-    ///
-    /// Panics if `base` is greater than `max` and debug assertions are enabled.
-    ///
-    /// Panics if `step` is less than `T::min_step` and debug assertions are enabled.
-    pub fn new(mut base: T, mut step: T, mut min: T, max: T) -> Self {
-        if min > max {
-            debug_panic!("provided `min` must be less than or equal to the provided `max`");
-            min = max;
-        }
-        if base < min {
-            debug_panic!("provided `base` must be greater or equal to `min`");
-            base = min;
-        }
-        if base > max {
-            debug_panic!("provided `base` must be less than or equal to `max`");
-            base = max;
-        }
-        if step < T::min_step() {
-            debug_panic!("provided `step` must be greater than zero and at least `T::min_step`");
-            step = T::min_step();
-        }
+    /// Invalid configuration panics in debug builds. Release builds log the
+    /// error and normalize invalid fields. Use [`Self::try_new`] for fallible
+    /// configuration supplied at runtime.
+    #[must_use = "Use the configured widget."]
+    pub fn new(base: T, step: T, min: T, max: T) -> Self {
+        Self::try_new(base, step, min, max).unwrap_or_else(|error| {
+            debug_panic!("{error}");
+            let max = if max.is_valid() {
+                max
+            } else if min.is_valid() {
+                min
+            } else {
+                T::zero()
+            };
+            let min = if Self::valid_bounds(min, max) {
+                min
+            } else {
+                max
+            };
+            let base = if base.is_valid() {
+                Self::clamp_value(base, min, max)
+            } else {
+                min
+            };
+            let step = if Self::valid_interval(step) {
+                step
+            } else {
+                T::min_step()
+            };
+            Self::from_validated(base, step, min, max)
+        })
+    }
 
+    /// Creates a step input with a valid ordered range, base and positive step.
+    ///
+    /// # Errors
+    ///
+    /// Returns the invalid field if bounds are unordered, base is outside the
+    /// range, a value is outside its numeric domain, or step is non-positive.
+    pub fn try_new(base: T, step: T, min: T, max: T) -> Result<Self, InvalidStepInput<T>> {
+        if !Self::valid_bounds(min, max) {
+            return Err(InvalidStepInput::Bounds { min, max });
+        }
+        if !Self::valid_base(base, min, max) {
+            return Err(InvalidStepInput::Base(base));
+        }
+        if !Self::valid_interval(step) {
+            return Err(InvalidStepInput::Interval(step));
+        }
+        Ok(Self::from_validated(base, step, min, max))
+    }
+
+    fn valid_bounds(min: T, max: T) -> bool {
+        min.is_valid() && max.is_valid() && min <= max
+    }
+
+    fn valid_base(base: T, min: T, max: T) -> bool {
+        base.is_valid() && min <= base && base <= max
+    }
+
+    fn valid_interval(value: T) -> bool {
+        value.is_valid() && value >= T::min_step()
+    }
+
+    fn from_validated(base: T, step: T, min: T, max: T) -> Self {
         let mut this = Self {
             base,
             step,
@@ -502,7 +585,7 @@ impl<T: Steppable> StepInput<T> {
     /// Panics if `snap` is zero or less and debug assertions are enabled.
     #[must_use = "Use the configured value."]
     pub fn with_snap(mut self, snap: T) -> Self {
-        if snap >= T::min_step() {
+        if Self::valid_interval(snap) {
             self.snap = Some(snap);
         } else {
             debug_panic!("`snap` must be greater than zero and at least `T::min_step`");
@@ -567,7 +650,7 @@ impl<T: Steppable> StepInput<T> {
     ///
     /// Panics if `step` is zero or less and debug assertions are enabled.
     pub fn set_step(this: &mut WidgetMut<'_, Self>, step: T) {
-        if step < T::min_step() {
+        if !Self::valid_interval(step) {
             debug_panic!("set_step: `step` >= `T::min_step` assert failed");
             return;
         }
@@ -588,7 +671,7 @@ impl<T: Steppable> StepInput<T> {
     /// Panics if `snap` is zero or less and debug assertions are enabled.
     pub fn set_snap(this: &mut WidgetMut<'_, Self>, snap: Option<T>) {
         if let Some(snap) = snap
-            && snap < T::min_step()
+            && !Self::valid_interval(snap)
         {
             debug_panic!("set_snap: `snap` > `T::min_step` assert failed");
             return;
@@ -604,11 +687,11 @@ impl<T: Steppable> StepInput<T> {
     ///
     /// Panics if `min` is greater than `max` and debug assertions are enabled.
     pub fn set_bounds(this: &mut WidgetMut<'_, Self>, min: T, max: T) {
-        if min > max {
+        if !Self::valid_bounds(min, max) {
             debug_panic!("set_bounds: `min` <= `max` assert failed");
             return;
         }
-        let widget = &mut this.widget;
+        let widget = &mut *this.widget;
         if widget.min == min && widget.max == max {
             return;
         }
@@ -857,7 +940,7 @@ impl<T: Steppable> StepInput<T> {
     ///
     /// Panics if base is less than `min` or greater than `max` and debug assertions are enabled.
     fn set_base_impl(&mut self, base: T) -> bool {
-        if base < self.min || base > self.max {
+        if !Self::valid_base(base, self.min, self.max) {
             debug_panic!("set_base: `min` <= `base` <= `max` assert failed");
             return false;
         }
@@ -877,7 +960,11 @@ impl<T: Steppable> StepInput<T> {
     fn set_value(&mut self, ticks: i64, snap: bool) {
         let snap = self.snap.filter(|_| snap);
         let raw_value = Self::calculate_value(self.base, self.step, snap, ticks);
-        self.value = Self::clamp_value(raw_value, self.min, self.max);
+        if raw_value.is_valid() {
+            self.value = Self::clamp_value(raw_value, self.min, self.max);
+        } else {
+            debug_panic!("Steppable::add_steps returned an invalid value: {raw_value:?}");
+        }
     }
 
     /// Sets the active value to the next snapped value.
@@ -896,7 +983,7 @@ impl<T: Steppable> StepInput<T> {
             self.sync_ticks_to_value();
         } else {
             // We need to add ~snap worth of ticks to get the next
-            let steps = T::min_step().steps_to(snap, self.step);
+            let steps = T::zero().steps_to(snap, self.step);
             let delta = Self::steps_to_positive_ticks(steps);
             self.update_ticks(delta, true);
         }
@@ -920,7 +1007,7 @@ impl<T: Steppable> StepInput<T> {
             self.sync_ticks_to_value();
         } else {
             // We need to subtract ~snap worth of ticks to get the previous
-            let steps = T::min_step().steps_to(snap, self.step);
+            let steps = T::zero().steps_to(snap, self.step);
             let delta = Self::steps_to_negative_ticks(steps);
             self.update_ticks(delta, true);
         }
@@ -2087,6 +2174,99 @@ mod tests {
         assert_eq!(
             GEAR_2_END_STEPS,
             StepInput::<u64>::steps(GEAR_2_END).0 as f64
+        );
+    }
+
+    #[test]
+    fn rejects_nonfinite_configuration_and_accepts_physical_unit_steps() {
+        for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(matches!(
+                StepInput::try_new(0.0, 1.0, invalid, 1.0),
+                Err(InvalidStepInput::Bounds { .. })
+            ));
+            assert!(matches!(
+                StepInput::try_new(0.0, 1.0, -1.0, invalid),
+                Err(InvalidStepInput::Bounds { .. })
+            ));
+            assert!(matches!(
+                StepInput::try_new(invalid, 1.0, -1.0, 1.0),
+                Err(InvalidStepInput::Base(_))
+            ));
+            assert!(matches!(
+                StepInput::try_new(0.0, invalid, -1.0, 1.0),
+                Err(InvalidStepInput::Interval(_))
+            ));
+            assert!(!StepInput::<f64>::valid_interval(invalid));
+        }
+        for invalid in [0.0, -0.0, -1.0] {
+            assert!(matches!(
+                StepInput::try_new(0.0, invalid, -1.0, 1.0),
+                Err(InvalidStepInput::Interval(_))
+            ));
+        }
+        assert!(matches!(
+            StepInput::try_new(1, 1, 2, 3),
+            Err(InvalidStepInput::Base(1))
+        ));
+        assert!(matches!(
+            StepInput::try_new(1, 1, 3, 2),
+            Err(InvalidStepInput::Bounds { .. })
+        ));
+        let tiny = f64::from_bits(1);
+        let mut widget = StepInput::try_new(0.0, tiny, 0.0, 8.0 * tiny).unwrap();
+        for bits in 1..=8 {
+            assert!(
+                widget.next_step(),
+                "small physical quantities must be step-able"
+            );
+            assert_eq!(widget.value.to_bits(), bits);
+        }
+        assert!(!widget.next_step());
+        let mut widget = StepInput::try_new(0.0_f32, 1e-15, 0.0, 1e-12).unwrap();
+        assert!(widget.next_step());
+        assert_eq!(widget.value.to_bits(), 1e-15_f32.to_bits());
+    }
+
+    #[test]
+    fn floating_steps_saturate_without_losing_representable_cancellation() {
+        let max = f64::MAX;
+        assert_eq!((-max).add_steps(max, 2, None).to_bits(), max.to_bits());
+        assert_eq!(max.add_steps(max, -2, None).to_bits(), (-max).to_bits());
+        assert_eq!(max.add_steps(max, 1, None).to_bits(), max.to_bits());
+        assert_eq!((-max).add_steps(max, -1, None).to_bits(), (-max).to_bits());
+        assert_eq!(
+            f32::MAX.add_steps(f32::MAX, 1, None).to_bits(),
+            f32::MAX.to_bits()
+        );
+        assert_eq!((-max).steps_to(max, max), 2);
+        assert_eq!((-max).steps_to(max, max * 0.5), 4);
+
+        let mut widget = StepInput::new(-max, max, -max, max);
+        assert!(widget.next_step());
+        assert_eq!(widget.value.to_bits(), 0.0_f64.to_bits());
+        assert!(widget.next_step());
+        assert_eq!(widget.value.to_bits(), max.to_bits());
+        assert!(!widget.next_step());
+    }
+
+    #[test]
+    fn snapping_and_decimal_display_preserve_numeric_domain() {
+        for value in [1e300_f64, -1e300, f64::MAX, f64::MIN] {
+            assert_eq!(
+                value.add_steps(1.0, 0, Some(1e-300)).to_bits(),
+                value.to_bits()
+            );
+        }
+        assert_eq!(0.25_f64.display(0.25, 0.0, 1.0), "0.25");
+        assert_eq!(2.5_f64.display(2.5, 0.0, 10.0), "2.5");
+        assert_eq!(0.1_f32.display(0.1, 0.0, 1.0), "0.1");
+        assert_eq!(
+            (-0.25_f64).add_steps(1.0, 0, Some(0.5)).to_bits(),
+            (-0.5_f64).to_bits()
+        );
+        assert_eq!(
+            0.25_f64.add_steps(1.0, 0, Some(0.5)).to_bits(),
+            0.5_f64.to_bits()
         );
     }
 

@@ -22,6 +22,7 @@ use crate::layout::{LenReq, Length};
 use crate::peniko;
 use crate::properties::{ThumbColor, ThumbRadius, TrackColor, TrackThickness};
 use crate::theme;
+use crate::widgets::numeric_grid::{EXACT_GRID_LIMIT, step_sum};
 
 /// A widget that allows a user to select a value from a continuous range.
 ///
@@ -176,18 +177,6 @@ impl SliderState {
         (value.rem_euclid(step) - self.min.rem_euclid(step)).rem_euclid(step)
     }
 
-    // Round the displacement separately to preserve exact cancellation for
-    // decimal UI steps (e.g. -1 + 1000 * 0.001). Use FMA only when the
-    // intermediate displacement overflows but the final value may be finite.
-    fn grid_at_index(self, index: f64, step: f64) -> f64 {
-        let displacement = index * step;
-        if displacement.is_finite() {
-            self.min + displacement
-        } else {
-            index.mul_add(step, self.min)
-        }
-    }
-
     fn quantize(self, value: f64) -> f64 {
         let value = value.clamp(self.min, self.max);
         let Some(step) = self.step else {
@@ -198,7 +187,7 @@ impl SliderState {
         }
         let index = (value - self.min) / step;
         let grid = if index < EXACT_GRID_LIMIT {
-            self.grid_at_index(index.round(), step)
+            step_sum(self.min, step, index.round())
         } else {
             let remainder = self.grid_remainder(value, step);
             if remainder <= step * 0.5 {
@@ -247,7 +236,7 @@ impl SliderState {
                     // The maximum is an extra endpoint if it is off-grid.
                     // Find the last grid point strictly below it.
                     let last = index.ceil() - 1.0;
-                    let last = if self.grid_at_index(last, step) >= self.max {
+                    let last = if step_sum(self.min, step, last) >= self.max {
                         last - 1.0
                     } else {
                         last
@@ -256,9 +245,7 @@ impl SliderState {
                 } else {
                     index.round()
                 };
-                return self
-                    .grid_at_index(index + count, step)
-                    .clamp(self.min, self.max);
+                return step_sum(self.min, step, index + count).clamp(self.min, self.max);
             }
             if count < 0.0 && self.value >= self.max {
                 let remainder = self.grid_remainder(self.value, step);
@@ -284,8 +271,6 @@ impl SliderState {
         }
     }
 }
-
-const EXACT_GRID_LIMIT: f64 = 4_503_599_627_370_496.0;
 
 #[derive(Clone, Copy)]
 struct SliderGeometry {

@@ -66,12 +66,14 @@ impl ProgressBar {
         )
     }
 
-    fn percent(progress: Option<f64>) -> Option<f64> {
-        progress.map(|value| (value * 100.).round_ties_even())
+    fn percent(value: f64) -> f64 {
+        (value * 100.).round_ties_even()
     }
 
     fn value(progress: Option<f64>) -> ArcStr {
-        Self::percent(progress).map_or_else(|| "".into(), |value| format!("{value:.0}%").into())
+        progress
+            .map(Self::percent)
+            .map_or_else(|| "".into(), |value| format!("{value:.0}%").into())
     }
 }
 
@@ -87,7 +89,7 @@ impl ProgressBar {
         if this.widget.progress == progress {
             return;
         }
-        let label_changed = Self::percent(this.widget.progress) != Self::percent(progress);
+        let label_changed = this.widget.progress.map(Self::percent) != progress.map(Self::percent);
         this.widget.progress = progress;
         if label_changed && let Some(mut label) = this.ctx.get_mut(this.widget.label.id()) {
             Label::set_text(&mut label, Self::value(progress));

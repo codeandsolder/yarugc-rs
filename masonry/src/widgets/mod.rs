@@ -23,6 +23,7 @@ mod image;
 mod image_common;
 mod indexed_stack;
 mod label;
+mod numeric_grid;
 mod pagination;
 mod passthrough;
 mod portal;
