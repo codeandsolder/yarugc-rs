@@ -6,16 +6,16 @@ use std::sync::Arc;
 
 use xilem::core::one_of::Either;
 use xilem::core::{
-    MessageProxy, MessageResult, NoElement, Resource, View, fork, map_message_result,
-    on_action_with_context, provides, with_context,
+    MessageResult, NoElement, Resource, View, fork, map_message_result, on_action_with_context,
+    provides, with_context,
 };
 use xilem::masonry::layout::AsUnit;
 use xilem::masonry::peniko::{ImageAlphaType, ImageData};
 use xilem::palette::css;
 use xilem::style::{Gradient, Style as _};
-use xilem::tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use xilem::view::{env_worker, image, sized_box, spinner};
-use xilem::{Blob, ImageFormat, ViewCtx, WidgetView, tokio};
+use xilem::tokio::sync::mpsc::{Receiver, Sender};
+use xilem::view::{env_worker, flex_col, image, process_requests, sized_box, spinner};
+use xilem::{Blob, ImageFormat, ViewCtx, WidgetView};
 
 #[derive(Debug)]
 struct AvatarRequest {
@@ -25,13 +25,20 @@ struct AvatarRequest {
 #[derive(Debug)]
 struct AvatarResponse {
     url: String,
-    image: ImageData,
+    result: Result<ImageData, String>,
+}
+
+#[derive(Debug)]
+enum AvatarState {
+    Pending,
+    Ready(ImageData),
+    Failed,
 }
 
 #[derive(Debug)]
 pub(crate) struct Avatars {
-    icons: HashMap<String, Option<ImageData>>,
-    requester: Option<UnboundedSender<AvatarRequest>>,
+    icons: HashMap<String, AvatarState>,
+    requester: Option<Sender<AvatarRequest>>,
     // TODO: lru: ...
 }
 
@@ -51,23 +58,26 @@ impl Avatars {
         with_context(move |resource: Option<&mut Self>, _| {
             let width = 50.px();
             let height = 50.px();
-            if let Some(this) = resource {
-                if let Some(Some(image_)) = this.icons.get(&url) {
+            let pending = if let Some(this) = resource {
+                if let Some(AvatarState::Ready(image_)) = this.icons.get(&url) {
                     return Either::A(image(image_.clone()).dims((width, height)));
                 }
                 if !this.icons.contains_key(&url)
                     && let Some(requester) = this.requester.as_ref()
                     && requester
-                        .send(AvatarRequest {
+                        .try_send(AvatarRequest {
                             avatar_url: url.clone(),
                         })
                         .is_ok()
                 {
-                    this.icons.insert(url.clone(), None);
+                    this.icons.insert(url.clone(), AvatarState::Pending);
                 }
-            }
+                !matches!(this.icons.get(&url), Some(AvatarState::Failed))
+            } else {
+                true
+            };
             Either::B(
-                sized_box(spinner())
+                sized_box(flex_col(pending.then(spinner)))
                     .dims((width, height))
                     .background_gradient(
                         Gradient::new_linear(
@@ -108,31 +118,32 @@ impl Avatars {
         map_message_result(
             on_action_with_context(
                 |_, this: &mut Self, response| {
-                    let ret = this.icons.insert(response.url, Some(response.image));
-                    if !matches!(ret, Some(None)) {
+                    let state = match response.result {
+                        Ok(image) => AvatarState::Ready(image),
+                        Err(error) => {
+                            tracing::warn!(%error, "Avatar download failed");
+                            AvatarState::Failed
+                        }
+                    };
+                    let ret = this.icons.insert(response.url, state);
+                    if !matches!(ret, Some(AvatarState::Pending)) {
                         tracing::warn!("Potentially loaded or tried to load same avatar twice.");
                     }
                 },
                 env_worker(
-                    |proxy: MessageProxy<AvatarResponse>,
-                     mut rx: UnboundedReceiver<AvatarRequest>| async move {
-                        while let Some(url) = rx.recv().await {
-                            let proxy = proxy.clone();
-                            tokio::task::spawn(async move {
-                                let url = url.avatar_url;
-                                let result = image_from_url(&url).await;
-                                match result {
-                                    // We choose not to handle the case where the event loop has ended
-                                    Ok(image) => drop(proxy.message(AvatarResponse { url, image })),
-                                    // TODO: Report in the frontend?
-                                    Err(err) => {
-                                        tracing::warn!(
-                                            "Loading avatar from {url:?} failed: {err}."
-                                        );
-                                    }
-                                }
-                            });
-                        }
+                    std::num::NonZeroUsize::MIN.saturating_add(63),
+                    |proxy, rx: Receiver<AvatarRequest>| {
+                        process_requests(
+                            proxy,
+                            rx,
+                            std::num::NonZeroUsize::MIN.saturating_add(7),
+                            |request| async move {
+                                let url = request.avatar_url;
+                                let result =
+                                    image_from_url(&url).await.map_err(|err| err.to_string());
+                                AvatarResponse { url, result }
+                            },
+                        )
                     },
                     |_, this: &mut Self, tx| {
                         if this.requester.is_some() {
@@ -161,7 +172,7 @@ impl Avatars {
 ///
 /// N.B. This is functionality shared with `http_cats`
 pub(crate) async fn image_from_url(url: &str) -> anyhow::Result<ImageData> {
-    let response = reqwest::get(url).await?;
+    let response = reqwest::get(url).await?.error_for_status()?;
     let bytes = response.bytes().await?;
     let image = image::load_from_memory(&bytes)?.into_rgba8();
     let width = image.width();

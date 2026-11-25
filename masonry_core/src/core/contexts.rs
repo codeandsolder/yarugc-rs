@@ -18,11 +18,12 @@ use parley::{FontContext, LayoutContext};
 use tracing::{trace, warn};
 use tree_arena::{ArenaMutList, ArenaRef, ArenaRefList};
 
-use crate::app::{MutateCallback, RenderRootSignal, RenderRootState};
+use crate::app::{MutateCallback, PointerCapture, PointerPress, RenderRootSignal, RenderRootState};
 use crate::core::{
-    AllowRawMut, BrushIndex, ClassSet, ErasedAction, FromDynWidget, LayerType, NewWidget,
-    PaintLayerMode, PropertiesMut, PropertiesRef, PropertyArena, PropertyCache, ResizeDirection,
-    Widget, WidgetArenaNode, WidgetId, WidgetMut, WidgetPod, WidgetRef, WidgetState,
+    AllowRawMut, BrushIndex, ClassSet, ErasedAction, FromDynWidget, LayerPlacement, LayerType,
+    NewWidget, PaintLayerMode, PropertiesMut, PropertiesRef, PropertyArena, PropertyCache,
+    ResizeDirection, Widget, WidgetArenaNode, WidgetId, WidgetMut, WidgetPod, WidgetRef,
+    WidgetState,
 };
 use crate::kurbo::{Affine, Axis, Insets, Point, Rect, Size, Vec2};
 use crate::layout::{LayoutSize, LenDef, LenReq, Length, SizeDef, UnitPoint};
@@ -100,7 +101,7 @@ pub struct EventCtx<'a> {
     pub(crate) children: ArenaMutList<'a, WidgetArenaNode>,
     pub(crate) property_arena: &'a PropertyArena,
     pub(crate) target: WidgetId,
-    pub(crate) allow_pointer_capture: bool,
+    pub(crate) pointer_press: Option<PointerPress>,
     pub(crate) is_handled: bool,
 }
 
@@ -183,6 +184,18 @@ impl_context_method!(
         #[must_use = "Use the widget identifier."]
         pub const fn widget_id(&self) -> WidgetId {
             self.widget_state.id
+        }
+
+        /// Returns the attached layer created by this widget with the given type `W`.
+        ///
+        /// See [`MutateCtx::create_attached_layer`] for more details.
+        #[must_use = "Use the attached layer identifier if present."]
+        pub fn get_attached_layer<W: Widget + ?Sized>(&self) -> Option<WidgetId> {
+            self.global_state
+                .attached_layers
+                .get(&self.widget_id())?
+                .get(&TypeId::of::<W>())
+                .copied()
         }
 
         /// Returns the local transform of this widget.
@@ -303,6 +316,15 @@ impl MutateCtx<'_> {
         )
     }
 
+    /// Returns a shared typed reference to a registered descendant.
+    ///
+    /// Returns None for a widget outside this subtree, an absent widget,
+    /// or a widget of another type.
+    #[must_use = "Inspect the descendant if it exists."]
+    pub fn get_descendant<W: Widget + FromDynWidget + ?Sized>(&self, id: WidgetId) -> Option<&W> {
+        W::from_dyn(&*self.children.find(id)?.item.widget)
+    }
+
     pub(crate) fn reborrow_mut(&mut self) -> MutateCtx<'_> {
         MutateCtx {
             global_state: self.global_state,
@@ -396,14 +418,15 @@ impl EventCtx<'_> {
     /// events. Events that are not marked as handled by the capturing widget, bubble up to the
     /// widget's ancestors, ignoring their border-boxes as well.
     ///
-    /// The pointer cannot be captured by multiple widgets at the same time. If a widget has
-    /// captured the pointer and another widget captures it, the first widget loses the pointer
-    /// capture.
+    /// A window supports one captured interaction at a time. During capture,
+    /// unrelated pointers and button presses or releases are ignored. An ancestor
+    /// may take over capture while handling the same initiating Down event.
     ///
     /// # Releasing the pointer
     ///
     /// Any widget can [`release`] the pointer during any event.
-    /// The pointer is automatically released after handling of a [`Up`] or [`Cancel`] event completes.
+    /// The pointer is automatically released after the initiating button is released
+    /// or the captured pointer is cancelled.
     /// A widget holding the pointer capture will be the target of these events.
     ///
     /// If pointer capture is lost for external reasons (the widget is disabled, the window lost focus,
@@ -417,12 +440,12 @@ impl EventCtx<'_> {
     #[track_caller]
     pub fn capture_pointer(&mut self) {
         let id = self.widget_id();
-        if !self.allow_pointer_capture {
+        let Some(press) = self.pointer_press else {
             debug_panic!("capture_pointer - '{id}': event does not allow pointer capture");
             return;
-        }
+        };
         // TODO: plumb pointer capture through to platform (through winit)
-        self.global_state.pointer_capture_target = Some(id);
+        self.global_state.pointer_capture = Some(PointerCapture { target: id, press });
         self.global_state.set_needs_pointer_pass(true);
     }
 
@@ -432,15 +455,15 @@ impl EventCtx<'_> {
     /// [`capture_pointer`]: EventCtx::capture_pointer
     pub fn release_pointer(&mut self) {
         let id = self.widget_id();
-        if self.global_state.pointer_capture_target.is_none() {
+        if self.global_state.pointer_capture_target().is_none() {
             warn!("release_pointer - '{id}': no widget is captured");
             return;
         }
-        if self.global_state.pointer_capture_target != Some(self.widget_state.id) {
+        if self.global_state.pointer_capture_target() != Some(self.widget_state.id) {
             warn!("release_pointer - '{id}': widget does not have pointer capture");
             return;
         }
-        self.global_state.pointer_capture_target = None;
+        self.global_state.pointer_capture = None;
         self.global_state.set_needs_pointer_pass(true);
     }
 
@@ -459,6 +482,26 @@ impl EventCtx<'_> {
         self.children.item(child.id()).is_some_and(|node| {
             child.id() == self.target || node.children.find(self.target).is_some()
         })
+    }
+
+    /// Hit-tests a direct child's subtree at a physical pointer position,
+    /// independently of pointer capture. Honors the child's transform,
+    /// clipping, and pointer-interaction policy.
+    #[must_use = "Inspect whether the child is hit."]
+    pub fn hit_test_child(
+        &self,
+        child: &WidgetPod<impl Widget + ?Sized>,
+        position: PhysicalPosition<f64>,
+    ) -> bool {
+        let Some(node) = self.children.item(child.id()) else {
+            return false;
+        };
+        let logical = position.to_logical(self.global_state.scale_factor);
+        let child = WidgetRef::from_node(node, self.global_state, self.property_arena);
+        !child.ctx().is_disabled()
+            && child
+                .find_widget_under_pointer(Point::new(logical.x, logical.y))
+                .is_some()
     }
 
     /// Converts the given position from the window's coordinate space
@@ -1386,7 +1429,7 @@ impl_context_method!(
         /// [captured]: crate::doc::masonry_concepts#pointer-capture
         #[must_use = "Check whether this widget captures the pointer."]
         pub fn is_pointer_capture_target(&self) -> bool {
-            self.global_state.pointer_capture_target == Some(self.widget_state.id)
+            self.global_state.pointer_capture_target() == Some(self.widget_state.id)
         }
 
         /// The [text focus] status of a widget.
@@ -1425,7 +1468,7 @@ impl_context_method!(
         /// [pointer capture]: crate::doc::masonry_concepts#pointer-capture
         #[must_use = "Use the pointer capture target if present."]
         pub const fn pointer_capture_target_id(&self) -> Option<WidgetId> {
-            self.global_state.pointer_capture_target
+            self.global_state.pointer_capture_target()
         }
 
         /// The widget, if any, which has [text focus].
@@ -1609,6 +1652,23 @@ impl_context_method!(
             self.global_state.set_needs_pointer_pass(true);
         }
 
+        /// Changes whether this widget participates in sequential keyboard focus.
+        ///
+        /// The initial value comes from [`Widget::accepts_focus`]. Disabling
+        /// the tab stop also relinquishes any focus currently assigned to
+        /// this widget, without affecting independently focused descendants.
+        pub fn set_tab_focusable(&mut self, focusable: bool) {
+            if self.widget_state.accepts_focus() == focusable {
+                return;
+            }
+            self.widget_state.set_accepts_focus(focusable);
+            self.widget_state.set_needs_update_focusable(true);
+            self.request_accessibility_update();
+            if !focusable && self.global_state.next_focused_widget == Some(self.widget_state.id) {
+                self.global_state.next_focused_widget = None;
+            }
+        }
+
         /// Indicates that your children have changed.
         ///
         /// Widgets must call this method after adding a new child.
@@ -1678,8 +1738,10 @@ impl_context_method!(
         ///
         /// [`is_disabled`]: EventCtx::is_disabled
         pub const fn set_disabled(&mut self, disabled: bool) {
-            self.widget_state.set_needs_update_disabled(true);
-            self.widget_state.set_is_explicitly_disabled(disabled);
+            if self.widget_state.is_explicitly_disabled() != disabled {
+                self.widget_state.set_needs_update_disabled(true);
+                self.widget_state.set_is_explicitly_disabled(disabled);
+            }
         }
 
         /// Sets the local transform for this widget.
@@ -1952,7 +2014,7 @@ impl_context_method!(
 
         /// Creates a new [layer] at a specified `position`.
         ///
-        /// The given `position` must be in the window's coordinate space.
+        /// The placement is expressed in window coordinates.
         ///
         /// # Panics
         ///
@@ -1963,7 +2025,7 @@ impl_context_method!(
             &mut self,
             layer_type: LayerType,
             mut fallback_widget: NewWidget<W>,
-            position: Point,
+            placement: LayerPlacement,
         ) {
             trace!("create_layer");
 
@@ -1978,7 +2040,7 @@ impl_context_method!(
             self.global_state.emit_signal(RenderRootSignal::NewLayer(
                 layer_type,
                 fallback_widget.erased(),
-                position,
+                placement,
             ));
         }
 
@@ -1988,7 +2050,7 @@ impl_context_method!(
         /// A widget can only have one layer of any given type `W` at a time:
         /// if a widget creates two layers of the same type, the old layer will be removed.
         ///
-        /// The given `position` must be in the window's coordinate space.
+        /// The placement is expressed in window coordinates.
         ///
         /// # Panics
         ///
@@ -1999,7 +2061,7 @@ impl_context_method!(
             &mut self,
             layer_type: LayerType,
             mut fallback_widget: NewWidget<W>,
-            position: Point,
+            placement: LayerPlacement,
         ) {
             trace!("create_attached_layer");
 
@@ -2023,23 +2085,13 @@ impl_context_method!(
                 self.global_state
                     .emit_signal(RenderRootSignal::RemoveLayer(prev));
             }
+            self.widget_state.set_request_accessibility(true);
+            self.widget_state.set_needs_accessibility(true);
             self.global_state.emit_signal(RenderRootSignal::NewLayer(
                 layer_type,
                 fallback_widget.erased(),
-                position,
+                placement,
             ));
-        }
-
-        /// Returns the attached layer created by this widget with the given type `W`.
-        ///
-        /// See [`Self::create_attached_layer`] for more details.
-        #[must_use = "Use the attached layer identifier if present."]
-        pub fn get_attached_layer<W: Widget + ?Sized>(&self) -> Option<WidgetId> {
-            self.global_state
-                .attached_layers
-                .get(&self.widget_id())?
-                .get(&TypeId::of::<W>())
-                .copied()
         }
 
         /// Removes the layer with the specified widget as root.
@@ -2058,16 +2110,26 @@ impl_context_method!(
                 .map(|(type_id, _)| *type_id);
             if let Some(type_id) = layer_type_id {
                 layers.remove(&type_id);
+                self.widget_state.set_request_accessibility(true);
+                self.widget_state.set_needs_accessibility(true);
+            }
+            if layers.is_empty() {
+                self.global_state.attached_layers.remove(&self.widget_id());
             }
         }
+    }
+);
 
-        /// Repositions the layer with the specified widget as root.
-        ///
-        /// The given `position` must be in the window's coordinate space.
-        pub fn reposition_layer(&mut self, root_widget_id: WidgetId, position: Point) {
-            trace!("reposition_layer");
+impl_context_method!(
+    MutateCtx<'_>,
+    EventCtx<'_>,
+    UpdateCtx<'_>,
+    ComposeCtx<'_>,
+    {
+        /// Updates the placement policy of an existing layer.
+        pub fn reposition_layer(&mut self, root_widget_id: WidgetId, placement: LayerPlacement) {
             self.global_state
-                .emit_signal(RenderRootSignal::RepositionLayer(root_widget_id, position));
+                .emit_signal(RenderRootSignal::RepositionLayer(root_widget_id, placement));
         }
     }
 );

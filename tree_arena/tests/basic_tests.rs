@@ -553,3 +553,52 @@ fn reparent_all_pairs_preserves_forest() {
         }
     }
 }
+
+#[test]
+fn removal_preserves_topology_if_a_descendant_destructor_panics() {
+    use std::cell::Cell;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::rc::Rc;
+
+    struct Payload {
+        panic_on_drop: bool,
+        drops: Rc<Cell<usize>>,
+    }
+
+    impl Drop for Payload {
+        fn drop(&mut self) {
+            self.drops.update(|count| count + 1);
+            assert!(!self.panic_on_drop, "injected destructor panic");
+        }
+    }
+
+    let drops = Rc::new(Cell::new(0));
+    let payload = |panic_on_drop| Payload {
+        panic_on_drop,
+        drops: Rc::clone(&drops),
+    };
+    let mut arena = TreeArena::new();
+    {
+        let mut roots = arena.roots_mut();
+        roots.insert(1_u64, payload(false));
+        let mut subtree = roots.insert(2_u64, payload(false));
+        subtree.children.insert(3_u64, payload(true));
+        subtree.children.insert(4_u64, payload(false));
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        drop(arena.roots_mut().remove(2_u64));
+    }));
+    assert!(result.is_err(), "the injected destructor must unwind");
+    assert_eq!(arena.len(), 1);
+    assert_eq!(drops.get(), 3);
+    for id in 2_u64..=4 {
+        assert!(arena.find(id).is_none());
+        assert!(arena.get_id_path(id).is_empty());
+        arena.roots_mut().insert(id, payload(false));
+    }
+    arena.reparent(4_u64, 2_u64).unwrap();
+    assert_eq!(arena.get_id_path(4_u64), vec![4, 2]);
+    drop(arena);
+    assert_eq!(drops.get(), 7);
+}

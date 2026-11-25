@@ -94,7 +94,11 @@ impl Widget for OverlayBox {
                 let (overlay, layer_type) = (self.overlayer)();
                 self.layer_root_id = Some(overlay.id());
                 let layer_pos = self.last_cursor_pos + Vec2::new(5., -25.);
-                ctx.create_layer(layer_type, overlay, layer_pos);
+                ctx.create_layer(
+                    layer_type,
+                    overlay,
+                    masonry::core::LayerPlacement::Absolute(layer_pos),
+                );
             } else {
                 ctx.request_anim_frame();
             }

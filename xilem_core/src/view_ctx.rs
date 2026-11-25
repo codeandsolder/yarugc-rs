@@ -64,8 +64,16 @@ pub trait ViewPathTracker {
     /// Runs `builder` in a context with `id` pushed to the current view path
     fn with_id<R>(&mut self, id: ViewId, builder: impl FnOnce(&mut Self) -> R) -> R {
         self.push_id(id);
-        let res = builder(self);
-        self.pop_id();
-        res
+        let scope = PathScope(self);
+        builder(scope.0)
+    }
+}
+
+// Restore the path even when the builder exits through an unwind.
+struct PathScope<'a, C: ViewPathTracker + ?Sized>(&'a mut C);
+
+impl<C: ViewPathTracker + ?Sized> Drop for PathScope<'_, C> {
+    fn drop(&mut self) {
+        self.0.pop_id();
     }
 }

@@ -5,7 +5,7 @@ use std::any::TypeId;
 
 use crate::core::{
     AccessCtx, ArcStr, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
-    PropertiesRef, RegisterCtx, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    PropertiesRef, RegisterCtx, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Line, Point, Size, Stroke};
@@ -42,12 +42,7 @@ impl CollapsePanel {
         header_text: impl Into<ArcStr>,
         child: NewWidget<impl Widget + ?Sized>,
     ) -> Self {
-        Self {
-            disclosure_button: Self::disclosure_button(collapse),
-            header_label: WidgetPod::new(Label::new(header_text)),
-            separator_line_y: None,
-            child: child.erased().into_pod(),
-        }
+        Self::from_label(collapse, Label::new(header_text).prepare(), child)
     }
 
     /// Create a new [`CollapsePanel`] with a header label widget and a child widget.
@@ -58,15 +53,16 @@ impl CollapsePanel {
         child: NewWidget<impl Widget + ?Sized>,
     ) -> Self {
         Self {
-            disclosure_button: Self::disclosure_button(collapse),
+            disclosure_button: Self::disclosure_button(collapse, header_label.id()),
             header_label: header_label.into_pod(),
             separator_line_y: None,
             child: child.erased().into_pod(),
         }
     }
 
-    fn disclosure_button(collapse: bool) -> WidgetPod<DisclosureButton> {
+    fn disclosure_button(collapse: bool, label: WidgetId) -> WidgetPod<DisclosureButton> {
         DisclosureButton::new(!collapse)
+            .with_label(label)
             .prepare()
             .with_props(
                 // TODO - Move to DefaultProperties
@@ -85,7 +81,6 @@ impl CollapsePanel {
         if let Some(mut child) = Self::disclosure_button_mut(this) {
             DisclosureButton::set_disclosed(&mut child, !collapsed);
         }
-        this.ctx.request_layout();
     }
 
     /// Set the text.
@@ -249,14 +244,17 @@ impl Widget for CollapsePanel {
 
         let header_height = button_size.height.max(label_size.height);
 
-        // Place it at the center of the label height.
+        // Center both children in the header, including labels shorter than the button.
         let btn_origin = Point::new(
             header_padding_width,
-            (label_size.height - button_size.height) * 0.5,
+            (header_height - button_size.height) * 0.5,
         );
         ctx.place_child(&self.disclosure_button, btn_origin);
 
-        let label_origin = Point::new(header_padding_width.mul_add(2.0, button_size.width), 0.0);
+        let label_origin = Point::new(
+            header_padding_width.mul_add(2.0, button_size.width),
+            (header_height - label_size.height) * 0.5,
+        );
         ctx.place_child(&self.header_label, label_origin);
 
         // Collapsed = !Disclosed
@@ -339,5 +337,67 @@ impl Widget for CollapsePanel {
             self.header_label.id(),
             self.child.id(),
         ])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::TestHarness;
+    use crate::theme::test_property_set;
+    use crate::widgets::SizedBox;
+
+    #[test]
+    fn disclosure_centers_header_and_updates_retained_child_visibility() {
+        let header = Label::new("Panel")
+            .prepare()
+            .with_props(Dimensions::fixed(40.px(), 4.px()));
+        let child = SizedBox::empty().prepare();
+        let child_id = child.id();
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            CollapsePanel::from_label(true, header, child).prepare(),
+            (160, 80),
+        );
+        let (button_id, label_id) = {
+            let children = harness.root_widget().unwrap().children();
+            let button_rect = children[0]
+                .ctx()
+                .window_transform()
+                .transform_rect_bbox(children[0].ctx().border_box());
+            let label_rect = children[1]
+                .ctx()
+                .window_transform()
+                .transform_rect_bbox(children[1].ctx().border_box());
+            assert!((button_rect.center().y - label_rect.center().y).abs() < 1e-8);
+            assert!(children[2].ctx().is_stashed());
+            (children[0].id(), children[1].id())
+        };
+        let _ = harness.redraw();
+        let button = harness.access_node(button_id).unwrap();
+        assert_eq!(
+            button.data().labelled_by(),
+            &[accesskit::NodeId::from(label_id)]
+        );
+        harness
+            .mouse_click_on(button_id, Some(crate::core::PointerButton::Primary))
+            .unwrap();
+        assert!(
+            !harness
+                .get_widget_with_id(child_id)
+                .unwrap()
+                .ctx()
+                .is_stashed()
+        );
+        harness
+            .edit_root_widget(|mut panel| CollapsePanel::set_collapsed(&mut panel, true))
+            .unwrap();
+        assert!(
+            harness
+                .get_widget_with_id(child_id)
+                .unwrap()
+                .ctx()
+                .is_stashed()
+        );
     }
 }

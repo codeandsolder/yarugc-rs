@@ -8,17 +8,17 @@ use tracing::{Span, trace_span};
 
 use crate::core::keyboard::{Key, NamedKey};
 use crate::core::{
-    AccessCtx, AccessEvent, ChildrenIds, ComposeCtx, EventCtx, FromDynWidget, LayoutCtx,
-    MeasureCtx, NewWidget, NoAction, PaintCtx, PointerEvent, PointerScrollEvent, PropertiesMut,
-    PropertiesRef, Property, RawCtx, RegisterCtx, TextEvent, Update, UpdateCtx, UsesProperty,
-    Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, AccessEvent, ActionCtx, ChildrenIds, ComposeCtx, ErasedAction, EventCtx,
+    FromDynWidget, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PointerEvent,
+    PointerScrollEvent, PropertiesMut, PropertiesRef, Property, RegisterCtx, TextEvent, Update,
+    UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::dpi::{LogicalPosition, PhysicalPosition};
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Point, Rect, Size, Vec2};
 use crate::layout::{AsUnit, LayoutSize, LenDef, LenReq, Length, SizeDef};
 use crate::properties::AutoHideScrollBar;
-use crate::widgets::ScrollBar;
+use crate::widgets::{ScrollBar, ScrollBarMoved};
 
 // TODO: make this configurable or move to theme
 const SCROLLBAR_ANIM_OVER_MILLIS: f32 = 300.;
@@ -79,9 +79,17 @@ impl<W: Widget + ?Sized> Portal<W> {
             viewport_pos: Point::ORIGIN,
             constraints: ViewportConstraints::default(),
             // TODO - remove (TODO: why?)
-            scrollbar_horizontal: WidgetPod::new(ScrollBar::new(Axis::Horizontal, 0.0, 0.0)),
+            scrollbar_horizontal: WidgetPod::new(ScrollBar::new(
+                Axis::Horizontal,
+                Length::ZERO,
+                Length::ZERO,
+            )),
             scrollbar_horizontal_visible: false,
-            scrollbar_vertical: WidgetPod::new(ScrollBar::new(Axis::Vertical, 0.0, 0.0)),
+            scrollbar_vertical: WidgetPod::new(ScrollBar::new(
+                Axis::Vertical,
+                Length::ZERO,
+                Length::ZERO,
+            )),
             scrollbar_vertical_visible: false,
             nanos_since_last_pointer_move: None,
         }
@@ -161,37 +169,26 @@ pub(super) fn compute_pan_range(mut viewport: Range<f64>, target: Range<f64>) ->
 
 // --- MARK: METHODS
 impl<W: Widget + ?Sized> Portal<W> {
-    fn scrollbar_progress(&self, portal_size: Size, content_size: Size) -> Vec2 {
-        let range = (content_size - portal_size).max(Size::ZERO);
-        let progress = |position: f64, range: f64| {
-            if range > 0.0 {
-                (position / range).clamp(0.0, 1.0)
+    fn scrollbar_states(
+        &self,
+        portal: Size,
+        content: Size,
+    ) -> [(&WidgetPod<ScrollBar>, f64, f64, f64); 2] {
+        [
+            (Axis::Horizontal, &self.scrollbar_horizontal),
+            (Axis::Vertical, &self.scrollbar_vertical),
+        ]
+        .map(|(axis, bar)| {
+            let viewport = portal.get_coord(axis);
+            let total = content.get_coord(axis);
+            let range = (total - viewport).max(0.0);
+            let progress = if range > 0.0 {
+                (self.viewport_pos.get_coord(axis) / range).clamp(0.0, 1.0)
             } else {
                 0.0
-            }
-        };
-        Vec2::new(
-            progress(self.viewport_pos.x, range.width),
-            progress(self.viewport_pos.y, range.height),
-        )
-    }
-
-    fn update_scrollbar_progress(child: Option<(&mut ScrollBar, RawCtx<'_>)>, progress: f64) {
-        if let Some((bar, mut ctx)) = child {
-            bar.cursor_progress = progress;
-            ctx.request_render();
-        }
-    }
-
-    fn update_scrollbars_from_viewport(
-        &self,
-        ctx: &mut EventCtx<'_>,
-        portal_size: Size,
-        content_size: Size,
-    ) {
-        let progress = self.scrollbar_progress(portal_size, content_size);
-        Self::update_scrollbar_progress(ctx.get_raw_mut(&self.scrollbar_horizontal), progress.x);
-        Self::update_scrollbar_progress(ctx.get_raw_mut(&self.scrollbar_vertical), progress.y);
+            };
+            (bar, viewport, total, progress)
+        })
     }
 
     fn set_viewport_pos_event_ctx(
@@ -204,7 +201,11 @@ impl<W: Widget + ?Sized> Portal<W> {
         let changed = self.set_viewport_pos_raw(portal_size, content_size, pos);
         if changed {
             ctx.request_compose();
-            self.update_scrollbars_from_viewport(ctx, portal_size, content_size);
+            for (bar, viewport, content, progress) in
+                self.scrollbar_states(portal_size, content_size)
+            {
+                ScrollBar::synchronize_raw(ctx.get_raw_mut(bar), viewport, content, progress);
+            }
         }
         changed
     }
@@ -228,46 +229,6 @@ impl<W: Widget + ?Sized> Portal<W> {
         self.set_viewport_pos_event_ctx(ctx, portal_size, content_size, self.viewport_pos + delta)
     }
 
-    fn sync_viewport_from_scrollbars(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        portal_size: Size,
-        content_size: Size,
-    ) -> bool {
-        let mut changed = false;
-        let scroll_range = (content_size - portal_size).max(Size::ZERO);
-
-        if let Some((scrollbar, _)) = ctx.get_raw_mut(&self.scrollbar_horizontal)
-            && scrollbar.moved
-        {
-            scrollbar.moved = false;
-            let x = scrollbar.cursor_progress * scroll_range.width;
-            changed |= self.set_viewport_pos_raw(
-                portal_size,
-                content_size,
-                Point::new(x, self.viewport_pos.y),
-            );
-        }
-        if let Some((scrollbar, _)) = ctx.get_raw_mut(&self.scrollbar_vertical)
-            && scrollbar.moved
-        {
-            scrollbar.moved = false;
-            let y = scrollbar.cursor_progress * scroll_range.height;
-            changed |= self.set_viewport_pos_raw(
-                portal_size,
-                content_size,
-                Point::new(self.viewport_pos.x, y),
-            );
-        }
-
-        if changed {
-            ctx.request_compose();
-            self.update_scrollbars_from_viewport(ctx, portal_size, content_size);
-        }
-
-        changed
-    }
-
     /// Returns the scrolling "position" of the container.
     #[must_use = "Use the returned value."]
     pub const fn get_viewport_pos(&self) -> Point {
@@ -276,10 +237,21 @@ impl<W: Widget + ?Sized> Portal<W> {
 
     // TODO - rename
     fn set_viewport_pos_raw(&mut self, portal_size: Size, content_size: Size, pos: Point) -> bool {
+        if !pos.x.is_finite() || !pos.y.is_finite() {
+            return false;
+        }
         let viewport_max_pos = (content_size - portal_size).max(Size::ZERO);
         let pos = Point::new(
-            pos.x.clamp(0.0, viewport_max_pos.width),
-            pos.y.clamp(0.0, viewport_max_pos.height),
+            if self.constraints.constrain_horizontal {
+                0.0
+            } else {
+                pos.x.clamp(0.0, viewport_max_pos.width)
+            },
+            if self.constraints.constrain_vertical {
+                0.0
+            } else {
+                pos.y.clamp(0.0, viewport_max_pos.height)
+            },
         );
 
         if (pos - self.viewport_pos).hypot2() > 1e-12 {
@@ -367,15 +339,11 @@ impl<W: Widget + FromDynWidget + ?Sized> Portal<W> {
             .widget
             .set_viewport_pos_raw(portal_size, content_size, position);
         if pos_changed {
-            let progress = this.widget.scrollbar_progress(portal_size, content_size);
-            Self::update_scrollbar_progress(
-                this.ctx.get_raw_mut(&this.widget.scrollbar_horizontal),
-                progress.x,
-            );
-            Self::update_scrollbar_progress(
-                this.ctx.get_raw_mut(&this.widget.scrollbar_vertical),
-                progress.y,
-            );
+            for (bar, viewport, content, progress) in
+                this.widget.scrollbar_states(portal_size, content_size)
+            {
+                ScrollBar::synchronize_raw(this.ctx.get_raw_mut(bar), viewport, content, progress);
+            }
             this.ctx.request_compose();
         }
         pos_changed
@@ -468,12 +436,6 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
                 ctx.request_anim_frame();
             }
             _ => (),
-        }
-
-        // This section works because events are propagated up. So if the scrollbar got
-        // pointer events, then its event method has already been called by the time this runs.
-        if self.sync_viewport_from_scrollbars(ctx, portal_size, content_size) {
-            ctx.set_handled();
         }
     }
 
@@ -572,12 +534,6 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
                 ctx.set_handled();
             }
         }
-
-        // Events bubble; if a scrollbar handled the keypress and updated its cursor progress,
-        // we synchronize the portal viewport here.
-        if self.sync_viewport_from_scrollbars(ctx, portal_size, content_size) {
-            ctx.set_handled();
-        }
     }
 
     fn on_access_event(
@@ -629,12 +585,34 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
                 ctx.set_handled();
             }
         }
+    }
 
-        // Events bubble; if a scrollbar handled the accessibility action and updated its cursor
-        // progress, we synchronize the portal viewport here.
-        if self.sync_viewport_from_scrollbars(ctx, portal_size, content_size) {
-            ctx.set_handled();
+    fn on_action(
+        &mut self,
+        ctx: &mut ActionCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        action: &ErasedAction,
+        source: WidgetId,
+    ) {
+        let Some(movement) = action.downcast_ref::<ScrollBarMoved>() else {
+            return;
+        };
+        let portal_size = ctx.content_box().size();
+        let content_size = self.content_size;
+        let range = (content_size - portal_size).max(Size::ZERO);
+        let position = if source == self.scrollbar_horizontal.id() {
+            Point::new(movement.0 * range.width, self.viewport_pos.y)
+        } else if source == self.scrollbar_vertical.id() {
+            Point::new(self.viewport_pos.x, movement.0 * range.height)
+        } else {
+            return;
+        };
+        self.set_viewport_pos_raw(portal_size, content_size, position);
+        for (bar, viewport, content, progress) in self.scrollbar_states(portal_size, content_size) {
+            ScrollBar::synchronize_raw(ctx.get_raw_mut(bar), viewport, content, progress);
         }
+        ctx.request_compose();
+        ctx.set_handled();
     }
 
     fn on_anim_frame(
@@ -682,22 +660,22 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
-            Update::RequestPanToChild(target) => {
+            Update::RequestPanToChild { child, rect } if *child == self.child.id() => {
                 let portal_size = ctx.content_box().size();
                 let content_size = self.content_size;
 
-                self.pan_viewport_to_raw(portal_size, content_size, *target);
+                self.pan_viewport_to_raw(
+                    portal_size,
+                    content_size,
+                    *rect + self.viewport_pos.to_vec2().round(),
+                );
                 ctx.request_compose();
 
-                let progress = self.scrollbar_progress(portal_size, content_size);
-                Self::update_scrollbar_progress(
-                    ctx.get_raw_mut(&self.scrollbar_horizontal),
-                    progress.x,
-                );
-                Self::update_scrollbar_progress(
-                    ctx.get_raw_mut(&self.scrollbar_vertical),
-                    progress.y,
-                );
+                for (bar, viewport, content, progress) in
+                    self.scrollbar_states(portal_size, content_size)
+                {
+                    ScrollBar::synchronize_raw(ctx.get_raw_mut(bar), viewport, content, progress);
+                }
             }
             _ => {}
         }
@@ -762,7 +740,9 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
         // TODO - document better
         // Recompute the portal offset for the new layout
         self.set_viewport_pos_raw(size, content_size, self.viewport_pos);
-        // TODO - recompute portal progress
+        for (bar, viewport, content, progress) in self.scrollbar_states(size, content_size) {
+            ScrollBar::synchronize_raw(ctx.get_raw_mut(bar), viewport, content, progress);
+        }
 
         ctx.set_clip_path(size.to_rect());
 
@@ -778,12 +758,6 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
             !self.scrollbar_horizontal_visible,
         );
         if self.scrollbar_horizontal_visible {
-            if let Some((scrollbar, mut sb_ctx)) = ctx.get_raw_mut(&self.scrollbar_horizontal) {
-                scrollbar.portal_size = size.width;
-                scrollbar.content_size = content_size.width;
-                sb_ctx.request_render();
-            }
-
             let scrollbar_size =
                 ctx.compute_size(&self.scrollbar_horizontal, SizeDef::fit(size), size.into());
             ctx.run_layout(&self.scrollbar_horizontal, scrollbar_size);
@@ -795,12 +769,6 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
 
         ctx.set_stashed(&self.scrollbar_vertical, !self.scrollbar_vertical_visible);
         if self.scrollbar_vertical_visible {
-            if let Some((scrollbar, mut sb_ctx)) = ctx.get_raw_mut(&self.scrollbar_vertical) {
-                scrollbar.portal_size = size.height;
-                scrollbar.content_size = content_size.height;
-                sb_ctx.request_render();
-            }
-
             let scrollbar_size =
                 ctx.compute_size(&self.scrollbar_vertical, SizeDef::fit(size), size.into());
             ctx.run_layout(&self.scrollbar_vertical, scrollbar_size);
@@ -1070,6 +1038,133 @@ mod tests {
 
         let node = harness.access_node(portal_id).unwrap();
         assert!(node.data().scroll_y().unwrap_or(0.0) > 0.0);
+    }
+
+    #[test]
+    fn nested_portals_reveal_transformed_descendant_from_current_scroll_positions() {
+        use crate::kurbo::Affine;
+        use crate::properties::Gap;
+
+        let target = WidgetTag::named("nested-scroll-target");
+        let inner = WidgetTag::named("inner-portal");
+        let inner_content = Flex::column()
+            .with_fixed_spacer(300.px())
+            .with_fixed(
+                SizedBox::empty()
+                    .size(40.px(), 30.px())
+                    .prepare()
+                    .with_transform(Affine::translate((0.0, 20.0)))
+                    .with_tag(target),
+            )
+            .with_fixed_spacer(300.px())
+            .prepare()
+            .with_props(Gap::new(Length::ZERO));
+        let outer_content = Flex::column()
+            .with_fixed_spacer(260.px())
+            .with_fixed(
+                Portal::new(inner_content)
+                    .constrain_horizontal(true)
+                    .prepare()
+                    .with_props(Dimensions::fixed(80.px(), 120.px()))
+                    .with_tag(inner),
+            )
+            .with_fixed_spacer(400.px())
+            .prepare()
+            .with_props(Gap::new(Length::ZERO));
+        let root = Portal::new(outer_content)
+            .constrain_horizontal(true)
+            .prepare();
+        let mut harness = TestHarness::create_with_size(test_property_set(), root, (120, 100));
+        harness
+            .edit_root_widget(|mut portal| {
+                Portal::set_viewport_pos(&mut portal, Point::new(0.0, 80.0));
+            })
+            .unwrap();
+        harness
+            .edit_widget(inner, |mut portal| {
+                Portal::set_viewport_pos(&mut portal, Point::new(0.0, 50.0));
+            })
+            .unwrap();
+
+        let target_id = harness.get_widget(target).unwrap().id();
+        for _ in 0..2 {
+            harness.scroll_into_view(target_id);
+            let inner_position = harness.get_widget(inner).unwrap().get_viewport_pos();
+            let outer_position = harness.root_widget().unwrap().get_viewport_pos();
+            assert!(
+                (inner_position.y - 230.0).abs() < 1e-6,
+                "inner viewport must account for target transform: {inner_position:?}"
+            );
+            assert!(
+                (outer_position.y - 280.0).abs() < 1e-6,
+                "outer viewport must reveal the region after inner scrolling: {outer_position:?}"
+            );
+            let widget = harness.get_widget(target).unwrap();
+            let rect = widget
+                .ctx()
+                .window_transform()
+                .transform_rect_bbox(widget.ctx().border_box());
+            assert!(
+                rect.y0 >= 0.0 && rect.y1 <= 100.0,
+                "target must be visible through both portals: {rect:?}"
+            );
+        }
+
+        // The outer scrollbar is already visible; it is not part of the scrollable content.
+        let bar = harness.root_widget().unwrap().children()[1].id();
+        harness.scroll_into_view(bar);
+        let position = harness.root_widget().unwrap().get_viewport_pos();
+        assert!(
+            (position.y - 280.0).abs() < 1e-6,
+            "scrollbar reveal must not scroll its owner's content"
+        );
+    }
+
+    #[test]
+    fn scrollbar_action_is_consumed_and_progress_resynchronizes_after_resize() {
+        let content = SizedBox::empty().size(80.px(), 600.px()).prepare();
+        let widget = Portal::new(content).constrain_horizontal(true).prepare();
+        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (100, 200));
+        let bar = harness.root_widget().unwrap().children()[1];
+        let bar_id = bar.id();
+        let end = bar.ctx().local_to_window(Point::new(
+            bar.ctx().content_box().width() / 2.0,
+            bar.ctx().content_box().height() - 1.0,
+        ));
+        harness.mouse_move(end);
+        harness.mouse_button_press(None);
+        harness.mouse_button_release(None);
+        assert!(harness.pop_action_erased().is_none());
+        assert!((harness.root_widget().unwrap().get_viewport_pos().y - 400.0).abs() < 1e-6);
+        assert!(
+            (harness
+                .get_widget_with_id(bar_id)
+                .unwrap()
+                .downcast::<ScrollBar>()
+                .unwrap()
+                .cursor_progress()
+                - 1.0)
+                .abs()
+                < 1e-9
+        );
+
+        harness.process_window_event(crate::core::WindowEvent::Resize((100, 400).into()));
+        assert!((harness.root_widget().unwrap().get_viewport_pos().y - 200.0).abs() < 1e-6);
+        let bar = harness
+            .get_widget_with_id(bar_id)
+            .unwrap()
+            .downcast::<ScrollBar>()
+            .unwrap();
+        assert!((bar.cursor_progress() - 1.0).abs() < 1e-9);
+        harness.process_window_event(crate::core::WindowEvent::Resize((100, 700).into()));
+        let bar = harness
+            .get_widget_with_id(bar_id)
+            .unwrap()
+            .downcast::<ScrollBar>()
+            .unwrap();
+        assert!(bar.ctx().is_stashed());
+        assert!(bar.cursor_progress().abs() < 1e-9);
+        assert!(harness.root_widget().unwrap().get_viewport_pos().y.abs() < 1e-9);
     }
 
     #[test]

@@ -8,11 +8,42 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 
 use crate::ViewCtx;
+
 use crate::core::anymore::AnyDebug;
 use crate::core::{
     MessageCtx, MessageProxy, MessageResult, Mut, NoElement, View, ViewId, ViewMarker,
     ViewPathTracker,
 };
+
+/// Owns the lifetime of a spawned view task.
+///
+/// Dropping the view state cancels the task even if normal teardown was skipped.
+/// A task that has already finished may still have a message queued in the
+/// event loop, so completion alone does not invalidate its route.
+#[derive(Debug, Default)]
+pub struct TaskLifetime(Option<JoinHandle<()>>);
+
+impl TaskLifetime {
+    pub(super) const fn new(handle: JoinHandle<()>) -> Self {
+        Self(Some(handle))
+    }
+
+    pub(super) const fn is_active(&self) -> bool {
+        self.0.is_some()
+    }
+
+    pub(super) fn cancel(&mut self) {
+        if let Some(handle) = self.0.take() {
+            handle.abort();
+        }
+    }
+}
+
+impl Drop for TaskLifetime {
+    fn drop(&mut self) {
+        self.cancel();
+    }
+}
 
 /// Launch a task which will run until the view is no longer in the tree.
 ///
@@ -92,7 +123,7 @@ where
 {
     type Element = NoElement;
 
-    type ViewState = JoinHandle<()>;
+    type ViewState = TaskLifetime;
 
     fn build(&self, ctx: &mut ViewCtx, state: &mut State) -> (Self::Element, Self::ViewState) {
         let path: Arc<[ViewId]> = ctx.view_path().into();
@@ -101,7 +132,7 @@ where
         let handle = ctx
             .runtime()
             .spawn((self.init_future)(MessageProxy::new(proxy, path), state));
-        (NoElement, handle)
+        (NoElement, TaskLifetime::new(handle))
     }
 
     fn rebuild(
@@ -121,19 +152,59 @@ where
         _: &mut ViewCtx,
         (): Mut<'_, Self::Element>,
     ) {
-        join_handle.abort();
+        join_handle.cancel();
     }
 
     fn message(
         &self,
-        _: &mut Self::ViewState,
+        lifetime: &mut Self::ViewState,
         message: &mut MessageCtx,
         _element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
+        if !lifetime.is_active() {
+            return MessageResult::Stale;
+        }
         let Some(message) = message.take_message::<M>() else {
             return MessageResult::Stale;
         };
         MessageResult::Action((self.on_event)(app_state, *message))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::pending;
+
+    use tokio::sync::oneshot;
+
+    use super::*;
+
+    #[test]
+    fn dropping_view_state_cancels_task_without_teardown() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (started_tx, started_rx) = oneshot::channel();
+            let (dropped_tx, dropped_rx) = oneshot::channel::<()>();
+            let handle = tokio::spawn(async move {
+                // Dropping the suspended future closes this channel.
+                let _lifetime = dropped_tx;
+                started_tx.send(()).unwrap();
+                pending::<()>().await;
+            });
+            let lifetime = TaskLifetime::new(handle);
+            started_rx.await.unwrap();
+            drop(lifetime);
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_secs(1), dropped_rx)
+                    .await
+                    .unwrap()
+                    .is_err(),
+                "dropping state must release the suspended task"
+            );
+        });
     }
 }

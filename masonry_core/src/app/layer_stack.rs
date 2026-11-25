@@ -8,8 +8,8 @@ use kurbo::{Axis, Point, Size};
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesRef,
-    RegisterCtx, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ChildrenIds, LayerPlacement, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
+    PropertiesRef, RegisterCtx, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::layout::{LenReq, Length, SizeDef};
@@ -39,8 +39,8 @@ pub(crate) struct LayerStack {
 struct LayerEntry {
     /// Root widget owned by this top-level layer entry.
     root: WidgetPod<dyn Widget>,
-    /// Position of this layer entry in the `LayerStack`'s content-box coordinates.
-    position: Point,
+    /// Placement in the layer stack content-box coordinates.
+    placement: LayerPlacement,
 }
 
 // --- MARK: IMPL LAYER_STACK
@@ -49,7 +49,7 @@ impl LayerStack {
     pub(crate) fn new(root: NewWidget<impl Widget + ?Sized>) -> Self {
         let layer = LayerEntry {
             root: root.erased().into_pod(),
-            position: Point::ZERO,
+            placement: LayerPlacement::Absolute(Point::ZERO),
         };
         Self {
             layers: vec![layer],
@@ -70,17 +70,17 @@ impl LayerStack {
 impl LayerStack {
     /// Adds a new layer at the end of the stack, with the given widget as its root, at the given position.
     ///
-    /// The given `pos` must be in this `LayerStack`'s content-box coordinate space.
+    /// Placement is in this `LayerStack`'s content-box coordinate space.
     /// If this `LayerStack` is used as the root widget with no borders, padding, or transforms,
     /// then that coordinate space will exactly match the window's coordinate space.
     pub(crate) fn add_layer(
         this: &mut WidgetMut<'_, Self>,
         root: NewWidget<impl Widget + ?Sized>,
-        position: Point,
+        placement: LayerPlacement,
     ) {
         let layer = LayerEntry {
             root: root.erased().into_pod(),
-            position,
+            placement,
         };
         this.widget.layers.push(layer);
         this.ctx.children_changed();
@@ -92,8 +92,8 @@ impl LayerStack {
     ///
     /// # Panics
     ///
-    /// Panics in debug mode if the intended layer is the base layer or
-    /// is not found.
+    /// Panics in debug mode if the intended layer is the base layer.
+    /// A layer that has already been removed is ignored.
     pub(crate) fn remove_layer(this: &mut WidgetMut<'_, Self>, root_id: WidgetId) {
         match this
             .widget
@@ -102,7 +102,7 @@ impl LayerStack {
             .position(|layer| layer.root.id() == root_id)
         {
             Some(0) => debug_panic!("Cannot remove initial layer"),
-            None => debug_panic!("layer with root widget {root_id:?} not found"),
+            None => {}
             Some(idx) => {
                 let child = this.widget.layers.remove(idx).root;
                 this.ctx.remove_child(child);
@@ -112,7 +112,7 @@ impl LayerStack {
 
     /// Repositions the layer with the given widget as root.
     ///
-    /// The given `new_origin` must be in this `LayerStack`'s content-box coordinate space.
+    /// Placement is in this `LayerStack`'s content-box coordinate space.
     /// If this `LayerStack` is used as the root widget with no borders, padding, or transforms,
     /// then that coordinate space will exactly match the window's coordinate space.
     ///
@@ -120,12 +120,12 @@ impl LayerStack {
     ///
     /// # Panics
     ///
-    /// Panics in debug mode if the intended layer is the base layer or
-    /// is not found.
+    /// Panics in debug mode if the intended layer is the base layer.
+    /// A layer removed before a queued reposition is ignored.
     pub(crate) fn reposition_layer(
         this: &mut WidgetMut<'_, Self>,
         root_id: WidgetId,
-        new_origin: Point,
+        placement: LayerPlacement,
     ) {
         match this
             .widget
@@ -134,10 +134,12 @@ impl LayerStack {
             .position(|layer| layer.root.id() == root_id)
         {
             Some(0) => debug_panic!("Cannot reposition initial layer"),
-            None => debug_panic!("layer with root widget {root_id:?} not found"),
+            None => {}
             Some(idx) => {
-                this.widget.layers[idx].position = new_origin;
-                this.ctx.request_layout();
+                if this.widget.layers[idx].placement != placement {
+                    this.widget.layers[idx].placement = placement;
+                    this.ctx.request_layout();
+                }
             }
         }
     }
@@ -188,14 +190,25 @@ impl Widget for LayerStack {
         ctx.derive_baselines(&base_layer.root);
 
         for layer in &mut self.layers[1..] {
-            // Other layers don't take part in our measurement,
-            // so RenderRoot has no idea what they want and instead we control them.
-            // We don't really care if they go outside the bounds of the base layer,
-            // so we won't give any FitContent fallback and instead just use MaxContent.
-            // These other layers still have access to the window size via context size.
-            let layer_size = ctx.compute_size(&layer.root, SizeDef::MAX, size.into());
+            // Popup layers receive a bounded viewport without affecting the base
+            // layer's requested dimensions. Absolute overlays retain max-content.
+            let natural = ctx.compute_size(&layer.root, SizeDef::MAX, size.into());
+            let (_, width_limit) = layer.placement.resolve(natural, size);
+            let natural = if matches!(layer.placement, LayerPlacement::Popup(_)) {
+                ctx.compute_size(
+                    &layer.root,
+                    SizeDef::new(
+                        crate::layout::LenDef::Fixed(Length::px(width_limit.width)),
+                        crate::layout::LenDef::MaxContent,
+                    ),
+                    size.into(),
+                )
+            } else {
+                natural
+            };
+            let (origin, layer_size) = layer.placement.resolve(natural, size);
             ctx.run_layout(&layer.root, layer_size);
-            ctx.place_child(&layer.root, layer.position);
+            ctx.place_child(&layer.root, origin);
         }
     }
 

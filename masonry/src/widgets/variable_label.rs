@@ -142,6 +142,7 @@ impl AnimationStatus {
 pub struct VariableLabel {
     label: WidgetPod<Label>,
     weight: AnimatedF32,
+    hint_before_animation: Option<bool>,
 }
 
 // --- MARK: BUILDERS
@@ -156,16 +157,20 @@ impl VariableLabel {
     /// Uses the label's text and style values.
     #[must_use = "Use the returned value."]
     pub fn from_label(label: NewWidget<Label>) -> Self {
+        let weight = AnimatedF32::stable(label.widget.font_weight().value());
         Self {
             label: label.into_pod(),
-            weight: AnimatedF32::stable(FontWeight::NORMAL.value()),
+            weight,
+            hint_before_animation: None,
         }
     }
 
     /// Sets the initial font weight for this text.
     #[must_use = "Use the returned value."]
     pub const fn with_initial_weight(mut self, weight: f32) -> Self {
-        self.weight = AnimatedF32::stable(weight);
+        if weight.is_finite() {
+            self.weight = AnimatedF32::stable(weight);
+        }
         self
     }
 }
@@ -186,9 +191,42 @@ impl VariableLabel {
 
     /// Sets the weight which this font will target.
     pub fn set_target_weight(this: &mut WidgetMut<'_, Self>, target: f32, over_millis: f32) {
-        this.widget.weight.move_to(target, over_millis);
-        this.ctx.request_layout();
-        this.ctx.request_anim_frame();
+        if !target.is_finite() || !over_millis.is_finite() {
+            tracing::warn!(target, over_millis, "Ignoring invalid animation parameters");
+            return;
+        }
+        let state = &mut *this.widget;
+        let Some(mut label) = this.ctx.get_mut::<Label>(state.label.id()) else {
+            return;
+        };
+        // A caller may have edited the wrapped label while no animation was running.
+        if state.hint_before_animation.is_none() {
+            state.weight = AnimatedF32::stable(label.widget.font_weight().value());
+        }
+        state.weight.move_to(target, over_millis);
+        let running = state.weight.remaining_millis > 0.;
+        if running {
+            if state.hint_before_animation.is_none() {
+                state.hint_before_animation = Some(label.widget.hint());
+            }
+            Label::set_hint(&mut label, false);
+        } else {
+            Self::apply_weight(&mut label, state.weight.value());
+            if let Some(hint) = state.hint_before_animation.take() {
+                Label::set_hint(&mut label, hint);
+            }
+        }
+        drop(label);
+        if running {
+            this.ctx.request_anim_frame();
+        }
+    }
+
+    fn apply_weight(label: &mut WidgetMut<'_, Label>, value: f32) {
+        let weight = FontWeight::new(value);
+        if label.widget.font_weight() != weight {
+            let _ = Label::insert_style(label, StyleProperty::FontWeight(weight));
+        }
     }
 }
 
@@ -200,12 +238,13 @@ impl Widget for VariableLabel {
         false
     }
 
-    fn update(
-        &mut self,
-        _ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &Update,
-    ) {
+    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        if matches!(event, Update::WidgetAdded) {
+            let weight = self.weight.value();
+            ctx.mutate_child_later(&self.label, move |mut label| {
+                Self::apply_weight(&mut label, weight);
+            });
+        }
     }
 
     masonry_core::single_child_container!(label, fill);
@@ -216,25 +255,23 @@ impl Widget for VariableLabel {
         _props: &mut PropertiesMut<'_>,
         interval: u64,
     ) {
-        let result = self.weight.advance_nanos(interval);
-        let new_weight = self.weight.value();
-        // The ergonomics of child widgets are quite bad - ideally, this wouldn't need a mutate pass, since we
-        // can set the required invalidation anyway.
-        ctx.mutate_child_later(&self.label, move |mut label| {
-            // TODO: Should this be configurable?
-            if result.is_completed() {
-                Label::set_hint(&mut label, true);
-            } else {
-                Label::set_hint(&mut label, false);
-            }
-            Label::insert_style(
-                &mut label,
-                StyleProperty::FontWeight(FontWeight::new(new_weight)),
-            );
-        });
-        if !result.is_completed() {
-            ctx.request_anim_frame();
+        if self.hint_before_animation.is_none() {
+            return;
         }
+        let result = self.weight.advance_nanos(interval);
+        let weight = self.weight.value();
+        let hint = if result.is_completed() {
+            self.hint_before_animation.take()
+        } else {
+            ctx.request_anim_frame();
+            None
+        };
+        ctx.mutate_child_later(&self.label, move |mut label| {
+            Self::apply_weight(&mut label, weight);
+            if let Some(hint) = hint {
+                Label::set_hint(&mut label, hint);
+            }
+        });
     }
 
     fn accessibility_role(&self) -> Role {
@@ -249,5 +286,69 @@ impl Widget for VariableLabel {
 // --- MARK: TESTS
 #[cfg(test)]
 mod tests {
-    // TODO - Add tests
+    use super::*;
+    use crate::testing::TestHarness;
+    use crate::theme::test_property_set;
+
+    #[test]
+    fn initial_weight_and_animation_update_the_actual_label() {
+        let child = Label::new("variable")
+            .with_style(StyleProperty::FontWeight(FontWeight::new(500.)))
+            .with_hint(false)
+            .prepare();
+        let child_id = child.id();
+        let widget = VariableLabel::from_label(child).with_initial_weight(600.);
+        let mut harness =
+            TestHarness::create_with_size(test_property_set(), widget.prepare(), (200, 40));
+        let check = |harness: &TestHarness<VariableLabel>, weight, hint| {
+            let child = harness.get_widget_with_id(child_id).unwrap();
+            let child = child.downcast::<Label>().unwrap();
+            assert_eq!(child.font_weight(), FontWeight::new(weight));
+            assert_eq!(child.hint(), hint);
+        };
+        check(&harness, 600., false);
+        harness
+            .edit_root_widget(|mut widget| {
+                VariableLabel::set_target_weight(&mut widget, 800., 100.);
+            })
+            .unwrap();
+        harness.animate_ms(50);
+        check(&harness, 700., false);
+        harness
+            .edit_root_widget(|mut widget| {
+                VariableLabel::set_target_weight(&mut widget, 350., 0.);
+            })
+            .unwrap();
+        check(&harness, 350., false);
+        harness.animate_ms(100);
+        check(&harness, 350., false);
+    }
+
+    #[test]
+    fn animation_starts_from_wrapped_style_and_restores_hinting() {
+        let child = Label::new("variable")
+            .with_style(StyleProperty::FontWeight(FontWeight::new(500.)))
+            .prepare();
+        let child_id = child.id();
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            VariableLabel::from_label(child).prepare(),
+            (200, 40),
+        );
+        harness
+            .edit_root_widget(|mut widget| {
+                VariableLabel::set_target_weight(&mut widget, 700., 100.);
+            })
+            .unwrap();
+        harness.animate_ms(50);
+        let child = harness.get_widget_with_id(child_id).unwrap();
+        let child = child.downcast::<Label>().unwrap();
+        assert_eq!(child.font_weight(), FontWeight::new(600.));
+        assert!(!child.hint());
+        harness.animate_ms(50);
+        let child = harness.get_widget_with_id(child_id).unwrap();
+        let child = child.downcast::<Label>().unwrap();
+        assert_eq!(child.font_weight(), FontWeight::new(700.));
+        assert!(child.hint());
+    }
 }

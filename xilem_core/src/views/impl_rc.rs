@@ -13,7 +13,7 @@ use crate::{MessageCtx, Mut, View, ViewMarker, ViewPathTracker};
     reason = "Implementation detail, public because of trait visibility rules"
 )]
 #[derive(Debug)]
-pub struct RcState<ViewState> {
+pub struct SharedViewState<ViewState> {
     pub(crate) view_state: ViewState,
     /// This is a flag that is set, when an inner view signifies that it requires a rebuild (via [`MessageResult::RequestRebuild`]).
     /// This can happen, e.g. when an inner view wasn't changed by the app-developer directly (i.e. it points to the same view),
@@ -22,130 +22,77 @@ pub struct RcState<ViewState> {
     pub(crate) dirty: bool,
 }
 
-impl<V: ?Sized> ViewMarker for Rc<V> {}
-/// An implementation of [`View`] which only runs rebuild if the states are different
-impl<State, Action, Context, V> View<State, Action, Context> for Rc<V>
-where
-    State: 'static,
-    Context: ViewPathTracker,
-    V: View<State, Action, Context> + ?Sized,
-{
-    type Element = V::Element;
-    type ViewState = RcState<V::ViewState>;
+// The two reference-counted pointers have identical view semantics.
+macro_rules! impl_shared_view {
+    ($pointer:ident) => {
+        impl<V: ?Sized> ViewMarker for $pointer<V> {}
+        /// An implementation of [`View`] which only runs rebuild if the states are different
+        impl<State, Action, Context, V> View<State, Action, Context> for $pointer<V>
+        where
+            State: 'static,
+            Context: ViewPathTracker,
+            V: View<State, Action, Context> + ?Sized,
+        {
+            type Element = V::Element;
+            type ViewState = SharedViewState<V::ViewState>;
 
-    fn build(&self, ctx: &mut Context, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        let (element, view_state) = self.deref().build(ctx, app_state);
-        (
-            element,
-            RcState {
-                view_state,
-                dirty: false,
-            },
-        )
-    }
+            fn build(
+                &self,
+                ctx: &mut Context,
+                app_state: &mut State,
+            ) -> (Self::Element, Self::ViewState) {
+                let (element, view_state) = self.deref().build(ctx, app_state);
+                (
+                    element,
+                    SharedViewState {
+                        view_state,
+                        dirty: false,
+                    },
+                )
+            }
 
-    fn rebuild(
-        &self,
-        prev: &Self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut Context,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) {
-        #![expect(clippy::use_self, reason = "`Rc::ptr_eq` is the canonical form")]
-        if core::mem::take(&mut view_state.dirty) || !Rc::ptr_eq(self, prev) {
-            self.deref()
-                .rebuild(prev, &mut view_state.view_state, ctx, element, app_state);
+            fn rebuild(
+                &self,
+                prev: &Self,
+                view_state: &mut Self::ViewState,
+                ctx: &mut Context,
+                element: Mut<'_, Self::Element>,
+                app_state: &mut State,
+            ) {
+                if core::mem::take(&mut view_state.dirty) || !Self::ptr_eq(self, prev) {
+                    self.deref()
+                        .rebuild(prev, &mut view_state.view_state, ctx, element, app_state);
+                }
+            }
+
+            fn teardown(
+                &self,
+                view_state: &mut Self::ViewState,
+                ctx: &mut Context,
+                element: Mut<'_, Self::Element>,
+            ) {
+                self.deref()
+                    .teardown(&mut view_state.view_state, ctx, element);
+            }
+
+            fn message(
+                &self,
+                view_state: &mut Self::ViewState,
+                message: &mut MessageCtx,
+                element: Mut<'_, Self::Element>,
+                app_state: &mut State,
+            ) -> MessageResult<Action> {
+                let message_result =
+                    self.deref()
+                        .message(&mut view_state.view_state, message, element, app_state);
+                if matches!(message_result, MessageResult::RequestRebuild) {
+                    view_state.dirty = true;
+                }
+                message_result
+            }
         }
-    }
-
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut Context,
-        element: Mut<'_, Self::Element>,
-    ) {
-        self.deref()
-            .teardown(&mut view_state.view_state, ctx, element);
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        let message_result =
-            self.deref()
-                .message(&mut view_state.view_state, message, element, app_state);
-        if matches!(message_result, MessageResult::RequestRebuild) {
-            view_state.dirty = true;
-        }
-        message_result
-    }
+    };
 }
 
-impl<V: ?Sized> ViewMarker for Arc<V> {}
-/// An implementation of [`View`] which only runs rebuild if the states are different
-impl<State, Action, Context, V> View<State, Action, Context> for Arc<V>
-where
-    State: 'static,
-    Context: ViewPathTracker,
-    V: View<State, Action, Context> + ?Sized,
-{
-    type Element = V::Element;
-    type ViewState = RcState<V::ViewState>;
-
-    fn build(&self, ctx: &mut Context, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        let (element, view_state) = self.deref().build(ctx, app_state);
-        (
-            element,
-            RcState {
-                view_state,
-                dirty: false,
-            },
-        )
-    }
-
-    fn rebuild(
-        &self,
-        prev: &Self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut Context,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) {
-        #![expect(clippy::use_self, reason = "`Arc::ptr_eq` is the canonical form")]
-        if core::mem::take(&mut view_state.dirty) || !Arc::ptr_eq(self, prev) {
-            self.deref()
-                .rebuild(prev, &mut view_state.view_state, ctx, element, app_state);
-        }
-    }
-
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut Context,
-        element: Mut<'_, Self::Element>,
-    ) {
-        self.deref()
-            .teardown(&mut view_state.view_state, ctx, element);
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        let message_result =
-            self.deref()
-                .message(&mut view_state.view_state, message, element, app_state);
-        if matches!(message_result, MessageResult::RequestRebuild) {
-            view_state.dirty = true;
-        }
-        message_result
-    }
-}
+impl_shared_view!(Rc);
+impl_shared_view!(Arc);

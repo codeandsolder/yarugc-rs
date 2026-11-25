@@ -54,7 +54,14 @@ impl std::fmt::Display for RefreshError {
     }
 }
 
-impl std::error::Error for RefreshError {}
+impl std::error::Error for RefreshError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Render(error) => Some(error),
+            Self::InvalidExtent | Self::DifferentDevice | Self::ExternalLayer => None,
+        }
+    }
+}
 
 /// A retained Masonry root with independently cached GPU content.
 ///
@@ -163,7 +170,7 @@ impl CachedWindow {
             .ok_or(RefreshError::InvalidExtent)?;
         // A failed redraw/render must remain retryable.
         self.dirty.set(true);
-        let (plan, accessibility) = self.root.redraw();
+        let plan = self.root.redraw_visual();
         if plan
             .layers
             .iter()
@@ -196,7 +203,11 @@ impl CachedWindow {
         if let Some(surface) = replacement {
             self.surface = Some(surface);
         }
-        self.dirty.set(false);
+        // Accessibility updates are incremental. Consume them only after the
+        // rendering operation has succeeded, and retain deferred rewrite work.
+        let accessibility = self.root.take_accessibility_update();
+        self.dirty
+            .set(self.root.needs_rewrite_passes() || self.root.needs_accessibility());
         Ok(Refresh::Painted {
             reallocated,
             accessibility,

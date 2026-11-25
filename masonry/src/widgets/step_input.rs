@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::any::TypeId;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 use accesskit::{Action, Node, Role};
 use masonry_core::anymore::AnyDebug;
@@ -11,8 +11,8 @@ use masonry_core::debug_panic;
 use crate::core::keyboard::{Code, Key, NamedKey};
 use crate::core::{
     AccessCtx, AccessEvent, ChildrenIds, CursorIcon, EventCtx, LayoutCtx, MeasureCtx, PaintCtx,
-    PointerButton, PointerEvent, PropertiesMut, PropertiesRef, Property, QueryCtx, RegisterCtx,
-    TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    PointerButton, PointerEvent, PointerState, PropertiesMut, PropertiesRef, Property, QueryCtx,
+    RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Affine, Axis, BezPath, Cap, Line, Point, Size, Stroke};
@@ -21,6 +21,7 @@ use crate::peniko::Gradient;
 use crate::properties::{BackwardColor, ContentColor, ForwardColor, HeatColor, StepInputStyle};
 use crate::theme;
 use crate::widgets::Label;
+use crate::widgets::numeric_grid::{EXACT_GRID_LIMIT, step_sum};
 
 /// How much accidental sliding is allowed to still consider it a simple click.
 ///
@@ -78,7 +79,8 @@ pub struct StepInput<T> {
     ///
     /// This is set to the original input value when the widget is initialized,
     /// and is also updated whenever an explicit value update happens.
-    /// Crucially, this is never updated by the step logic to avoid error accumulation.
+    /// Ordinary stepping never changes the base, avoiding error accumulation.
+    /// Explicit snapping, wrapping and configuration changes can rebase it.
     base: T,
     /// The step size.
     step: T,
@@ -102,6 +104,8 @@ pub struct StepInput<T> {
     /// gear ratio of 10,000,000 ticks per pixel. It would still take that person 3 years
     /// of 24/7 swinging of the arm at a pace of once per second to reach the 63 bit limit.
     ticks: i64,
+    /// The displayed value is a projection of the raw tick position onto the snap grid.
+    snap_active: bool,
     /// Number of ticks that achieves the `min` value.
     ///
     /// Saturated at `i64::MIN` if reaching `min` from `base` actually requires more.
@@ -163,16 +167,13 @@ fn nonnegative_steps(value: f64) -> u64 {
     }
 }
 
-#[expect(
-    clippy::cast_sign_loss,
-    reason = "Decimal precision is bounded to a nonnegative finite range"
-)]
-fn decimal_precision(step: f64) -> usize {
-    if step.is_finite() && step > 0. && step < 1. {
-        (-step.log10().floor()).clamp(0., 324.) as usize
-    } else {
-        0
-    }
+// Float Display uses the shortest round-tripping decimal representation in
+// fixed notation. Unlike log10, this retains all digits in steps such as
+// 0.25 or 2.5, without widening f32 into a longer f64 decimal.
+fn decimal_precision(step: impl Display) -> usize {
+    step.to_string()
+        .split_once('.')
+        .map_or(0, |(_, fraction)| fraction.len())
 }
 
 #[derive(Clone, Copy)]
@@ -209,9 +210,17 @@ pub type DisplayFn<T> = Box<dyn Fn(StepState<T>) -> String>;
 
 /// Data that can be stepped through in a [`StepInput`].
 pub trait Steppable: Debug + Copy + Clone + PartialEq + PartialOrd + Send + Sync + 'static {
+    /// Whether this value belongs to the valid ordered numeric domain.
+    /// Floating implementations must reject NaN and infinities.
+    fn is_valid(self) -> bool;
+
+    /// The additive identity of the numeric domain.
+    fn zero() -> Self;
+
     /// Returns `self` with the given number of steps added.
     ///
-    /// The addition needs to be saturating and not overflow.
+    /// The addition needs to be saturating and not overflow. The receiver,
+    /// step and snap must be valid, with positive step and snap intervals.
     ///
     /// This method is always called on the base value,
     /// so there is no risk of cumulative addings causing errors.
@@ -221,6 +230,13 @@ pub trait Steppable: Debug + Copy + Clone + PartialEq + PartialOrd + Send + Sync
     /// of min/max boundaries of the data type being reached.
     #[must_use = "Use the configured value."]
     fn add_steps(&self, step: Self, count: i64, snap: Option<Self>) -> Self;
+
+    /// Returns the next representable snap-grid value in the given direction.
+    ///
+    /// The interval must be valid and positive. At a numeric domain boundary
+    /// the result saturates rather than wrapping or becoming non-finite.
+    #[must_use = "Use the next snapped value."]
+    fn adjacent_snap(&self, snap: Self, forward: bool) -> Self;
 
     /// Returns the number of steps required to reach `target` from `self`.
     ///
@@ -294,6 +310,10 @@ macro_rules! impl_steppable_int {
     ($(($t:ty, $u:ty, $s:tt)),+) => {
         $(
             impl Steppable for $t {
+                fn is_valid(self) -> bool { true }
+
+                fn zero() -> Self { 0 }
+
                 fn add_steps(&self, step: Self, count: i64, snap: Option<Self>) -> Self {
                     // Add the steps
                     // * Use unsigned delta so we can go from signed::MIN -> signed::MAX
@@ -333,6 +353,15 @@ macro_rules! impl_steppable_int {
                     value
                 }
 
+                fn adjacent_snap(&self, snap: Self, forward: bool) -> Self {
+                    let remainder = self.rem_euclid(snap);
+                    if forward {
+                        self.saturating_add(snap - remainder)
+                    } else {
+                        self.saturating_sub(if remainder == 0 { snap } else { remainder })
+                    }
+                }
+
                 fn steps_to(&self, target: Self, step: Self) -> u64 {
                     let delta = self.abs_diff(target);
                     let steps = delta.div_ceil(unsigned_step!(step, $s));
@@ -364,15 +393,55 @@ impl_steppable_int!(
     (usize, usize, u)
 );
 
-// Keep the separately rounded step displacement: it preserves exact cancellation
-// for UI steps such as 1_000_000 * 0.0001 added to -100. A fused operation exposes
-// the binary representation error at the zero crossing.
-#[expect(
-    clippy::suboptimal_flops,
-    reason = "The step displacement is intentionally rounded before adding to the base"
-)]
-fn add_float_steps(base: f64, step: f64, count: i64) -> f64 {
-    base + step * ticks_as_float(count)
+// Snap in the wider floating domain. When a grid index is too large to
+// represent exactly, use the remainder instead of overflowing value / snap
+// or rounding away significant low bits of the grid index.
+fn snap_float(value: f64, snap: f64) -> f64 {
+    let magnitude = value.abs();
+    let index = magnitude / snap;
+    let snapped = if index < EXACT_GRID_LIMIT {
+        index.round() * snap
+    } else {
+        let remainder = magnitude % snap;
+        let up = snap - remainder;
+        if remainder < up {
+            magnitude - remainder
+        } else {
+            magnitude + up
+        }
+    };
+    snapped.copysign(value)
+}
+
+// The signed remainder avoids rounding a tiny negative residue up to an
+// entire interval, which rem_euclid can do for floating-point values.
+const fn adjacent_grid_by_remainder(value: f64, interval: f64, forward: bool) -> f64 {
+    let remainder = value % interval;
+    if forward {
+        let distance = if remainder < 0.0 {
+            -remainder
+        } else {
+            interval - remainder
+        };
+        value + distance
+    } else {
+        let distance = if remainder > 0.0 {
+            remainder
+        } else {
+            interval + remainder
+        };
+        value - distance
+    }
+}
+
+fn float_step_count(base: f64, target: f64, step: f64) -> u64 {
+    let delta = target - base;
+    let count = if delta.is_finite() {
+        delta / step
+    } else {
+        base.mul_add(-0.5, target * 0.5) / (step * 0.5)
+    };
+    nonnegative_steps(count)
 }
 
 /// Implement `Steppable` for float types.
@@ -382,31 +451,56 @@ macro_rules! impl_steppable_float {
     ($(($t:ty, $widen:path, $narrow:path)),+) => {
         $(
             impl Steppable for $t {
+                fn is_valid(self) -> bool { self.is_finite() }
+
+                fn zero() -> Self { 0.0 }
+
                 fn add_steps(&self, step: Self, count: i64, snap: Option<Self>) -> Self {
-                    // Add the steps
-                    // * Do the math in f64 for more precision in case numbers are bit-heavy
-                    // * Casting to small float is ok, overflow won't truncate and will be infinite.
-                    let mut value = $narrow(add_float_steps($widen(*self), $widen(step), count));
-                    // Potential snapping
-                    if let Some(snap) = snap {
-                        value = (value / snap).round() * snap;
+                    let value = step_sum($widen(*self), $widen(step), ticks_as_float(count));
+                    let value = value.clamp($widen(Self::MIN), $widen(Self::MAX));
+                    let value = snap.map_or(value, |snap| snap_float(value, $widen(snap)));
+                    $narrow(value.clamp($widen(Self::MIN), $widen(Self::MAX)))
+                }
+
+                fn adjacent_snap(&self, snap: Self, forward: bool) -> Self {
+                    let value = $widen(*self);
+                    let interval = $widen(snap);
+                    let direction = if forward { 1.0 } else { -1.0 };
+                    let index = value / interval;
+                    let candidate = if index.abs() < EXACT_GRID_LIMIT {
+                        let nearest = index.round();
+                        let grid = $narrow(nearest * interval);
+                        let index = if (forward && grid > *self) || (!forward && grid < *self) {
+                            nearest
+                        } else {
+                            nearest + direction
+                        };
+                        index * interval
+                    } else {
+                        adjacent_grid_by_remainder(value, interval, forward)
+                    };
+                    let candidate = $narrow(candidate.clamp($widen(Self::MIN), $widen(Self::MAX)));
+                    // A grid interval can be smaller than one representable
+                    // increment. Advance by one ULP if rounding erased it.
+                    if forward && candidate <= *self {
+                        self.next_up().min(Self::MAX)
+                    } else if !forward && candidate >= *self {
+                        self.next_down().max(Self::MIN)
+                    } else {
+                        candidate
                     }
-                    // Return the result
-                    value
                 }
 
                 fn steps_to(&self, target: Self, step: Self) -> u64 {
-                    let delta = $widen(target) - $widen(*self);
-                    let steps = delta / $widen(step);
-                    nonnegative_steps(steps)
+                    float_step_count($widen(*self), $widen(target), $widen(step))
                 }
 
                 fn min_step() -> Self {
-                    Self::EPSILON
+                    Self::from_bits(1)
                 }
 
                 fn display(&self, step: Self, _min: Self, _max: Self) -> String {
-                    let precision = decimal_precision($widen(step));
+                    let precision = decimal_precision(step);
                     format!("{self:.0$}", precision)
                 }
             }
@@ -423,47 +517,105 @@ impl_steppable_float!(
     (f64, std::convert::identity, std::convert::identity)
 );
 
+/// Invalid numeric configuration for a step input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InvalidStepInput<T> {
+    /// Bounds must be valid and ordered.
+    Bounds {
+        /// Lower bound.
+        min: T,
+        /// Upper bound.
+        max: T,
+    },
+    /// The base must be valid and inside the range.
+    Base(T),
+    /// The step or snap interval must be valid and positive.
+    Interval(T),
+}
+
+impl<T: Debug> Display for InvalidStepInput<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Bounds { min, max } => write!(f, "invalid step input bounds {min:?}..={max:?}"),
+            Self::Base(base) => write!(f, "invalid step input base {base:?}"),
+            Self::Interval(step) => write!(f, "invalid step input interval {step:?}"),
+        }
+    }
+}
+
+impl<T: Debug> std::error::Error for InvalidStepInput<T> {}
+
 // --- MARK: BUILDERS
 impl<T: Steppable> StepInput<T> {
-    /// Creates a new [`StepInput`].
-    ///
-    /// Takes the following inputs:
-    /// * `base` - value that we're stepping from.
-    ///   `base` must be greater or equal to `min`, or it will fall back to `min`.
-    ///   `base` must be less than or equal to `max`, or it will fall back to `max`.
-    /// * `step` - positive value added to `base` for each step.
-    ///   `step` must be greater than zero, or it will fall back to `T::min_step`.
-    /// * `min` - minimum value that can be stepped to.
-    ///   `min` must be less than or equal to `max`, or it will fall back to `max`.
-    /// * `max` - maximum value that can be stepped to.
+    /// Creates a step input from validated application values.
     ///
     /// # Panics
     ///
-    /// Panics if `min` is greater than `max` and debug assertions are enabled.
-    ///
-    /// Panics if `base` is less than `min` and debug assertions are enabled.
-    ///
-    /// Panics if `base` is greater than `max` and debug assertions are enabled.
-    ///
-    /// Panics if `step` is less than `T::min_step` and debug assertions are enabled.
-    pub fn new(mut base: T, mut step: T, mut min: T, max: T) -> Self {
-        if min > max {
-            debug_panic!("provided `min` must be less than or equal to the provided `max`");
-            min = max;
-        }
-        if base < min {
-            debug_panic!("provided `base` must be greater or equal to `min`");
-            base = min;
-        }
-        if base > max {
-            debug_panic!("provided `base` must be less than or equal to `max`");
-            base = max;
-        }
-        if step < T::min_step() {
-            debug_panic!("provided `step` must be greater than zero and at least `T::min_step`");
-            step = T::min_step();
-        }
+    /// Invalid configuration panics in debug builds. Release builds log the
+    /// error and normalize invalid fields. Use [`Self::try_new`] for fallible
+    /// configuration supplied at runtime.
+    #[must_use = "Use the configured widget."]
+    pub fn new(base: T, step: T, min: T, max: T) -> Self {
+        Self::try_new(base, step, min, max).unwrap_or_else(|error| {
+            debug_panic!("{error}");
+            let max = if max.is_valid() {
+                max
+            } else if min.is_valid() {
+                min
+            } else {
+                T::zero()
+            };
+            let min = if Self::valid_bounds(min, max) {
+                min
+            } else {
+                max
+            };
+            let base = if base.is_valid() {
+                Self::clamp_value(base, min, max)
+            } else {
+                min
+            };
+            let step = if Self::valid_interval(step) {
+                step
+            } else {
+                T::min_step()
+            };
+            Self::from_validated(base, step, min, max)
+        })
+    }
 
+    /// Creates a step input with a valid ordered range, base and positive step.
+    ///
+    /// # Errors
+    ///
+    /// Returns the invalid field if bounds are unordered, base is outside the
+    /// range, a value is outside its numeric domain, or step is non-positive.
+    pub fn try_new(base: T, step: T, min: T, max: T) -> Result<Self, InvalidStepInput<T>> {
+        if !Self::valid_bounds(min, max) {
+            return Err(InvalidStepInput::Bounds { min, max });
+        }
+        if !Self::valid_base(base, min, max) {
+            return Err(InvalidStepInput::Base(base));
+        }
+        if !Self::valid_interval(step) {
+            return Err(InvalidStepInput::Interval(step));
+        }
+        Ok(Self::from_validated(base, step, min, max))
+    }
+
+    fn valid_bounds(min: T, max: T) -> bool {
+        min.is_valid() && max.is_valid() && min <= max
+    }
+
+    fn valid_base(base: T, min: T, max: T) -> bool {
+        base.is_valid() && min <= base && base <= max
+    }
+
+    fn valid_interval(value: T) -> bool {
+        value.is_valid() && value >= T::min_step()
+    }
+
+    fn from_validated(base: T, step: T, min: T, max: T) -> Self {
         let mut this = Self {
             base,
             step,
@@ -472,6 +624,7 @@ impl<T: Steppable> StepInput<T> {
             max,
             value: base,
             ticks: 0,
+            snap_active: false,
             min_ticks: 0,
             max_ticks: 0,
             wrap: false,
@@ -502,7 +655,7 @@ impl<T: Steppable> StepInput<T> {
     /// Panics if `snap` is zero or less and debug assertions are enabled.
     #[must_use = "Use the configured value."]
     pub fn with_snap(mut self, snap: T) -> Self {
-        if snap >= T::min_step() {
+        if Self::valid_interval(snap) {
             self.snap = Some(snap);
         } else {
             debug_panic!("`snap` must be greater than zero and at least `T::min_step`");
@@ -554,15 +707,8 @@ impl<T: Steppable> StepInput<T> {
     ///
     /// Panics if `base` is less than `min` or greater than `max` and debug assertions are enabled.
     pub fn set_base(this: &mut WidgetMut<'_, Self>, base: T) {
-        let modified = this.widget.set_base_impl(base);
-        if modified {
-            let display_value = this.widget.display_value(base);
-            if let Some(label) = this.widget.label.as_mut() {
-                this.ctx.mutate_child_later(label, move |mut label| {
-                    Label::set_text(&mut label, display_value);
-                });
-                this.ctx.request_layout();
-            }
+        if this.widget.set_base_impl(base) {
+            Self::refresh_display(this);
         }
     }
 
@@ -574,13 +720,15 @@ impl<T: Steppable> StepInput<T> {
     ///
     /// Panics if `step` is zero or less and debug assertions are enabled.
     pub fn set_step(this: &mut WidgetMut<'_, Self>, step: T) {
-        if step < T::min_step() {
+        if !Self::valid_interval(step) {
             debug_panic!("set_step: `step` >= `T::min_step` assert failed");
             return;
         }
-        this.widget.step = step;
-        // The step changing means we also need to rebase and reset ticks
-        Self::set_base(this, this.widget.value);
+        if this.widget.step != step {
+            this.widget.step = step;
+            // Only a changed step requires resetting the tick origin.
+            Self::set_base(this, this.widget.value);
+        }
     }
 
     /// Set a new `snap` value.
@@ -593,12 +741,15 @@ impl<T: Steppable> StepInput<T> {
     /// Panics if `snap` is zero or less and debug assertions are enabled.
     pub fn set_snap(this: &mut WidgetMut<'_, Self>, snap: Option<T>) {
         if let Some(snap) = snap
-            && snap < T::min_step()
+            && !Self::valid_interval(snap)
         {
             debug_panic!("set_snap: `snap` > `T::min_step` assert failed");
             return;
         }
-        this.widget.snap = snap;
+        if this.widget.snap != snap {
+            this.widget.finish_snap();
+            this.widget.snap = snap;
+        }
     }
 
     /// Set new `min` and `max` bounds.
@@ -609,22 +760,28 @@ impl<T: Steppable> StepInput<T> {
     ///
     /// Panics if `min` is greater than `max` and debug assertions are enabled.
     pub fn set_bounds(this: &mut WidgetMut<'_, Self>, min: T, max: T) {
-        if min > max {
+        if !Self::valid_bounds(min, max) {
             debug_panic!("set_bounds: `min` <= `max` assert failed");
             return;
         }
-        this.widget.min = min;
-        this.widget.max = max;
-        // Make sure the base value and the active value are within bounds.
-        // If not, just rebase at the boundary.
-        if this.widget.base < min || this.widget.value < min {
-            Self::set_base(this, min);
-        } else if this.widget.base > max || this.widget.value > max {
-            Self::set_base(this, max);
-        } else {
-            // All good, but still need to calculate new tick bounds
-            this.widget.calculate_tick_bounds();
+        let widget = &mut *this.widget;
+        if widget.min == min && widget.max == max {
+            return;
         }
+        widget.min = min;
+        widget.max = max;
+        let value = Self::clamp_value(widget.value, min, max);
+        // Preserve the selected value when the previous tick origin leaves the
+        // range. Only clamp the selection itself when it is out of bounds.
+        if widget.snap_active || widget.base < min || widget.base > max || value != widget.value {
+            widget.set_base_impl(value);
+        } else {
+            widget.calculate_tick_bounds();
+            if widget.ticks < widget.min_ticks || widget.ticks > widget.max_ticks {
+                widget.set_base_impl(value);
+            }
+        }
+        Self::refresh_display(this);
     }
 
     /// Set a new `wrap` value.
@@ -632,8 +789,11 @@ impl<T: Steppable> StepInput<T> {
     /// Wrap determines whether the values should form an infinite circle,
     /// where increasing above `max` results in `min` and
     /// decreasing below `min` results in `max`.
-    pub const fn set_wrap(this: &mut WidgetMut<'_, Self>, wrap: bool) {
-        this.widget.wrap = wrap;
+    pub fn set_wrap(this: &mut WidgetMut<'_, Self>, wrap: bool) {
+        if this.widget.wrap != wrap {
+            this.widget.wrap = wrap;
+            this.ctx.request_accessibility_update();
+        }
     }
 
     /// Set a new custom `display` function.
@@ -649,24 +809,27 @@ impl<T: Steppable> StepInput<T> {
         F: Fn(StepState<T>) -> String + 'static,
     {
         this.widget.display = Some(Box::new(display));
-        // Refresh the displayed value too
+        Self::refresh_display(this);
+    }
+
+    fn refresh_display(this: &mut WidgetMut<'_, Self>) {
         let display_value = this.widget.display_value(this.widget.value);
-        if let Some(label) = this.widget.label.as_mut() {
-            this.ctx.mutate_child_later(label, move |mut label| {
-                Label::set_text(&mut label, display_value);
-            });
-            this.ctx.request_layout();
+        if let Some(label) = &this.widget.label
+            && let Some(mut label) = this.ctx.get_mut(label.id())
+        {
+            Label::set_text(&mut label, display_value);
         }
+        this.ctx.request_accessibility_update();
     }
 }
 
 // --- MARK: METHODS
 impl<T: Steppable> StepInput<T> {
-    fn handle_pointer_move(&mut self, ctx: &mut EventCtx<'_>, pu: &crate::core::PointerUpdate) {
+    fn handle_pointer_move(&mut self, ctx: &mut EventCtx<'_>, state: &PointerState) {
         // If we're hovered, highlight the correct side's button.
         if ctx.is_hovered() {
             let content_box_center_x = ctx.content_box().center().x;
-            let local_x = ctx.local_position(pu.current.position).x;
+            let local_x = ctx.local_position(state.position).x;
             let hover_backward = local_x <= content_box_center_x;
             if hover_backward != self.hover_backward {
                 self.hover_backward = hover_backward;
@@ -675,13 +838,16 @@ impl<T: Steppable> StepInput<T> {
         }
 
         // Unless a drag is in progress we can return early.
+        if !ctx.is_pointer_capture_target() {
+            return;
+        }
         let Some(drag_start) = self.drag_start else {
             return;
         };
 
         // We do slide math in logical pixels, because we don't want
         // the scale factor (i.e. high DPI screens) to affect the speed.
-        let pos = pu.current.logical_point();
+        let pos = state.logical_point();
         let distance = (pos - drag_start).x;
 
         // Determine the movement delta since the last slide update.
@@ -706,8 +872,8 @@ impl<T: Steppable> StepInput<T> {
         let mut ticks_per_step = TICKS_PER_STEP;
 
         // Modifier based gearing adjusts the ticks per step.
-        self.gearing.faster = pu.current.modifiers.shift();
-        self.gearing.slower = pu.current.modifiers.alt();
+        self.gearing.faster = state.modifiers.shift();
+        self.gearing.slower = state.modifiers.alt();
         if self.gearing.faster {
             ticks_per_step *= 10;
         }
@@ -725,9 +891,9 @@ impl<T: Steppable> StepInput<T> {
 
         // Snap based on modifier
         let snap = if cfg!(target_os = "macos") {
-            pu.current.modifiers.meta()
+            state.modifiers.meta()
         } else {
-            pu.current.modifiers.ctrl()
+            state.modifiers.ctrl()
         };
 
         // Update the ticks based on the calculated ticks delta.
@@ -739,16 +905,14 @@ impl<T: Steppable> StepInput<T> {
         let distance_used = Self::distance(ticks_as_float(steps) - steps_unused) + drift;
         let distance_unused = distance - distance_used;
 
-        if hit_bounds {
+        if hit_bounds && !self.wrap {
             // Once we reach a min/max edge and there is no wrap,
             // we need to start shifting the drag_start position towards the pointer.
             // So that when changing direction we won't be stuck in high gear.
             self.drag_start = Some(Point::new(drag_start.x + distance_unused, drag_start.y));
-        } else {
-            // Otherwise account for the unused distance in the slide.
-            if let Some(slide_last) = self.slide_last.as_mut() {
-                slide_last.x -= distance_unused;
-            }
+        } else if hit_bounds && let Some(slide_last) = self.slide_last.as_mut() {
+            // Preserve partial movement towards the next wrap, even at slow gear.
+            slide_last.x -= distance_unused;
         }
 
         // If the value was changed, we need to handle it
@@ -783,8 +947,8 @@ impl<T: Steppable> StepInput<T> {
             ctx.mutate_child_later(label, move |mut label| {
                 Label::set_text(&mut label, display_value);
             });
-            ctx.request_layout();
         }
+        ctx.request_accessibility_update();
         ctx.submit_action::<A>(Step { value: self.value });
     }
 
@@ -794,10 +958,10 @@ impl<T: Steppable> StepInput<T> {
     /// Use [`clamp_value`] to deal with that.
     ///
     /// [`clamp_value`]: Self::clamp_value
-    fn calculate_value(base: T, step: T, snap: Option<T>, ticks: i64) -> T {
+    fn calculate_value(base: T, step: T, ticks: i64) -> T {
         // We round the ticks for smoother sliding and symmetry when going in both directions.
         let step_count = ticks.saturating_add(TICKS_PER_STEP / 2 * ticks.signum()) / TICKS_PER_STEP;
-        base.add_steps(step, step_count, snap)
+        base.add_steps(step, step_count, None)
     }
 
     /// Clamps the given `value` between `min` and `max`.
@@ -844,13 +1008,13 @@ impl<T: Steppable> StepInput<T> {
         self.max_ticks = Self::steps_to_positive_ticks(max_steps);
     }
 
-    /// Sets a new `base` value and returns `true` if it actually changed anything.
+    /// Rebases the tick origin and returns whether the requested value was valid.
     ///
     /// # Panics
     ///
     /// Panics if base is less than `min` or greater than `max` and debug assertions are enabled.
     fn set_base_impl(&mut self, base: T) -> bool {
-        if base < self.min || base > self.max {
+        if !Self::valid_base(base, self.min, self.max) {
             debug_panic!("set_base: `min` <= `base` <= `max` assert failed");
             return false;
         }
@@ -858,78 +1022,81 @@ impl<T: Steppable> StepInput<T> {
         self.base = base;
         self.value = base;
         self.ticks = 0;
+        self.snap_active = false;
         self.calculate_tick_bounds();
         true
     }
 
-    /// Sets the active value based on the given `ticks`.
-    ///
-    /// If `snap` is `true` then the value will also be snapped.
-    ///
-    /// The value will be clamped into the allowed bounds.
+    /// Projects the raw tick position onto the selected grid. Physical
+    /// range endpoints remain reachable even if they are off-grid.
     fn set_value(&mut self, ticks: i64, snap: bool) {
-        let snap = self.snap.filter(|_| snap);
-        let raw_value = Self::calculate_value(self.base, self.step, snap, ticks);
-        self.value = Self::clamp_value(raw_value, self.min, self.max);
+        let raw = Self::calculate_value(self.base, self.step, ticks);
+        if !raw.is_valid() {
+            debug_panic!("Steppable::add_steps returned an invalid value: {raw:?}");
+            return;
+        }
+        let raw = Self::clamp_value(raw, self.min, self.max);
+        let value = if let Some(interval) = self.snap.filter(|_| snap)
+            && self.min < raw
+            && raw < self.max
+        {
+            raw.add_steps(self.step, 0, Some(interval))
+        } else {
+            raw
+        };
+        if value.is_valid() {
+            self.value = Self::clamp_value(value, self.min, self.max);
+        } else {
+            debug_panic!("Steppable::add_steps returned an invalid snapped value: {value:?}");
+        }
     }
 
-    /// Sets the active value to the next snapped value.
-    ///
-    /// May increment ticks to achieve this.
-    ///
-    /// Returns `true` if the active value changed.
+    /// Once the user leaves snap mode, ordinary steps start from the actual
+    /// displayed selection rather than an approximate inverse of the grid.
+    fn finish_snap(&mut self) {
+        if self.snap_active {
+            self.set_base_impl(self.value);
+        }
+    }
+
+    fn finish_slide(&mut self) {
+        self.finish_snap();
+        self.slide_last = None;
+        self.drag_start = None;
+        self.gearing = SlideGearing::default();
+    }
+
+    /// Moves to the next snap-grid point (or range endpoint) in the chosen
+    /// direction. A discrete snap is an explicit rebase: the next ordinary
+    /// step starts from the actual selected value, not an approximate tick.
+    fn step_snap(&mut self, forward: bool) -> bool {
+        let Some(snap) = self.snap else {
+            return if forward {
+                self.next_step()
+            } else {
+                self.prev_step()
+            };
+        };
+        let old_value = self.value;
+        let target = if self.wrap && forward && old_value == self.max {
+            self.min
+        } else if self.wrap && !forward && old_value == self.min {
+            self.max
+        } else {
+            Self::clamp_value(old_value.adjacent_snap(snap, forward), self.min, self.max)
+        };
+        if target == old_value {
+            return false;
+        }
+        self.set_base_impl(target)
+    }
+
     fn next_snap(&mut self) -> bool {
-        let Some(snap) = self.snap else {
-            return self.next_step();
-        };
-        let old_value = self.value;
-        let (_, changed, hit_bounds) = self.update_ticks(TICKS_PER_STEP, true);
-
-        if changed && (self.value > old_value || hit_bounds) {
-            self.sync_ticks_to_value();
-        } else {
-            // We need to add ~snap worth of ticks to get the next
-            let steps = T::min_step().steps_to(snap, self.step);
-            let delta = Self::steps_to_positive_ticks(steps);
-            self.update_ticks(delta, true);
-        }
-
-        old_value != self.value
+        self.step_snap(true)
     }
 
-    /// Sets the active value to the previous snapped value.
-    ///
-    /// May decrement ticks to achieve this.
-    ///
-    /// Returns `true` if the active value changed.
     fn prev_snap(&mut self) -> bool {
-        let Some(snap) = self.snap else {
-            return self.prev_step();
-        };
-        let old_value = self.value;
-        let (_, changed, hit_bounds) = self.update_ticks(TICKS_PER_STEP.wrapping_neg(), true);
-
-        if changed && (self.value < old_value || hit_bounds) {
-            self.sync_ticks_to_value();
-        } else {
-            // We need to subtract ~snap worth of ticks to get the previous
-            let steps = T::min_step().steps_to(snap, self.step);
-            let delta = Self::steps_to_negative_ticks(steps);
-            self.update_ticks(delta, true);
-        }
-
-        old_value != self.value
-    }
-
-    /// Sets ticks to the amount needed to go from `base` to `value`.
-    fn sync_ticks_to_value(&mut self) {
-        if self.value >= self.base {
-            let steps = self.base.steps_to(self.value, self.step);
-            self.ticks = Self::steps_to_positive_ticks(steps).min(self.max_ticks);
-        } else {
-            let steps = self.value.steps_to(self.base, self.step);
-            self.ticks = Self::steps_to_negative_ticks(steps).max(self.min_ticks);
-        }
+        self.step_snap(false)
     }
 
     /// Updates ticks based on the given `delta`.
@@ -941,6 +1108,10 @@ impl<T: Steppable> StepInput<T> {
     /// and ticks will be relative to that new base.
     fn update_ticks(&mut self, delta: i64, snap: bool) -> (i64, bool, bool) {
         const WRAP_COST: u64 = TICKS_PER_STEP.cast_unsigned();
+        let snap = snap && self.snap.is_some();
+        if !snap {
+            self.finish_snap();
+        }
         if delta == 0 {
             return (0, false, false);
         }
@@ -993,7 +1164,7 @@ impl<T: Steppable> StepInput<T> {
         }
 
         // Convert the unused delta back to signed
-        let mut unused_delta = if dpos {
+        let unused_delta = if dpos {
             unused_delta
         } else {
             unused_delta.wrapping_neg()
@@ -1008,13 +1179,8 @@ impl<T: Steppable> StepInput<T> {
         // Calculate the active value change
         let old_value = self.value;
         self.set_value(new_ticks, snap);
+        self.snap_active = snap;
         let changed_value = old_value != self.value;
-
-        // Keep the ticks at the actual snapped value
-        if snap {
-            self.sync_ticks_to_value();
-            unused_delta = unused_delta.saturating_add(new_ticks.saturating_sub(self.ticks));
-        }
 
         (unused_delta, changed_value, hit_bounds)
     }
@@ -1144,19 +1310,15 @@ impl<T: Steppable> Widget for StepInput<T> {
         _props: &mut PropertiesMut<'_>,
         event: &AccessEvent,
     ) {
-        // TODO: Should we support ctrl/cmd snap modifier here?
-
-        let mut value_changed = false;
-
-        match event.action {
-            Action::Increment => {
-                value_changed = self.next_step();
-            }
-            Action::Decrement => {
-                value_changed = self.prev_step();
-            }
-            _ => (),
+        if ctx.target() != ctx.widget_id() {
+            return;
         }
+        let value_changed = match event.action {
+            Action::Increment => self.next_step(),
+            Action::Decrement => self.prev_step(),
+            _ => return,
+        };
+        ctx.set_handled();
 
         // If the value was changed, we need to handle it
         if value_changed {
@@ -1170,6 +1332,9 @@ impl<T: Steppable> Widget for StepInput<T> {
         _props: &mut PropertiesMut<'_>,
         event: &TextEvent,
     ) {
+        if !ctx.is_focus_target() {
+            return;
+        }
         match event {
             TextEvent::Keyboard(ke) => {
                 let mut value_changed = false;
@@ -1180,6 +1345,10 @@ impl<T: Steppable> Widget for StepInput<T> {
                 } else {
                     ke.modifiers.ctrl()
                 };
+
+                if !snap {
+                    self.finish_snap();
+                }
 
                 match ke.key {
                     // Update slide modifier so the visuals can change without pointer movement.
@@ -1200,6 +1369,7 @@ impl<T: Steppable> Widget for StepInput<T> {
                     }
                     Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowDown) => {
                         if ke.state.is_down() {
+                            ctx.set_handled();
                             value_changed = if snap {
                                 self.prev_snap()
                             } else {
@@ -1209,6 +1379,7 @@ impl<T: Steppable> Widget for StepInput<T> {
                     }
                     Key::Named(NamedKey::ArrowRight | NamedKey::ArrowUp) => {
                         if ke.state.is_down() {
+                            ctx.set_handled();
                             value_changed = if snap {
                                 self.next_snap()
                             } else {
@@ -1218,16 +1389,23 @@ impl<T: Steppable> Widget for StepInput<T> {
                     }
                     Key::Named(NamedKey::Home) => {
                         if ke.state.is_down() {
-                            value_changed = self.set_base_impl(self.min);
+                            ctx.set_handled();
+                            let previous = self.value;
+                            self.set_base_impl(self.min);
+                            value_changed = self.value != previous;
                         }
                     }
                     Key::Named(NamedKey::End) => {
                         if ke.state.is_down() {
-                            value_changed = self.set_base_impl(self.max);
+                            ctx.set_handled();
+                            let previous = self.value;
+                            self.set_base_impl(self.max);
+                            value_changed = self.value != previous;
                         }
                     }
                     _ => match ke.code {
                         Code::NumpadSubtract if ke.state.is_down() => {
+                            ctx.set_handled();
                             value_changed = if snap {
                                 self.prev_snap()
                             } else {
@@ -1235,6 +1413,7 @@ impl<T: Steppable> Widget for StepInput<T> {
                             }
                         }
                         Code::NumpadAdd if ke.state.is_down() => {
+                            ctx.set_handled();
                             value_changed = if snap {
                                 self.next_snap()
                             } else {
@@ -1267,29 +1446,38 @@ impl<T: Steppable> Widget for StepInput<T> {
                 // TODO: Once we get editable input support,
                 //       stop starting the slide from the edit area.
 
+                self.finish_slide();
                 let pos = pbe.state.logical_point();
                 self.drag_start = Some(pos);
                 ctx.capture_pointer();
                 ctx.request_focus();
+                ctx.set_handled();
 
                 // TODO: Lock and hide the pointer during a slide.
                 //       https://github.com/linebender/xilem/issues/850
             }
             PointerEvent::Move(pu) => {
-                self.handle_pointer_move(ctx, pu);
+                self.handle_pointer_move(ctx, &pu.current);
+                if ctx.is_pointer_capture_target() {
+                    ctx.set_handled();
+                }
             }
             PointerEvent::Cancel(_pi) => {
-                self.slide_last = None;
-                self.drag_start = None;
+                self.finish_slide();
                 ctx.request_paint_only();
             }
             // We only care about primary button and touch
-            PointerEvent::Up(pbe) if pbe.button.is_none_or(|btn| btn == PointerButton::Primary) => {
+            PointerEvent::Up(pbe)
+                if ctx.is_pointer_capture_target()
+                    && pbe.button.is_none_or(|btn| btn == PointerButton::Primary) =>
+            {
+                ctx.set_handled();
+                self.handle_pointer_move(ctx, &pbe.state);
                 // Regular click handling happens only if:
                 // * There is no slide in progress
                 // * The button was previously pressed down on us (active)
                 // * The pointer is still on us (hovered)
-                if self.slide_last.is_none() && ctx.is_active() && ctx.is_hovered() {
+                if self.drag_start.is_some() && self.slide_last.is_none() && ctx.is_hovered() {
                     let content_box_center_x = ctx.content_box().center().x;
                     let local_x = ctx.local_position(pbe.state.position).x;
 
@@ -1318,8 +1506,7 @@ impl<T: Steppable> Widget for StepInput<T> {
                         self.handle_updated_value::<Self::Action>(ctx);
                     }
                 }
-                self.drag_start = None;
-                self.slide_last = None;
+                self.finish_slide();
                 ctx.request_paint_only();
             }
             _ => (),
@@ -1367,6 +1554,7 @@ impl<T: Steppable> Widget for StepInput<T> {
                 let display_value = self.display_value(self.value);
                 self.label = Some(
                     Label::new(display_value)
+                        .accessibility_hidden(true)
                         .prepare()
                         .with_props(*color)
                         .into_pod(),
@@ -1375,12 +1563,17 @@ impl<T: Steppable> Widget for StepInput<T> {
             }
             Update::ActiveChanged(active) => {
                 if !active {
-                    self.slide_last = None;
-                    self.drag_start = None;
+                    self.finish_slide();
                 }
                 ctx.request_paint_only();
             }
-            Update::DisabledChanged(_) | Update::HoveredChanged(_) => {
+            Update::DisabledChanged(true)
+            | Update::StashedChanged(true)
+            | Update::FocusChanged(false) => {
+                self.finish_slide();
+                ctx.request_paint_only();
+            }
+            Update::DisabledChanged(false) | Update::HoveredChanged(_) => {
                 ctx.request_paint_only();
             }
             _ => (),
@@ -1525,8 +1718,14 @@ impl<T: Steppable> Widget for StepInput<T> {
         // NOTE: Can't set numeric value/min/max/step because AccessKit only seems to support f64.
 
         node.set_value(self.display_value(self.value));
-        node.add_action(Action::Increment);
-        node.add_action(Action::Decrement);
+        if self.min < self.max {
+            if self.wrap || self.value < self.max {
+                node.add_action(Action::Increment);
+            }
+            if self.wrap || self.value > self.min {
+                node.add_action(Action::Decrement);
+            }
+        }
 
         // TODO: Add support for SetValue when we gain edit support.
         //       Not trivial, because the value needs to satisfy all rules.
@@ -1538,10 +1737,6 @@ impl<T: Steppable> Widget for StepInput<T> {
     }
 
     fn accepts_focus(&self) -> bool {
-        true
-    }
-
-    fn accepts_text_input(&self) -> bool {
         true
     }
 
@@ -1949,6 +2144,90 @@ mod tests {
     use crate::widgets::Flex;
 
     #[test]
+    fn model_updates_preserve_selection_and_refresh_display() {
+        let widget = StepInput::new(0, 2, 0, 10)
+            .with_display(|state| {
+                format!(
+                    "{}: {}..={} / {}",
+                    state.value, state.min, state.max, state.step
+                )
+            })
+            .prepare();
+        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (240, 40));
+        let id = harness.root_id();
+        harness.focus_on(Some(id));
+        for value in [2, 4] {
+            harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::ArrowRight)));
+            assert_eq!(
+                harness.pop_action::<Step<i32>>().unwrap(),
+                Some((Step { value }, id))
+            );
+        }
+        harness
+            .edit_root_widget(|mut widget| {
+                StepInput::set_bounds(&mut widget, 3, 8);
+                StepInput::set_step(&mut widget, 3);
+            })
+            .unwrap();
+        let _ = harness.redraw();
+        let widget = harness.root_widget().unwrap();
+        assert_eq!(
+            widget.value, 4,
+            "a new range must retain an already valid selection"
+        );
+        let label_id = widget.label.as_ref().unwrap().id();
+        let label = harness
+            .get_widget_with_id(label_id)
+            .unwrap()
+            .downcast::<Label>()
+            .unwrap();
+        assert_eq!(label.text().as_ref(), "4: 3..=8 / 3");
+        assert_eq!(
+            harness.access_node(id).unwrap().data().value(),
+            Some("4: 3..=8 / 3")
+        );
+        assert!(
+            harness.pop_action_erased().is_none(),
+            "model updates do not emit user actions"
+        );
+
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::ArrowRight)));
+        assert_eq!(
+            harness.pop_action::<Step<i32>>().unwrap(),
+            Some((Step { value: 7 }, id))
+        );
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::End)));
+        assert_eq!(
+            harness.pop_action::<Step<i32>>().unwrap(),
+            Some((Step { value: 8 }, id))
+        );
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::End)));
+        assert!(
+            harness.pop_action_erased().is_none(),
+            "repeated endpoint activation is a no-op"
+        );
+        let _ = harness.redraw();
+        assert!(
+            !harness
+                .access_node(id)
+                .unwrap()
+                .data()
+                .supports_action(Action::Increment)
+        );
+        harness
+            .edit_root_widget(|mut widget| StepInput::set_wrap(&mut widget, true))
+            .unwrap();
+        let _ = harness.redraw();
+        assert!(
+            harness
+                .access_node(id)
+                .unwrap()
+                .data()
+                .supports_action(Action::Increment)
+        );
+    }
+
+    #[test]
     fn constants() {
         const {
             // It is signed for dev ergonomics, but conceptually it is unsigned.
@@ -1968,6 +2247,287 @@ mod tests {
         assert_eq!(
             GEAR_2_END_STEPS,
             StepInput::<u64>::steps(GEAR_2_END).0 as f64
+        );
+    }
+
+    #[test]
+    fn rejects_nonfinite_configuration_and_accepts_physical_unit_steps() {
+        for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(matches!(
+                StepInput::try_new(0.0, 1.0, invalid, 1.0),
+                Err(InvalidStepInput::Bounds { .. })
+            ));
+            assert!(matches!(
+                StepInput::try_new(0.0, 1.0, -1.0, invalid),
+                Err(InvalidStepInput::Bounds { .. })
+            ));
+            assert!(matches!(
+                StepInput::try_new(invalid, 1.0, -1.0, 1.0),
+                Err(InvalidStepInput::Base(_))
+            ));
+            assert!(matches!(
+                StepInput::try_new(0.0, invalid, -1.0, 1.0),
+                Err(InvalidStepInput::Interval(_))
+            ));
+            assert!(!StepInput::<f64>::valid_interval(invalid));
+        }
+        for invalid in [0.0, -0.0, -1.0] {
+            assert!(matches!(
+                StepInput::try_new(0.0, invalid, -1.0, 1.0),
+                Err(InvalidStepInput::Interval(_))
+            ));
+        }
+        assert!(matches!(
+            StepInput::try_new(1, 1, 2, 3),
+            Err(InvalidStepInput::Base(1))
+        ));
+        assert!(matches!(
+            StepInput::try_new(1, 1, 3, 2),
+            Err(InvalidStepInput::Bounds { .. })
+        ));
+        let tiny = f64::from_bits(1);
+        let mut widget = StepInput::try_new(0.0, tiny, 0.0, 8.0 * tiny).unwrap();
+        for bits in 1..=8 {
+            assert!(
+                widget.next_step(),
+                "small physical quantities must be step-able"
+            );
+            assert_eq!(widget.value.to_bits(), bits);
+        }
+        assert!(!widget.next_step());
+        let mut widget = StepInput::try_new(0.0_f32, 1e-15, 0.0, 1e-12).unwrap();
+        assert!(widget.next_step());
+        assert_eq!(widget.value.to_bits(), 1e-15_f32.to_bits());
+    }
+
+    #[test]
+    fn floating_steps_saturate_without_losing_representable_cancellation() {
+        let max = f64::MAX;
+        assert_eq!((-max).add_steps(max, 2, None).to_bits(), max.to_bits());
+        assert_eq!(max.add_steps(max, -2, None).to_bits(), (-max).to_bits());
+        assert_eq!(max.add_steps(max, 1, None).to_bits(), max.to_bits());
+        assert_eq!((-max).add_steps(max, -1, None).to_bits(), (-max).to_bits());
+        assert_eq!(
+            f32::MAX.add_steps(f32::MAX, 1, None).to_bits(),
+            f32::MAX.to_bits()
+        );
+        assert_eq!((-max).steps_to(max, max), 2);
+        assert_eq!((-max).steps_to(max, max * 0.5), 4);
+
+        let mut widget = StepInput::new(-max, max, -max, max);
+        assert!(widget.next_step());
+        assert_eq!(widget.value.to_bits(), 0.0_f64.to_bits());
+        assert!(widget.next_step());
+        assert_eq!(widget.value.to_bits(), max.to_bits());
+        assert!(!widget.next_step());
+    }
+
+    #[test]
+    fn drag_snap_retains_raw_movement_and_rebases_on_exit() {
+        let make = || StepInput::new(1, 3, -30, 30).with_snap(5);
+        let mut segmented = make();
+        let mut combined = make();
+        for expected in [5, 5, 10, 15] {
+            let (unused, _, hit_bounds) = segmented.update_ticks(TICKS_PER_STEP, true);
+            assert_eq!(
+                (unused, hit_bounds),
+                (0, false),
+                "snap rounding must not feed back into physical motion"
+            );
+            assert_eq!(segmented.value, expected);
+        }
+        combined.update_ticks(4 * TICKS_PER_STEP, true);
+        assert_eq!(
+            segmented.value, combined.value,
+            "event segmentation must not affect a snap drag"
+        );
+        assert_eq!(segmented.ticks, combined.ticks);
+        assert_eq!(segmented.ticks, 4 * TICKS_PER_STEP);
+        assert_eq!(
+            segmented.update_ticks(0, false),
+            (0, false, false),
+            "leaving snap mode without motion preserves the selection"
+        );
+        assert_eq!(segmented.base, 15);
+        assert_eq!(segmented.ticks, 0);
+        assert!(segmented.prev_step());
+        assert_eq!(segmented.value, 12);
+
+        combined.finish_slide();
+        assert!(!combined.snap_active);
+        assert!(combined.next_step());
+        assert_eq!(combined.value, 18);
+    }
+
+    #[test]
+    fn drag_snap_preserves_off_grid_endpoints_and_wraps() {
+        let mut widget = StepInput::new(3, 2, 3, 9).with_snap(5).with_wrap(true);
+        widget.update_ticks(3 * TICKS_PER_STEP, true);
+        assert_eq!(widget.value, 9, "an off-grid maximum remains reachable");
+        widget.update_ticks(TICKS_PER_STEP, true);
+        assert_eq!(
+            widget.value, 3,
+            "wrapping selects the actual off-grid minimum"
+        );
+        widget.update_ticks(-TICKS_PER_STEP, true);
+        assert_eq!(
+            widget.value, 9,
+            "reverse wrapping selects the actual maximum"
+        );
+        widget.update_ticks(-3 * TICKS_PER_STEP, true);
+        assert_eq!(widget.value, 3);
+        widget.finish_slide();
+        assert!(widget.next_step());
+        assert_eq!(widget.value, 5);
+    }
+
+    #[test]
+    fn pointer_release_applies_final_sample_and_preserves_snapped_selection() {
+        use crate::core::keyboard::Modifiers;
+        use crate::core::{PointerButtonEvent, PointerState, PointerUpdate};
+        use crate::testing::PRIMARY_MOUSE;
+
+        let widget = StepInput::new(1, 3, -100, 100).with_snap(5).prepare();
+        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (200, 40));
+        let id = harness.root_id();
+        let snap = if cfg!(target_os = "macos") {
+            Modifiers::META
+        } else {
+            Modifiers::CONTROL
+        };
+        let state = |x| PointerState {
+            position: crate::dpi::PhysicalPosition::new(x, 20.0),
+            modifiers: snap,
+            ..PointerState::default()
+        };
+        harness.mouse_move((100., 20.));
+        harness.process_pointer_event(&PointerEvent::Down(PointerButtonEvent {
+            pointer: PRIMARY_MOUSE,
+            button: None,
+            state: state(100.),
+        }));
+        harness.process_pointer_event(&PointerEvent::Move(PointerUpdate {
+            pointer: PRIMARY_MOUSE,
+            current: state(104.),
+            coalesced: vec![],
+            predicted: vec![],
+        }));
+        assert_eq!(
+            harness.pop_action::<Step<i32>>().unwrap(),
+            Some((Step { value: 15 }, id))
+        );
+        harness.process_pointer_event(&PointerEvent::Up(PointerButtonEvent {
+            pointer: PRIMARY_MOUSE,
+            button: None,
+            state: state(106.),
+        }));
+        assert_eq!(
+            harness.pop_action::<Step<i32>>().unwrap(),
+            Some((Step { value: 20 }, id)),
+            "final release sample must not be lost"
+        );
+        assert_eq!(harness.root_widget().unwrap().base, 20);
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::ArrowLeft)));
+        assert_eq!(
+            harness.pop_action::<Step<i32>>().unwrap(),
+            Some((Step { value: 17 }, id)),
+            "ordinary input starts from snapped selection"
+        );
+    }
+
+    #[test]
+    fn snap_navigation_matches_ordered_grid_and_range_endpoints() {
+        for min in -5_i32..=5 {
+            for max in min..=5 {
+                for snap in 1..=7 {
+                    let grid: Vec<_> = (min..=max)
+                        .filter(|&value| value == min || value == max || value % snap == 0)
+                        .collect();
+                    for base in min..=max {
+                        for step in [1, 3, 11] {
+                            for wrap in [false, true] {
+                                let make = || {
+                                    StepInput::new(base, step, min, max)
+                                        .with_snap(snap)
+                                        .with_wrap(wrap)
+                                };
+                                let expected_next = grid
+                                    .iter()
+                                    .copied()
+                                    .find(|&value| value > base)
+                                    .unwrap_or(if wrap { min } else { base });
+                                let expected_prev = grid
+                                    .iter()
+                                    .rev()
+                                    .copied()
+                                    .find(|&value| value < base)
+                                    .unwrap_or(if wrap { max } else { base });
+                                let mut next = make();
+                                assert_eq!(next.next_snap(), expected_next != base);
+                                assert_eq!(
+                                    next.value, expected_next,
+                                    "forward: {min}..={max}, base {base}, step {step}, snap {snap}, wrap {wrap}"
+                                );
+                                let mut prev = make();
+                                assert_eq!(prev.prev_snap(), expected_prev != base);
+                                assert_eq!(
+                                    prev.value, expected_prev,
+                                    "backward: {min}..={max}, base {base}, step {step}, snap {snap}, wrap {wrap}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn snapped_selection_rebases_normal_steps_and_preserves_float_direction() {
+        let mut integer = StepInput::new(1, 3, -10, 20).with_snap(5);
+        assert!(integer.next_snap());
+        assert_eq!(integer.value, 5);
+        assert!(integer.next_step());
+        assert_eq!(integer.value, 8);
+        assert!(integer.prev_snap());
+        assert_eq!(integer.value, 5);
+        assert!(integer.prev_step());
+        assert_eq!(integer.value, 2);
+
+        let mut float = StepInput::new(-0.27_f32, 0.03, -1.0, 1.0).with_snap(0.1);
+        for value in [-0.2_f32, -0.1, 0.0, 0.1, 0.2, 0.3] {
+            assert!(float.next_snap());
+            assert_eq!(float.value.to_bits(), value.to_bits());
+        }
+        for value in [0.2_f32, 0.1, 0.0, -0.1, -0.2, -0.3] {
+            assert!(float.prev_snap());
+            assert_eq!(float.value.to_bits(), value.to_bits());
+        }
+        let mut extreme = StepInput::new(1e300_f64, 1.0, -f64::MAX, f64::MAX).with_snap(1e-300);
+        assert!(extreme.next_snap());
+        assert_eq!(extreme.value.to_bits(), 1e300_f64.next_up().to_bits());
+        assert!(extreme.prev_snap());
+        assert_eq!(extreme.value.to_bits(), 1e300_f64.to_bits());
+    }
+
+    #[test]
+    fn snapping_and_decimal_display_preserve_numeric_domain() {
+        for value in [1e300_f64, -1e300, f64::MAX, f64::MIN] {
+            assert_eq!(
+                value.add_steps(1.0, 0, Some(1e-300)).to_bits(),
+                value.to_bits()
+            );
+        }
+        assert_eq!(0.25_f64.display(0.25, 0.0, 1.0), "0.25");
+        assert_eq!(2.5_f64.display(2.5, 0.0, 10.0), "2.5");
+        assert_eq!(0.1_f32.display(0.1, 0.0, 1.0), "0.1");
+        assert_eq!(
+            (-0.25_f64).add_steps(1.0, 0, Some(0.5)).to_bits(),
+            (-0.5_f64).to_bits()
+        );
+        assert_eq!(
+            0.25_f64.add_steps(1.0, 0, Some(0.5)).to_bits(),
+            0.5_f64.to_bits()
         );
     }
 

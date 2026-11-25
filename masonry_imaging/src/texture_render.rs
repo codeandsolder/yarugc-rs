@@ -26,16 +26,9 @@ pub struct RenderTarget<'a> {
 }
 
 /// Errors that can occur while rendering Masonry content into a target texture.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
 pub struct Error(imp::Error);
-
-impl core::fmt::Display for Error {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl std::error::Error for Error {}
 
 /// Backend-selected texture renderer for Masonry paint output.
 #[derive(Debug)]
@@ -230,24 +223,15 @@ mod imp {
     use imaging_wgpu::TextureRendererError;
 
     /// Errors that can occur while rendering Masonry content with Skia.
-    #[derive(Debug)]
+    #[derive(Debug, thiserror::Error)]
     pub(super) enum Error {
         /// Creating the Skia renderer failed.
-        CreateRenderer(crate::skia::Error),
+        #[error("creating Skia renderer failed: {0}")]
+        CreateRenderer(#[source] crate::skia::Error),
         /// Rendering the Masonry source failed.
-        Render(TextureRendererError),
+        #[error("rendering with Skia failed: {0}")]
+        Render(#[source] TextureRendererError),
     }
-
-    impl core::fmt::Display for Error {
-        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            match self {
-                Self::CreateRenderer(err) => write!(f, "creating Skia renderer failed: {err}"),
-                Self::Render(err) => write!(f, "rendering with Skia failed: {err:?}"),
-            }
-        }
-    }
-
-    impl std::error::Error for Error {}
 
     /// Runtime renderer state for the Skia backend.
     #[derive(Debug)]
@@ -306,24 +290,15 @@ mod imp {
     use imaging_wgpu::TextureRendererError;
 
     /// Errors that can occur while rendering Masonry content with Vello.
-    #[derive(Debug)]
+    #[derive(Debug, thiserror::Error)]
     pub(super) enum Error {
         /// Creating the Vello renderer failed.
-        CreateRenderer(crate::vello::Error),
-        /// Rendering the scene to the texture failed.
-        Render(TextureRendererError),
+        #[error("creating Vello renderer failed: {0}")]
+        CreateRenderer(#[source] crate::vello::Error),
+        /// Rendering the Masonry source failed.
+        #[error("rendering with Vello failed: {0}")]
+        Render(#[source] TextureRendererError),
     }
-
-    impl core::fmt::Display for Error {
-        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            match self {
-                Self::CreateRenderer(err) => write!(f, "creating Vello renderer failed: {err}"),
-                Self::Render(err) => write!(f, "rendering with Vello failed: {err:?}"),
-            }
-        }
-    }
-
-    impl std::error::Error for Error {}
 
     /// Runtime renderer state for the Vello backend.
     #[derive(Debug)]
@@ -379,21 +354,12 @@ mod imp {
     use imaging_wgpu::TextureRendererError;
 
     /// Errors that can occur while rendering Masonry content with Vello Hybrid.
-    #[derive(Debug)]
+    #[derive(Debug, thiserror::Error)]
     pub(super) enum Error {
         /// Rendering the Masonry source failed.
-        Render(TextureRendererError),
+        #[error("rendering with Vello Hybrid failed: {0}")]
+        Render(#[source] TextureRendererError),
     }
-
-    impl core::fmt::Display for Error {
-        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            match self {
-                Self::Render(err) => write!(f, "rendering with Vello Hybrid failed: {err:?}"),
-            }
-        }
-    }
-
-    impl std::error::Error for Error {}
 
     /// Runtime renderer state for the Vello Hybrid backend.
     #[derive(Debug)]

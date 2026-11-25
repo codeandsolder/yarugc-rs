@@ -61,31 +61,27 @@ impl AppDriver for Driver {
                 |mut scroll: masonry::core::WidgetMut<'_, VirtualScroll>| {
                     // We need to tell the `VirtualScroll` which request this is associated with
                     // This is so that the controller knows which actions have been handled.
-                    VirtualScroll::will_handle_action(&mut scroll, &action);
-                    for idx in action.old_active().clone() {
-                        if !action.target().contains(&idx) {
-                            // If we had different work to do in response to the item being unloaded
-                            // (for example, saving some related data?), then we'd do it here
-                            VirtualScroll::remove_child(&mut scroll, idx);
-                        }
+                    let Some(mut fetch) = VirtualScroll::begin_fetch(&mut scroll, &action) else {
+                        return;
+                    };
+                    for idx in action.removed() {
+                        // Save any associated application data before unloading.
+                        let _ = fetch.remove_child(idx);
                     }
-                    for idx in action.target().clone() {
-                        if !action.old_active().contains(&idx) {
-                            let label: ArcStr = match (idx % 3 == 0, idx % 5 == 0) {
-                                (false, true) => self.buzz.clone(),
-                                (true, false) => self.fizz.clone(),
-                                (true, true) => self.fizzbuzz.clone(),
-                                (false, false) => format!("{idx}").into(),
-                            };
-                            VirtualScroll::add_child(
-                                &mut scroll,
-                                idx,
-                                NewWidget::new(Label::new(label).with_style(
-                                    StyleProperty::FontSize(if idx % 100 == 0 { 40. } else { 20. }),
-                                ))
-                                .erased(),
-                            );
-                        }
+                    for idx in action.added() {
+                        let label: ArcStr = match (idx % 3 == 0, idx % 5 == 0) {
+                            (false, true) => self.buzz.clone(),
+                            (true, false) => self.fizz.clone(),
+                            (true, true) => self.fizzbuzz.clone(),
+                            (false, false) => format!("{idx}").into(),
+                        };
+                        let _ = fetch.add_child(
+                            idx,
+                            NewWidget::new(Label::new(label).with_style(StyleProperty::FontSize(
+                                if idx % 100 == 0 { 40. } else { 20. },
+                            )))
+                            .erased(),
+                        );
                     }
                 },
             );

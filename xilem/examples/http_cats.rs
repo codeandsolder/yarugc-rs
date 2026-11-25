@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use masonry::layout::{AsUnit, Length, UnitPoint};
 use masonry::properties::{LineBreaking, Padding};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 use winit::dpi::LogicalSize;
 use xilem::RunError;
 use xilem::core::fork;
@@ -27,7 +27,7 @@ struct HttpCats {
     // The currently active (http status) code.
     selected_code: Option<u32>,
     /// Send a status code to download the image for it.
-    download_sender: Option<UnboundedSender<u32>>,
+    download_sender: Option<Sender<u32>>,
 }
 
 #[derive(Debug)]
@@ -94,15 +94,18 @@ impl HttpCats {
                     .flex(1.),
             )),
             worker(
-                |proxy, mut rx| async move {
-                    while let Some(code) = rx.recv().await {
-                        let proxy = proxy.clone();
-                        tokio::task::spawn(async move {
+                std::num::NonZeroUsize::MIN.saturating_add(31),
+                |proxy, rx| {
+                    xilem::view::process_requests(
+                        proxy,
+                        rx,
+                        std::num::NonZeroUsize::MIN.saturating_add(7),
+                        |code| async move {
                             let url = format!("https://http.cat/{code}");
                             let result = image_from_url(&url).await.map_err(|err| err.to_string());
-                            drop(proxy.message((code, result)));
-                        });
-                    }
+                            (code, result)
+                        },
+                    )
                 },
                 |state: &mut Self, sender| {
                     state.download_sender = Some(sender);
@@ -162,7 +165,7 @@ impl Status {
                     let requested = state
                         .download_sender
                         .as_ref()
-                        .is_some_and(|sender| sender.send(code).is_ok());
+                        .is_some_and(|sender| sender.try_send(code).is_ok());
                     status.image = if requested {
                         ImageState::Pending
                     } else {

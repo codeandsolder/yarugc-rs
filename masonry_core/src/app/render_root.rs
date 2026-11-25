@@ -19,9 +19,10 @@ use crate::app::VisualLayerPlan;
 use crate::app::layer_stack::LayerStack;
 use crate::core::{
     AccessCtx, AccessEvent, BrushIndex, CursorIcon, DefaultProperties, ErasedAction, FromDynWidget,
-    Handled, Ime, LayerType, NewWidget, PointerEvent, PropertyArena, PropertyStack,
-    PropertyStackId, ResizeDirection, TextEvent, Widget, WidgetArena, WidgetArenaNode, WidgetId,
-    WidgetMut, WidgetPod, WidgetRef, WidgetState, WidgetTag, WidgetTagInner, WindowEvent,
+    Handled, Ime, LayerPlacement, LayerType, NewWidget, PointerButton, PointerEvent, PointerInfo,
+    PropertyArena, PropertyStack, PropertyStackId, ResizeDirection, TextEvent, Widget, WidgetArena,
+    WidgetArenaNode, WidgetId, WidgetMut, WidgetPod, WidgetRef, WidgetState, WidgetTag,
+    WidgetTagInner, WindowEvent,
 };
 use crate::imaging::record::Scene;
 use crate::passes::accessibility::run_accessibility_pass;
@@ -66,6 +67,20 @@ pub struct RenderRoot {
 
     /// The widget tree; stores widgets and their states.
     pub(crate) widget_arena: WidgetArena,
+}
+
+/// The pointer and button that initiated a captured interaction.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PointerPress {
+    pub pointer: PointerInfo,
+    pub button: Option<PointerButton>,
+}
+
+/// Single captured interaction, including the initiating press.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PointerCapture {
+    pub target: WidgetId,
+    pub press: PointerPress,
 }
 
 /// State shared between passes.
@@ -119,8 +134,8 @@ pub(crate) struct RenderRootState {
     /// List of ancestors of the currently active widget.
     pub(crate) active_path: Vec<WidgetId>,
 
-    /// Widget that currently has pointer capture.
-    pub(crate) pointer_capture_target: Option<WidgetId>,
+    /// The widget and initiating press that currently own pointer capture.
+    pub(crate) pointer_capture: Option<PointerCapture>,
 
     /// Current cursor icon.
     pub(crate) cursor_icon: CursorIcon,
@@ -269,16 +284,16 @@ pub enum RenderRootSignal {
     WidgetSelectedInInspector(WidgetId),
     /// A new [layer] should be created with the widget as root.
     ///
-    /// The given [`Point`] must be in the window's coordinate space.
+    /// The placement is expressed in window coordinates.
     ///
     /// [layer]: crate::doc::masonry_concepts#layers
-    NewLayer(LayerType, NewWidget<dyn Widget>, Point),
+    NewLayer(LayerType, NewWidget<dyn Widget>, LayerPlacement),
     /// The layer with the given widget as root should be removed.
     RemoveLayer(WidgetId),
     /// The layer with the given widget as root should be repositioned to the specified point.
     ///
-    /// The given [`Point`] must be in the window's coordinate space.
-    RepositionLayer(WidgetId, Point),
+    /// The placement is expressed in window coordinates.
+    RepositionLayer(WidgetId, LayerPlacement),
 }
 
 /// State of the widget inspector. Useful for debugging.
@@ -340,7 +355,7 @@ impl RenderRoot {
                 scroll_request_targets: Vec::new(),
                 hovered_path: Vec::new(),
                 active_path: Vec::new(),
-                pointer_capture_target: None,
+                pointer_capture: None,
                 cursor_icon: CursorIcon::Default,
                 font_context: FontContext {
                     collection: Collection::new(CollectionOptions {
@@ -412,24 +427,12 @@ impl RenderRoot {
         // so the pass descends to every node, `request_update_props` to enter the
         // cache-eviction branch, and `invalidated` so every cached entry re-fires
         // `property_changed` regardless of its (unchanged) resolved index.
-        fn invalidate_props_all_in(node: ArenaMut<'_, WidgetArenaNode>) {
-            let children = node.children;
-            let widget = &mut *node.item.widget;
-            let state = &mut node.item.state;
-
+        self.property_arena.default_properties = default_properties;
+        self.visit_widget_states(|state| {
             state.set_request_update_props(true);
             state.set_needs_update_props(true);
             state.property_cache.invalidate();
-
-            let id = state.id;
-            recurse_on_children(id, widget, children, |node| {
-                invalidate_props_all_in(node);
-            });
-        }
-        self.property_arena.default_properties = default_properties;
-        if let Some(root_node) = self.widget_arena.nodes.find_mut(self.root_id()) {
-            invalidate_props_all_in(root_node);
-        }
+        });
 
         self.run_rewrite_passes();
     }
@@ -566,15 +569,30 @@ impl RenderRoot {
     ///
     /// Returns the current visual-layer plan and, if accessibility is active, a tree update.
     pub fn redraw(&mut self) -> (VisualLayerPlan, Option<TreeUpdate>) {
-        self.run_rewrite_passes();
-
-        let access_tree_active = self.global_state.access_tree_active();
-
-        // TODO - Handle invalidation regions
-        let visual_layers = run_paint_pass(self);
-        let tree_update = access_tree_active
-            .then(|| run_accessibility_pass(self, self.global_state.scale_factor));
+        let visual_layers = self.redraw_visual();
+        let tree_update = self.take_accessibility_update();
         (visual_layers, tree_update)
+    }
+
+    /// Rebuild layout and record the visual-layer plan without consuming accessibility updates.
+    ///
+    /// Hosts can call this before a fallible rendering operation, then call
+    /// [`Self::take_accessibility_update`] after they have committed the frame.
+    #[must_use = "Use the recorded visual layers."]
+    pub fn redraw_visual(&mut self) -> VisualLayerPlan {
+        self.run_rewrite_passes();
+        run_paint_pass(self)
+    }
+
+    /// Consume the current accessibility update if the accessibility tree is enabled.
+    ///
+    /// Unlike [`Self::redraw`], this does not run layout or paint. Call after
+    /// layout has been refreshed, and deliver the returned update to the host.
+    #[must_use = "Deliver the returned update to the accessibility consumer."]
+    pub fn take_accessibility_update(&mut self) -> Option<TreeUpdate> {
+        self.global_state
+            .access_tree_active()
+            .then(|| run_accessibility_pass(self, self.global_state.scale_factor))
     }
 
     /// Returns the current icon that the mouse should display.
@@ -586,6 +604,17 @@ impl RenderRoot {
     /// Returns a [`WidgetRef`] to the root widget of the given [layer](crate::doc::masonry_concepts#layers).
     pub fn get_layer_root(&self, layer_idx: usize) -> Option<WidgetRef<'_, dyn Widget>> {
         self.get_widget(self.layer_root_id(layer_idx)?)
+    }
+
+    /// Hit-tests the complete layer stack at a window-space point.
+    ///
+    /// Unlike a test restricted to the base layer, this includes popups and
+    /// other overlays in their actual stacking order. Pointer capture is not
+    /// considered: this returns the geometrically hit interactive widget.
+    #[must_use = "Inspect the widget at this position."]
+    pub fn widget_at_position(&self, position: Point) -> Option<WidgetRef<'_, dyn Widget>> {
+        self.get_widget(self.root_id())?
+            .find_widget_under_pointer(position)
     }
 
     /// Returns a [`WidgetRef`] to a specific widget.
@@ -663,14 +692,14 @@ impl RenderRoot {
 
     /// Adds a new layer at the end of the stack, with the given widget as its root, at the given position.
     ///
-    /// The given `pos` must be in the window's coordinate space.
-    pub fn add_layer(&mut self, root: NewWidget<impl Widget + ?Sized>, pos: Point) {
+    /// The placement is expressed in window coordinates.
+    pub fn add_layer(&mut self, root: NewWidget<impl Widget + ?Sized>, placement: LayerPlacement) {
         debug!("added layer to stack");
         let _ = mutate_widget(
             self,
             self.root_id(),
             |mut layer_stack: WidgetMut<'_, LayerStack>| {
-                LayerStack::add_layer(&mut layer_stack, root, pos);
+                LayerStack::add_layer(&mut layer_stack, root, placement);
             },
         );
 
@@ -683,9 +712,25 @@ impl RenderRoot {
     ///
     /// # Panics
     ///
-    /// Panics in debug mode if the intended layer is the base layer or
-    /// is not found.
+    /// Panics in debug mode if the intended layer is the base layer.
+    /// An already removed layer is ignored.
     pub fn remove_layer(&mut self, root_id: WidgetId) {
+        // A driver may close an attached layer directly. Clear its owner mapping
+        // even if no widget requested the removal.
+        let mut owner = None;
+        self.global_state.attached_layers.retain(|id, layers| {
+            let before = layers.len();
+            layers.retain(|_, layer| *layer != root_id);
+            if layers.len() != before {
+                owner = Some(*id);
+            }
+            !layers.is_empty()
+        });
+        if let Some(owner) = owner {
+            let _ = mutate_widget(self, owner, |mut widget: WidgetMut<'_, dyn Widget>| {
+                widget.ctx.request_accessibility_update();
+            });
+        }
         let _ = mutate_widget(
             self,
             self.root_id(),
@@ -699,20 +744,20 @@ impl RenderRoot {
 
     /// Repositions the layer with the given widget as root.
     ///
-    /// The given `new_origin` must be in the window's coordinate space.
+    /// The placement is expressed in window coordinates.
     ///
     /// The base layer cannot be repositioned.
     ///
     /// # Panics
     ///
-    /// Panics in debug mode if the intended layer is the base layer or
-    /// is not found.
-    pub fn reposition_layer(&mut self, root_id: WidgetId, new_origin: Point) {
+    /// Panics in debug mode if the intended layer is the base layer.
+    /// A layer removed before a queued reposition is ignored.
+    pub fn reposition_layer(&mut self, root_id: WidgetId, placement: LayerPlacement) {
         let _ = mutate_widget(
             self,
             self.root_id(),
             |mut layer_stack: WidgetMut<'_, LayerStack>| {
-                LayerStack::reposition_layer(&mut layer_stack, root_id, new_origin);
+                LayerStack::reposition_layer(&mut layer_stack, root_id, placement);
             },
         );
 
@@ -818,52 +863,41 @@ impl RenderRoot {
         }
     }
 
-    // TODO - Factor out into "visit_all" method?
-
-    pub(crate) fn request_access_all(&mut self) {
-        fn request_access_all_in(node: ArenaMut<'_, WidgetArenaNode>) {
-            let children = node.children;
-            let widget = &mut *node.item.widget;
+    fn visit_widget_states(&mut self, mut visit: impl FnMut(&mut WidgetState)) {
+        fn visit_subtree(
+            node: ArenaMut<'_, WidgetArenaNode>,
+            visit: &mut impl FnMut(&mut WidgetState),
+        ) {
             let state = &mut node.item.state;
-
-            state.set_needs_accessibility(true);
-            state.set_request_accessibility(true);
-
-            let id = state.id;
-            recurse_on_children(id, widget, children, |node| {
-                request_access_all_in(node);
+            visit(state);
+            recurse_on_children(state.id, &*node.item.widget, node.children, |child| {
+                visit_subtree(child, visit);
             });
         }
 
         if let Some(root_node) = self.widget_arena.nodes.find_mut(self.root_id()) {
-            request_access_all_in(root_node);
+            visit_subtree(root_node, &mut visit);
         }
+    }
+
+    pub(crate) fn request_access_all(&mut self) {
+        self.visit_widget_states(|state| {
+            state.set_needs_accessibility(true);
+            state.set_request_accessibility(true);
+        });
         self.global_state
             .emit_signal(RenderRootSignal::RequestRedraw);
     }
 
     pub(crate) fn request_render_all(&mut self) {
-        fn request_render_all_in(node: ArenaMut<'_, WidgetArenaNode>) {
-            let children = node.children;
-            let widget = &mut *node.item.widget;
-            let state = &mut node.item.state;
-
+        self.visit_widget_states(|state| {
             state.set_needs_paint(true);
             state.set_needs_accessibility(true);
             state.set_request_pre_paint(true);
             state.set_request_paint(true);
             state.set_request_accessibility(true);
             state.set_request_post_paint(true);
-
-            let id = state.id;
-            recurse_on_children(id, widget, children, |node| {
-                request_render_all_in(node);
-            });
-        }
-
-        if let Some(root_node) = self.widget_arena.nodes.find_mut(self.root_id()) {
-            request_render_all_in(root_node);
-        }
+        });
         self.global_state
             .emit_signal(RenderRootSignal::RequestRedraw);
     }
@@ -887,7 +921,7 @@ impl RenderRoot {
 
     /// Returns the [`WidgetId`] of the widget which [captures pointer events](crate::doc::masonry_concepts#pointer-capture).
     pub const fn pointer_capture_target(&self) -> Option<WidgetId> {
-        self.global_state.pointer_capture_target
+        self.global_state.pointer_capture_target()
     }
 
     /// Sets the [focused widget](crate::doc::masonry_concepts#text-focus)
@@ -1073,11 +1107,24 @@ macro_rules! root_flag_accessors {
 }
 
 impl RenderRootState {
+    pub(crate) const fn pointer_capture_target(&self) -> Option<WidgetId> {
+        match self.pointer_capture {
+            Some(capture) => Some(capture.target),
+            None => None,
+        }
+    }
+
     root_flag_accessors!(window_focused, set_window_focused, WindowFocused);
     root_flag_accessors!(is_ime_active, set_is_ime_active, IsImeActive);
     root_flag_accessors!(needs_pointer_pass, set_needs_pointer_pass, NeedsPointerPass);
     root_flag_accessors!(access_tree_active, set_access_tree_active, AccessTreeActive);
     root_flag_accessors!(debug_paint, set_debug_paint, DebugPaint);
+
+    pub(crate) fn start_ime_session(&mut self) {
+        self.set_is_ime_active(true);
+        self.last_sent_ime_area = INVALID_IME_AREA;
+        self.emit_signal(RenderRootSignal::StartIme);
+    }
 
     /// Sends a signal to the runner of this app, which allows global actions to be triggered by a widget.
     pub(crate) fn emit_signal(&mut self, signal: RenderRootSignal) {

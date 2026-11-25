@@ -47,7 +47,7 @@ fn compose_widget(
         children: children.reborrow_mut(),
         property_arena,
     };
-    if ctx.widget_state.request_compose() {
+    if transformed || ctx.widget_state.request_compose() {
         widget.compose(&mut ctx);
     }
 
@@ -72,7 +72,9 @@ fn compose_widget(
         );
         let parent_bounding_box = parent_state.bounding_box;
 
-        if let Some(child_bounding_box) = parent_state.clip_child(node.item.state.bounding_box) {
+        if !node.item.state.is_stashed()
+            && let Some(child_bounding_box) = parent_state.clip_child(node.item.state.bounding_box)
+        {
             parent_state.bounding_box = parent_bounding_box.union(child_bounding_box);
         }
 

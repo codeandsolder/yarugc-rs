@@ -299,6 +299,7 @@ jobs:
             libegl-mesa0 \
             libgl1-mesa-dri \
             libxcb-xfixes0-dev \
+            libxkbcommon-x11-0 \
             mesa-vulkan-drivers
 
       - name: Install cargo-nextest
@@ -320,6 +321,10 @@ jobs:
           SKIP_RENDER_TESTS: ${{ runner.os == 'Windows' && '1' || '' }}
           # Check that doc file paths are correct
           CHECK_DOC_PATHS: "true"
+
+      - name: Run native window lifecycle regression
+        if: runner.os == 'Linux'
+        run: xvfb-run -a cargo test -p masonry_winit --locked --profile ci --all-features --lib native_window_lifecycle_and_gpu_recovery -- --ignored
 
       - name: Run retained GPU integration tests
         if: runner.os == 'Linux'

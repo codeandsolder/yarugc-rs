@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::any::TypeId;
+use std::borrow::Cow;
 use std::mem::Discriminant;
 
 use accesskit::{Node, Role};
@@ -18,7 +19,7 @@ use crate::imaging::Painter;
 use crate::kurbo::{Affine, Axis, Point, Rect, Size};
 use crate::layout::{AsUnit, LenReq, Length};
 use crate::parley::PlainEditor;
-use crate::parley::editing::{Generation, SplitString};
+use crate::parley::editing::Generation;
 use crate::properties::{CaretColor, ContentColor, SelectionColor};
 use crate::theme::default_text_styles;
 use crate::util::bounding_box_to_rect;
@@ -65,6 +66,11 @@ pub(super) fn inherit_property<
 pub struct TextArea<const USER_EDITABLE: bool> {
     /// The underlying `PlainEditor`, which provides a high-level interface for us to dispatch into.
     editor: PlainEditor<BrushIndex>,
+    // Parley currently exposes only a setter for its alignment.
+    text_alignment: TextAlign,
+    // Parley replaces the selection when composition starts. Retain that
+    // text until commit so cancellation can restore the original selection.
+    preedit_replaced: Option<String>,
     /// Placeholder text exposed to accessibility APIs by an editable text area.
     placeholder: ArcStr,
     /// The generation of `editor` which we have rendered.
@@ -140,6 +146,8 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
         editor.set_text(text);
         Self {
             editor,
+            text_alignment: TextAlign::default(),
+            preedit_replaced: None,
             placeholder: "".into(),
             rendered_generation: Generation::default(),
             word_wrap: true,
@@ -209,6 +217,7 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
     /// To modify this on an active text area, use [`set_text_alignment`](Self::set_text_alignment).
     #[must_use = "Use the returned value."]
     pub fn with_text_alignment(mut self, text_alignment: TextAlign) -> Self {
+        self.text_alignment = text_alignment;
         self.editor.set_alignment(text_alignment);
         self
     }
@@ -265,10 +274,27 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
     ///
     /// To update the text of an active text area, use [`reset_text`](Self::reset_text).
     ///
-    /// The return value is not just `&str` to handle IME preedits.
+    /// Returns committed text, excluding any in-progress IME preedit and
+    /// including the original selection it temporarily replaced.
+    /// Borrows the editor buffer when there is no active composition.
     #[must_use = "Use the returned value."]
-    pub fn text(&self) -> SplitString<'_> {
-        self.editor.text()
+    pub fn text(&self) -> Cow<'_, str> {
+        let Some(range) = self.editor.raw_compose() else {
+            return Cow::Borrowed(self.editor.raw_text());
+        };
+        let raw = self.editor.raw_text();
+        let replaced = self.preedit_replaced.as_deref().unwrap_or_default();
+        let mut committed = String::with_capacity(raw.len() - range.len() + replaced.len());
+        committed.push_str(&raw[..range.start]);
+        committed.push_str(replaced);
+        committed.push_str(&raw[range.end..]);
+        Cow::Owned(committed)
+    }
+
+    /// Returns the text alignment currently configured for this area.
+    #[must_use = "Use the returned alignment."]
+    pub const fn text_alignment(&self) -> TextAlign {
+        self.text_alignment
     }
 
     /// Check if this text area holds nothing, including IME preedit content.
@@ -364,6 +390,7 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
             let (fctx, lctx) = this.ctx.text_contexts();
             this.widget.editor.driver(fctx, lctx).clear_compose();
         }
+        this.widget.preedit_replaced = None;
         this.widget.editor.set_text(new_text);
 
         let (fctx, lctx) = this.ctx.text_contexts();
@@ -383,28 +410,37 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
     ///
     /// The runtime equivalent of [`with_word_wrap`](Self::with_word_wrap).
     pub fn set_word_wrap(this: &mut WidgetMut<'_, Self>, wrap_words: bool) {
-        this.widget.word_wrap = wrap_words;
-        this.ctx.request_layout();
+        if this.widget.word_wrap != wrap_words {
+            this.widget.word_wrap = wrap_words;
+            this.ctx.request_layout();
+        }
     }
 
     /// Sets the [text alignment](https://en.wikipedia.org/wiki/Typographic_alignment) of the text.
     ///
     /// The runtime equivalent of [`with_text_alignment`](Self::with_text_alignment).
     pub fn set_text_alignment(this: &mut WidgetMut<'_, Self>, text_alignment: TextAlign) {
-        this.widget.editor.set_alignment(text_alignment);
-
-        this.ctx.request_layout();
+        if this.widget.text_alignment != text_alignment {
+            this.widget.text_alignment = text_alignment;
+            this.widget.editor.set_alignment(text_alignment);
+            this.ctx.request_layout();
+        }
     }
 
     /// Configures how this text area handles the user pressing Enter <kbd>↵</kbd>.
     pub fn set_insert_newline(this: &mut WidgetMut<'_, Self>, insert_newline: InsertNewline) {
-        this.widget.insert_newline = insert_newline;
-        this.ctx.request_accessibility_update();
+        if this.widget.insert_newline != insert_newline {
+            this.widget.insert_newline = insert_newline;
+            this.ctx.request_accessibility_update();
+        }
     }
 
     pub(super) fn set_placeholder(this: &mut WidgetMut<'_, Self>, placeholder: impl Into<ArcStr>) {
-        this.widget.placeholder = placeholder.into();
-        this.ctx.request_accessibility_update();
+        let placeholder = placeholder.into();
+        if this.widget.placeholder != placeholder {
+            this.widget.placeholder = placeholder;
+            this.ctx.request_accessibility_update();
+        }
     }
 
     /// Sets whether [hinting](https://en.wikipedia.org/wiki/Font_hinting) will be used for this text area.
@@ -412,14 +448,19 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
     /// The runtime equivalent of [`with_hint`](Self::with_hint).
     /// For full documentation, see that method.
     pub fn set_hint(this: &mut WidgetMut<'_, Self>, hint: bool) {
-        this.widget.hint = hint;
-        this.ctx.request_paint_only();
+        if this.widget.hint != hint {
+            this.widget.hint = hint;
+            this.ctx.request_paint_only();
+        }
     }
 
     /// Sets the selection to the given byte range.
     ///
-    /// No-op if either index is not a char boundary.
+    /// No-op while IME composition is active or if either index is not a char boundary.
     pub fn select_byte_range(this: &mut WidgetMut<'_, Self>, start: usize, end: usize) {
+        if this.widget.editor.is_composing() {
+            return;
+        }
         let (fctx, lctx) = this.ctx.text_contexts();
         this.widget
             .editor
@@ -434,7 +475,7 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
     ///
     /// No-op if the text isn't found.
     pub fn select_text(this: &mut WidgetMut<'_, Self>, text: &str) {
-        let Some(start) = this.widget.text().to_string().find(text) else {
+        let Some(start) = this.widget.text().find(text) else {
             return;
         };
         let end = start + text.len();
@@ -606,7 +647,7 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
                     .insert_or_replace_selection(" ");
                 edited = true;
             }
-            Key::Named(NamedKey::Enter) => {
+            Key::Named(NamedKey::Enter) if EDITABLE => {
                 let insert_newline = match self.insert_newline {
                     InsertNewline::OnEnter => true,
                     InsertNewline::OnShiftEnter => shift,
@@ -619,7 +660,7 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
                         .insert_or_replace_selection("\n");
                     edited = true;
                 } else {
-                    ctx.submit_action::<TextAction>(TextAction::Entered(self.text().to_string()));
+                    ctx.submit_action::<TextAction>(TextAction::Entered(self.text().into_owned()));
                 }
             }
 
@@ -628,7 +669,7 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
                 // Note that this doesn't allow input of the tab character; we need to be more clever here at some point
                 return None;
             }
-            Key::Named(NamedKey::Escape) => {
+            Key::Named(NamedKey::Escape) if EDITABLE => {
                 ctx.submit_action::<TextAction>(TextAction::Cancelled);
             }
             Key::Character(text) if EDITABLE => {
@@ -668,15 +709,79 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
         let new_generation = self.editor.generation();
         if new_generation != self.rendered_generation {
             if edited {
-                ctx.submit_action::<TextAction>(TextAction::Changed(
-                    self.text().into_iter().collect(),
-                ));
+                ctx.submit_action::<TextAction>(TextAction::Changed(self.text().into_owned()));
                 ctx.request_layout();
             } else {
                 ctx.request_render();
                 ctx.set_ime_area(self.ime_area());
             }
             self.rendered_generation = new_generation;
+        }
+    }
+
+    fn cancel_preedit(&mut self, ctx: &mut EventCtx<'_>) {
+        let start = self.editor.raw_compose().as_ref().map(|range| range.start);
+        let (fctx, lctx) = ctx.text_contexts();
+        let mut driver = self.editor.driver(fctx, lctx);
+        driver.clear_compose();
+        if let Some((start, replaced)) = start.zip(self.preedit_replaced.take()) {
+            driver.insert_or_replace_selection(&replaced);
+            driver.select_byte_range(start, start + replaced.len());
+        }
+    }
+
+    fn handle_ime(&mut self, ctx: &mut EventCtx<'_>, event: &Ime) {
+        let committed = match event {
+            Ime::Disabled => {
+                self.cancel_preedit(ctx);
+                false
+            }
+            Ime::Preedit(text, cursor) => {
+                if text.is_empty() {
+                    self.cancel_preedit(ctx);
+                } else {
+                    if !self.editor.is_composing() {
+                        self.preedit_replaced = self.editor.selected_text().map(str::to_owned);
+                    }
+                    // Platform offsets are UTF-8 byte indices; ignore an invalid
+                    // selection rather than forwarding it into the editor.
+                    let cursor = cursor.filter(|(start, end)| {
+                        text.is_char_boundary(*start) && text.is_char_boundary(*end)
+                    });
+                    let (fctx, lctx) = ctx.text_contexts();
+                    self.editor.driver(fctx, lctx).set_compose(text, cursor);
+                }
+                false
+            }
+            Ime::Commit(text) => {
+                self.replace_preedit(ctx, text);
+                true
+            }
+            Ime::Enabled => false,
+        };
+        ctx.set_handled();
+        self.finish_text_edit(ctx, committed);
+    }
+
+    fn replace_preedit(&mut self, ctx: &mut EventCtx<'_>, text: &str) {
+        // Clearing the preedit moves the caret to its original start. The
+        // original selection was already removed when composition began;
+        // replacing it again would require unnecessary layout and reselection.
+        self.preedit_replaced = None;
+        let (fctx, lctx) = ctx.text_contexts();
+        let mut driver = self.editor.driver(fctx, lctx);
+        driver.clear_compose();
+        driver.insert_or_replace_selection(text);
+    }
+
+    fn finish_text_edit(&mut self, ctx: &mut EventCtx<'_>, committed: bool) {
+        let generation = self.editor.generation();
+        if generation != self.rendered_generation {
+            if committed {
+                ctx.submit_action::<TextAction>(TextAction::Changed(self.text().to_string()));
+            }
+            ctx.request_layout();
+            self.rendered_generation = generation;
         }
     }
 }
@@ -811,65 +916,15 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
                 ctx.request_paint_only();
             }
 
-            TextEvent::Ime(e) => {
-                // TODO: Handle the cursor movement things from https://github.com/rust-windowing/winit/pull/3824
-                let (fctx, lctx) = ctx.text_contexts();
-
-                // Whether the returned text has changed.
-                // We don't send a TextChanged when the preedit changes
-                let mut edited = false;
-                match e {
-                    Ime::Disabled => {
-                        self.editor.driver(fctx, lctx).clear_compose();
-                    }
-                    Ime::Preedit(text, cursor) => {
-                        if text.is_empty() {
-                            self.editor.driver(fctx, lctx).clear_compose();
-                        } else {
-                            self.editor.driver(fctx, lctx).set_compose(text, *cursor);
-                            edited = true;
-                        }
-                    }
-                    Ime::Commit(text) => {
-                        self.editor
-                            .driver(fctx, lctx)
-                            .insert_or_replace_selection(text);
-                        edited = true;
-                    }
-                    Ime::Enabled => {}
-                }
-
+            TextEvent::Ime(event) if EDITABLE => {
+                self.handle_ime(ctx, event);
+            }
+            TextEvent::ClipboardPaste(text) if EDITABLE => {
+                self.replace_preedit(ctx, text);
                 ctx.set_handled();
-                if edited {
-                    let text = self.text().into_iter().collect();
-                    ctx.submit_action::<Self::Action>(TextAction::Changed(text));
-                }
-
-                let new_generation = self.editor.generation();
-                if new_generation != self.rendered_generation {
-                    ctx.request_layout();
-                    self.rendered_generation = new_generation;
-                }
+                self.finish_text_edit(ctx, true);
             }
-
-            TextEvent::ClipboardPaste(text) => {
-                if EDITABLE {
-                    let (fctx, lctx) = ctx.text_contexts();
-                    self.editor
-                        .driver(fctx, lctx)
-                        .insert_or_replace_selection(text);
-
-                    // TODO - Factor out with other branches
-                    let new_generation = self.editor.generation();
-                    if new_generation != self.rendered_generation {
-                        ctx.submit_action::<Self::Action>(TextAction::Changed(
-                            self.text().into_iter().collect(),
-                        ));
-                        ctx.request_layout();
-                        self.rendered_generation = new_generation;
-                    }
-                }
-            }
+            _ => {}
         }
     }
 
@@ -943,42 +998,8 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        // Currently we only support the common horizontal-tb writing mode,
-        // so we hardcode the assumption that inline axis is horizontal.
-        let inline = Axis::Horizontal;
-
-        // TODO: The following max_advance calculation is very similar to Label widget's measure,
-        //       so these could be more unified and share a single implementation.
-
-        // Calculate the max advance for the inline axis, with None indicating unbounded.
-        let max_advance = if self.word_wrap {
-            if axis == inline {
-                // Inline axis measurement ignores cross_length as a performance optimization.
-                // The search complexity of dealing with it is just too prohibitive.
-                // This is a common optimization also present on the web.
-                match len_req {
-                    // Zero space will get us the length of longest unbreakable word
-                    LenReq::Min => Some(Length::ZERO),
-                    // Unbounded space will get us the length of the unwrapped string
-                    LenReq::Max => None,
-                    // Attempt to wrap according to the parent's request
-                    LenReq::Fit(space) => Some(space),
-                }
-            } else {
-                // Block axis is dependent on the inline axis, so cross_length dominates.
-                // If there is no explicit cross_length present, we fall back to inline defaults.
-                match len_req {
-                    // Fallback is inline axis MinContent
-                    LenReq::Min => cross_length.or(Some(Length::ZERO)),
-                    // Fallback is inline axis MaxContent, even for FitContent, because
-                    // as we don't have the inline space bound we'll consider it unbounded.
-                    LenReq::Max | LenReq::Fit(_) => cross_length,
-                }
-            }
-        } else {
-            None
-        }
-        .map(|v| v.get() as f32);
+        let max_advance =
+            super::text_layout::measure_max_advance(self.word_wrap, axis, len_req, cross_length);
 
         let mut reset_max_advance = None;
         if self.last_max_advance != max_advance {
@@ -1423,6 +1444,78 @@ mod tests {
         harness.mouse_button_release(Some(PointerButton::Primary));
 
         assert_render_snapshot!(harness, "text_area_selection");
+    }
+
+    #[test]
+    fn ime_commit_replaces_preedit_and_notifies_once() {
+        let area = NewWidget::new(TextArea::new_editable("[old]"));
+        let mut harness = TestHarness::create(test_property_set(), area);
+        let id = harness.root_id();
+        harness.focus_on(Some(id));
+        harness
+            .edit_root_widget(|mut area| TextArea::select_text(&mut area, "old"))
+            .unwrap();
+
+        harness.process_text_event(&TextEvent::Ime(Ime::Preedit("にほん".into(), Some((3, 6)))));
+        assert!(harness.root_widget().unwrap().editor.is_composing());
+        assert_eq!(harness.root_widget().unwrap().text(), "[old]");
+        assert!(harness.pop_action_erased().is_none());
+        harness.process_text_event(&TextEvent::Ime(Ime::Preedit("日本".into(), Some((1, 99)))));
+        assert!(harness.pop_action_erased().is_none());
+        harness.process_text_event(&TextEvent::Ime(Ime::Commit("日本語".into())));
+        assert_eq!(
+            harness.root_widget().unwrap().text().to_string(),
+            "[日本語]"
+        );
+        assert!(!harness.root_widget().unwrap().editor.is_composing());
+        assert_eq!(
+            harness.pop_action::<TextAction>().unwrap(),
+            Some((TextAction::Changed("[日本語]".into()), id))
+        );
+        assert!(harness.pop_action_erased().is_none());
+
+        // Use ASCII for the selected text so the test does not depend on a
+        // CJK font being available on the test machine.
+        harness
+            .edit_root_widget(|mut area| {
+                TextArea::reset_text(&mut area, "[old]");
+                TextArea::select_text(&mut area, "old");
+            })
+            .unwrap();
+        assert_eq!(
+            harness.root_widget().unwrap().editor.selected_text(),
+            Some("old")
+        );
+        harness.process_text_event(&TextEvent::preedit("仮".into()));
+        assert_eq!(harness.root_widget().unwrap().text(), "[old]");
+        harness.process_text_event(&TextEvent::Ime(Ime::Disabled));
+        assert_eq!(harness.root_widget().unwrap().text(), "[old]");
+        assert_eq!(
+            harness.root_widget().unwrap().editor.selected_text(),
+            Some("old")
+        );
+        assert!(harness.pop_action_erased().is_none());
+    }
+
+    #[test]
+    fn immutable_text_area_rejects_ime_paste_and_enter() {
+        let area = NewWidget::new(TextArea::new_immutable("unchanged"));
+        let mut harness = TestHarness::create(test_property_set(), area);
+        // Explicit focus fallback allows a non-focusable widget to receive input.
+        harness.set_focus_fallback(Some(harness.root_id()));
+        for event in [
+            TextEvent::preedit("仮".into()),
+            TextEvent::Ime(Ime::Commit("確定".into())),
+            TextEvent::ClipboardPaste("paste".into()),
+            TextEvent::key_down(Key::Named(NamedKey::Enter)),
+        ] {
+            assert_eq!(harness.process_text_event(&event), crate::core::Handled::No);
+        }
+        assert_eq!(
+            harness.root_widget().unwrap().text().to_string(),
+            "unchanged"
+        );
+        assert!(harness.pop_action_erased().is_none());
     }
 
     #[test]

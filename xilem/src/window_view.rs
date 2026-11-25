@@ -97,17 +97,13 @@ impl<State> View<State, (), ViewCtx> for WindowView<State> {
             debug_panic!("base_color should be set already in `MasonryDriver::build_window`");
             BACKGROUND_COLOR
         });
-        (
-            PodWindow(
-                NewWindow::new_with_id(
-                    self.id,
-                    initial_attributes,
-                    root_widget.new_widget.erased(),
-                )
-                .with_base_color(base_color),
-            ),
-            view_state,
-        )
+        let mut window =
+            NewWindow::new_with_id(self.id, initial_attributes, root_widget.new_widget.erased())
+                .with_base_color(base_color);
+        if let Some(properties) = &self.default_properties {
+            window = window.with_default_properties(properties.clone());
+        }
+        (PodWindow(window), view_state)
     }
 
     fn rebuild(
@@ -122,16 +118,16 @@ impl<State> View<State, (), ViewCtx> for WindowView<State> {
         if self.base_color != prev.base_color
             && let Some(base_color) = self.base_color
         {
-            *window.base_color() = base_color;
+            window.set_base_color(base_color);
         }
 
-        if let Some(props) = &self.default_properties
-            && prev
-                .default_properties
-                .as_ref()
-                .is_none_or(|p| !Arc::ptr_eq(p, props))
-        {
-            window.render_root().set_default_properties(props.clone());
+        let properties_changed = match (&prev.default_properties, &self.default_properties) {
+            (Some(previous), Some(current)) => !Arc::ptr_eq(previous, current),
+            (None, None) => false,
+            _ => true,
+        };
+        if properties_changed {
+            window.set_default_properties(self.default_properties.clone());
         }
 
         self.masonry_root.rebuild(

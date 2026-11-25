@@ -260,13 +260,6 @@ impl<T> TreeNode<T> {
         Self::children_at_path(children, parent_path)?.remove(id)
     }
 
-    fn remove_parent_links(&self, parents: &mut HashMap<NodeId, Option<NodeId>>) {
-        for child in self.children.values() {
-            child.remove_parent_links(parents);
-        }
-        parents.remove(&self.id);
-    }
-
     const fn arena_ref<'arena>(
         &'arena self,
         parent_id: Option<NodeId>,
@@ -448,8 +441,17 @@ impl<'arena, T> ArenaMutList<'arena, T> {
         let child_id = child_id.into();
         let child = self.children.remove(&child_id)?;
 
-        child.remove_parent_links(self.parents_map.parents_map);
-
+        // Flatten the detached subtree iteratively. All parent links must
+        // disappear before any of the removed payloads are dropped.
+        self.parents_map.parents_map.remove(&child_id);
+        let mut pending: Vec<_> = child.children.into_values().collect();
+        let mut removed = Vec::new();
+        while let Some(node) = pending.pop() {
+            self.parents_map.parents_map.remove(&node.id);
+            pending.extend(node.children.into_values());
+            removed.push(node.item);
+        }
+        drop(removed);
         Some(child.item)
     }
 

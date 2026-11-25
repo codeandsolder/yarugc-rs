@@ -314,7 +314,7 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for TextInput
         // without calling `set_text`.
 
         // This is probably not the right behaviour, but determining what is the right behaviour is hard
-        if text_area.widget.text() != &self.contents {
+        if text_area.widget.text() != self.contents.as_str() {
             widgets::TextArea::reset_text(&mut text_area, &self.contents);
         }
 

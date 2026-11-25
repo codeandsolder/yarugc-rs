@@ -1,7 +1,7 @@
 // Copyright 2024 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, mpsc};
@@ -32,7 +32,7 @@ use winit::event_loop::{ActiveEventLoop, OwnedDisplayHandle};
 use winit::window::{Window as WindowHandle, WindowAttributes, WindowId as HandleId};
 
 use crate::app::{
-    AppDriver, DriverCtx, WgpuContext, WgpuLimits, masonry_resize_direction_to_winit,
+    AppDriver, DriverCtx, GpuDeviceId, WgpuContext, WgpuLimits, masonry_resize_direction_to_winit,
     winit_ime_to_masonry,
 };
 use crate::app_driver::WindowId;
@@ -52,6 +52,9 @@ pub enum MasonryUserEvent {
     ///
     /// Higher-level GUI frameworks may send these to winit from background threads to wake up the event loop.
     AsyncAction(WindowId, ErasedAction),
+    /// A WGPU device became unusable; affected surfaces must be rebuilt.
+    #[doc(hidden)]
+    GpuDeviceLost(GpuDeviceId),
 }
 
 impl From<accesskit_winit::Event> for MasonryUserEvent {
@@ -109,6 +112,8 @@ pub struct NewWindow {
     pub root_widget: NewWidget<dyn Widget>,
     /// The base color of the window.
     pub base_color: Color,
+    /// Optional per-window override of the application default properties.
+    pub default_properties: Option<Arc<DefaultProperties>>,
 }
 
 impl NewWindow {
@@ -136,6 +141,7 @@ impl NewWindow {
             attributes,
             root_widget,
             base_color: Color::BLACK,
+            default_properties: None,
         }
     }
 
@@ -145,10 +151,15 @@ impl NewWindow {
     /// Masonry's current default theme assumes that this will be a very dark color for sufficient contrast.
     /// This is most useful for apps which want to for example support light mode.
     ///
-    /// Please note that it is not currently supported to modify this once the app is running.
-    /// This is not a fundamental limitation, and is only due to missing api design.
+    /// To change it at runtime, use [`Window::set_base_color`].
     pub const fn with_base_color(mut self, base_color: Color) -> Self {
         self.base_color = base_color;
+        self
+    }
+
+    /// Sets a window-specific default property set.
+    pub fn with_default_properties(mut self, default_properties: Arc<DefaultProperties>) -> Self {
+        self.default_properties = Some(default_properties);
         self
     }
 }
@@ -161,27 +172,32 @@ pub struct Window {
     event_reducer: WindowEventReducer,
     pub(crate) render_root: RenderRoot,
     pub(crate) base_color: Color,
+    application_properties: Arc<DefaultProperties>,
     last_anim: Option<Instant>,
     present_mode: wgpu::PresentMode,
+    surface_recovery_attempted: bool,
 }
 
 impl Window {
     pub(crate) fn new(
-        window_id: WindowId,
+        new_window: NewWindow,
         handle: Arc<WindowHandle>,
         accesskit_adapter: Adapter,
-        root_widget: NewWidget<dyn Widget>,
         signal_sender: Sender<(WindowId, RenderRootSignal)>,
-        base_color: Color,
-        options: RenderRootOptions,
+        mut options: RenderRootOptions,
     ) -> Self {
-        Self {
+        let window_id = new_window.id;
+        let application_properties = options.default_properties.clone();
+        if let Some(properties) = new_window.default_properties {
+            options.default_properties = properties;
+        }
+        let mut window = Self {
             id: window_id,
             handle,
             accesskit_adapter,
             event_reducer: WindowEventReducer::default(),
             render_root: RenderRoot::new(
-                root_widget,
+                new_window.root_widget,
                 move |signal| {
                     if signal_sender.send((window_id, signal)).is_err() {
                         trace!("Dropping signal after the event loop closed");
@@ -189,10 +205,18 @@ impl Window {
                 },
                 options,
             ),
-            base_color,
+            base_color: new_window.base_color,
+            application_properties,
             last_anim: None,
             present_mode: wgpu::PresentMode::AutoVsync,
+            surface_recovery_attempted: false,
+        };
+        if !window.handle.has_focus() {
+            window
+                .render_root
+                .handle_text_event(&TextEvent::WindowFocusChange(false));
         }
+        window
     }
 
     /// Access the underlying [Winit window](WindowHandle) of this window.
@@ -205,9 +229,42 @@ impl Window {
         &mut self.render_root
     }
 
-    /// Access base color of this window.
-    pub const fn base_color(&mut self) -> &mut Color {
-        &mut self.base_color
+    /// Returns the current base color.
+    #[must_use = "Inspect the window background."]
+    pub const fn base_color(&self) -> Color {
+        self.base_color
+    }
+
+    /// Changes the window background and schedules a redraw if it changed.
+    pub fn set_base_color(&mut self, color: Color) {
+        if self.base_color != color {
+            self.base_color = color;
+            self.handle.request_redraw();
+        }
+    }
+
+    /// Sets a window-specific property set, or restores the application defaults.
+    pub fn set_default_properties(&mut self, properties: Option<Arc<DefaultProperties>>) {
+        self.render_root.set_default_properties(
+            properties.unwrap_or_else(|| self.application_properties.clone()),
+        );
+    }
+
+    fn update_size(&mut self, size: PhysicalSize<u32>) {
+        if self.render_root.size() != size {
+            self.surface_recovery_attempted = false;
+            self.render_root
+                .handle_window_event(WindowEvent::Resize(size));
+        }
+    }
+
+    fn sync_geometry(&mut self) {
+        let scale = self.handle.scale_factor();
+        if self.render_root.scale_factor().to_bits() != scale.to_bits() {
+            self.render_root
+                .handle_window_event(WindowEvent::Rescale(scale));
+        }
+        self.update_size(window_size(&self.handle));
     }
 }
 
@@ -233,8 +290,8 @@ pub struct MasonryState {
     /// We aren't allowed to have any `Surface`s, and we also don't expect to receive any events.
     /// See [`ApplicationHandler::suspended()`] for details.
     is_suspended: bool,
+    started: bool,
     render_cx: RenderContext,
-    renderer: ImagingRenderer,
     // TODO: Winit doesn't seem to let us create these proxies from within the loop
     // The reasons for this are unclear
     event_loop_proxy: EventLoopProxy,
@@ -259,6 +316,8 @@ pub struct MasonryState {
     /// Windows that are scheduled to be created in the next resumed event.
     new_windows: Vec<NewWindow>,
     need_first_frame: Vec<HandleId>,
+    uninitialized_windows: VecDeque<WindowId>,
+    suspended_actions: VecDeque<(WindowId, ErasedAction)>,
 }
 
 // TODO - Merge into MasonryState?
@@ -361,7 +420,11 @@ impl Debug for MasonryState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MasonryState")
             .field("is_suspended", &self.is_suspended)
-            .field("renderer", &self.renderer)
+            .field("started", &self.started)
+            .field(
+                "gpu_device_ids",
+                &self.render_cx.devices.keys().collect::<Vec<_>>(),
+            )
             .field("event_loop_proxy", &self.event_loop_proxy)
             .field("window_id_to_handle_id", &self.window_id_to_handle_id)
             .field("surfaces", &self.surfaces)
@@ -372,6 +435,8 @@ impl Debug for MasonryState {
             .field("exit", &self.exit)
             .field("new_windows", &self.new_windows)
             .field("need_first_frame", &self.need_first_frame)
+            .field("uninitialized_windows", &self.uninitialized_windows)
+            .field("suspended_action_count", &self.suspended_actions.len())
             .finish_non_exhaustive()
     }
 }
@@ -394,7 +459,7 @@ impl MasonryState {
             "selected Masonry Winit render backend"
         );
 
-        let render_cx = RenderContext::new(display);
+        let render_cx = RenderContext::new(display, event_loop_proxy.clone());
 
         let (signal_sender, signal_receiver) = mpsc::channel::<(WindowId, RenderRootSignal)>();
 
@@ -407,8 +472,8 @@ impl MasonryState {
 
         Self {
             is_suspended: true,
+            started: false,
             render_cx,
-            renderer: ImagingRenderer::new(),
             event_loop_proxy,
             #[cfg(feature = "tracy")]
             frame: None,
@@ -427,6 +492,8 @@ impl MasonryState {
             exit: false,
             new_windows,
             need_first_frame: Vec::new(),
+            uninitialized_windows: VecDeque::new(),
+            suspended_actions: VecDeque::new(),
         }
     }
 
@@ -481,21 +548,48 @@ impl MasonryState {
 
         self.is_suspended = false;
 
-        // Surfaces for existing windows will be recreated on-demand in the redraw method
-
-        // Create new windows.
-        if !self.new_windows.is_empty() {
-            for new_window in std::mem::take(&mut self.new_windows) {
-                if let Err(err) = self.create_window(event_loop, new_window) {
-                    tracing::error!(%err, "Unable to create requested window");
+        for new_window in std::mem::take(&mut self.new_windows) {
+            let id = new_window.id;
+            if let Err(err) = self.create_window(event_loop, new_window) {
+                tracing::error!(%err, "Unable to create requested window");
+                // A duplicate request is not a failure of the already live window.
+                if !self.window_id_to_handle_id.contains_key(&id) {
+                    app_driver.on_window_creation_failed(id, &err);
                 }
             }
-            // TODO: This is wrong in the case where the driver tries to create a window whilst suspended
-            // The on_start would be called twice.
+        }
+
+        self.initialize_windows(app_driver);
+        if !std::mem::replace(&mut self.started, true) {
             app_driver.on_start(self);
         }
 
+        // Resume is not guaranteed to be followed by a platform redraw.
+        for window in self.windows.values_mut() {
+            window.surface_recovery_attempted = false;
+            window.sync_geometry();
+            window.handle.request_redraw();
+        }
+
         self.handle_signals(event_loop, app_driver);
+        while !self.exit {
+            let Some((id, action)) = self.suspended_actions.pop_front() else {
+                break;
+            };
+            self.handle_user_event(
+                event_loop,
+                MasonryUserEvent::AsyncAction(id, action),
+                app_driver,
+            );
+        }
+    }
+
+    fn initialize_windows(&mut self, app_driver: &mut dyn AppDriver) {
+        while let Some(id) = self.uninitialized_windows.pop_front() {
+            if let Some(window) = self.window_mut(id) {
+                app_driver.on_window_created(id, window);
+            }
+        }
     }
 
     // --- MARK: SUSPENDED
@@ -512,15 +606,23 @@ impl MasonryState {
         // All surfaces needs to be cleared when suspended.
         // They will be recreated when resumed.
         self.surfaces.clear();
+        #[cfg(target_os = "macos")]
+        {
+            self.resized_window = None;
+        }
         for window in self.windows.values_mut() {
             window.last_anim = None;
+            window.event_reducer = WindowEventReducer::default();
+            window
+                .render_root
+                .handle_text_event(&TextEvent::WindowFocusChange(false));
         }
     }
 
     pub(crate) fn create_window(
         &mut self,
         event_loop: &ActiveEventLoop,
-        new_window: NewWindow,
+        mut new_window: NewWindow,
     ) -> Result<(), WindowCreationError> {
         if self.window_id_to_handle_id.contains_key(&new_window.id)
             || self
@@ -551,7 +653,7 @@ impl MasonryState {
         // We always create the window as invisible so that we can
         // render the first frame before showing it to avoid flashing.
         let handle = event_loop
-            .create_window(new_window.attributes.with_visible(false))
+            .create_window(std::mem::take(&mut new_window.attributes).with_visible(false))
             .map_err(WindowCreationError::Platform)?;
         if visible {
             // We defer the rendering of the first frame to the handle_signals method because
@@ -566,19 +668,13 @@ impl MasonryState {
         let handle_id = handle.id();
         let scale_factor = handle.scale_factor();
 
-        // https://github.com/rust-windowing/winit/issues/2308
-        #[cfg(target_os = "ios")]
-        let size = handle.outer_size();
-        #[cfg(not(target_os = "ios"))]
-        let size = handle.inner_size();
+        let size = window_size(&handle);
 
         let window = Window::new(
-            new_window.id,
+            new_window,
             handle,
             adapter,
-            new_window.root_widget,
             self.signal_sender.clone(),
-            new_window.base_color,
             RenderRootOptions {
                 default_properties: self.default_properties.clone(),
                 use_system_fonts: true,
@@ -590,6 +686,7 @@ impl MasonryState {
         );
 
         tracing::debug!(window_id = window.id.trace(), handle=?handle_id, "creating window");
+        self.uninitialized_windows.push_back(window.id);
         self.window_id_to_handle_id.insert(window.id, handle_id);
         self.windows.insert(handle_id, window);
         Ok(())
@@ -597,12 +694,18 @@ impl MasonryState {
 
     pub(crate) fn close_window(&mut self, window_id: WindowId) -> bool {
         tracing::debug!(window_id = window_id.trace(), "closing window");
+        self.uninitialized_windows.retain(|id| *id != window_id);
+        self.suspended_actions.retain(|(id, _)| *id != window_id);
         let Some(handle_id) = self.window_id_to_handle_id.remove(&window_id) else {
             let count = self.new_windows.len();
             self.new_windows.retain(|window| window.id != window_id);
             return self.new_windows.len() != count;
         };
         self.surfaces.remove(&handle_id);
+        #[cfg(target_os = "macos")]
+        if self.resized_window == Some(handle_id) {
+            self.resized_window = None;
+        }
         self.need_first_frame.retain(|id| *id != handle_id);
         let Some(window) = self.windows.remove(&handle_id) else {
             return false;
@@ -626,48 +729,10 @@ impl MasonryState {
             return;
         }
 
-        // Get the existing surface or create a new one
-        let surface = if let Some(surface) = self.surfaces.get_mut(&handle_id) {
-            #[cfg(target_os = "macos")]
-            if self.resized_window == Some(handle_id) {
-                self.render_cx.on_window_resize_state_change(surface, true);
-            }
-
-            // The window might have been resized, make sure the surface dimensions match.
-            if surface.config.width != size.width || surface.config.height != size.height {
-                self.render_cx
-                    .resize_surface(surface, size.width, size.height);
-            }
-            surface
-        } else {
-            let devices_before = self.render_cx.devices.len();
-            let surface = match create_surface(
-                &mut self.render_cx,
-                window.handle.clone(),
-                size,
-                window.present_mode,
-            ) {
-                Ok(surface) => surface,
-                Err(err) => {
-                    tracing::error!(%err, "Cannot create render surface");
-                    return;
-                }
-            };
-            let dev_id = surface.dev_id;
-            let surface = self.surfaces.entry(handle_id).or_insert(surface);
-
-            if self.render_cx.devices.len() != devices_before {
-                let device_handle = &self.render_cx.devices[dev_id];
-                let wgpu = WgpuContext {
-                    instance: &self.render_cx.instance,
-                    adapter: &device_handle.adapter,
-                    device: &device_handle.device,
-                    queue: &device_handle.queue,
-                };
-                app_driver.on_wgpu_ready(&wgpu);
-            }
-
-            surface
+        let Some(surface) =
+            Self::prepare_surface(&mut self.render_cx, &mut self.surfaces, window, app_driver)
+        else {
+            return;
         };
 
         let now = Instant::now();
@@ -715,12 +780,26 @@ impl MasonryState {
         let frame = PreparedFrame::new(
             size.width,
             size.height,
-            window.handle.scale_factor(),
+            window.render_root.scale_factor(),
             window.base_color,
             root_scene,
             &overlays,
         );
-        Self::render(surface, window, frame, &self.render_cx, &mut self.renderer);
+        let outcome = Self::render(surface, window, frame, &mut self.render_cx);
+        match outcome {
+            FrameOutcome::Presented => window.surface_recovery_attempted = false,
+            FrameOutcome::Skipped => {}
+            FrameOutcome::Resize(size) => {
+                window.update_size(size);
+                window.handle.request_redraw();
+            }
+            FrameOutcome::SurfaceLost => {
+                self.surfaces.remove(&handle_id);
+                if !std::mem::replace(&mut window.surface_recovery_attempted, true) {
+                    window.handle.request_redraw();
+                }
+            }
+        }
         #[cfg(feature = "tracy")]
         drop(self.frame.take());
         if let Some(tree_update) = tree_update {
@@ -728,30 +807,88 @@ impl MasonryState {
         }
     }
 
+    fn prepare_surface<'a>(
+        render_cx: &mut RenderContext,
+        surfaces: &'a mut HashMap<HandleId, RenderSurface<'static>>,
+        window: &Window,
+        app_driver: &mut dyn AppDriver,
+    ) -> Option<&'a mut RenderSurface<'static>> {
+        use std::collections::hash_map::Entry;
+
+        let id = window.handle.id();
+        let size = window.render_root.size();
+        if surfaces
+            .get(&id)
+            .is_some_and(|surface| render_cx.devices[&surface.dev_id].is_lost())
+        {
+            surfaces.remove(&id);
+        }
+        let surface = match surfaces.entry(id) {
+            Entry::Occupied(entry) => {
+                let surface = entry.into_mut();
+                if surface.config.width != size.width || surface.config.height != size.height {
+                    render_cx.resize_surface(surface, size.width, size.height);
+                }
+                surface
+            }
+            Entry::Vacant(entry) => {
+                match create_surface(render_cx, window.handle.clone(), size, window.present_mode) {
+                    Ok(surface) => entry.insert(surface),
+                    Err(err) => {
+                        tracing::error!(%err, "Cannot create render surface");
+                        return None;
+                    }
+                }
+            }
+        };
+
+        // The device might have been allocated during an earlier failed
+        // surface creation. Notify at first successful use, not allocation.
+        let device_handle = render_cx.devices.get_mut(&surface.dev_id)?;
+        if device_handle.is_lost() {
+            return None;
+        }
+        if !device_handle.ready_notified {
+            device_handle.ready_notified = true;
+            app_driver.on_wgpu_ready(&WgpuContext {
+                id: surface.dev_id,
+                instance: &render_cx.instance,
+                adapter: &device_handle.adapter,
+                device: &device_handle.device,
+                queue: &device_handle.queue,
+            });
+        }
+        Some(surface)
+    }
+
     // --- MARK: RENDER
     fn render(
         surface: &mut RenderSurface<'_>,
         window: &Window,
         frame: PreparedFrame<'_>,
-        render_cx: &RenderContext,
-        renderer: &mut ImagingRenderer,
-    ) {
-        let dev_id = surface.dev_id;
-        let device = &render_cx.devices[dev_id].device;
-        let queue = &render_cx.devices[dev_id].queue;
-        let Some(surface_texture) = Self::acquire_surface_texture(surface, window, render_cx)
-        else {
-            return;
+        render_cx: &mut RenderContext,
+    ) -> FrameOutcome {
+        let surface_texture = match Self::acquire_surface_texture(surface, window, render_cx) {
+            Ok(texture) => texture,
+            Err(outcome) => return outcome,
         };
 
+        let Some(handle) = render_cx.devices.get_mut(&surface.dev_id) else {
+            return FrameOutcome::SurfaceLost;
+        };
+        if handle.is_lost() {
+            return FrameOutcome::SurfaceLost;
+        }
+        let device = &handle.device;
+        let queue = &handle.queue;
         let _render_span = tracing::info_span!(
             "Rendering Masonry window",
             backend = ImagingRenderer::BACKEND_NAME
         )
         .entered();
-        if let Err(err) = renderer.render_to_texture(
+        if let Err(err) = handle.renderer.render_to_texture(
             ImagingRenderTarget {
-                adapter: &render_cx.devices[dev_id].adapter,
+                adapter: &handle.adapter,
                 device,
                 queue,
                 texture: &surface.target_texture,
@@ -763,58 +900,49 @@ impl MasonryState {
                 backend = ImagingRenderer::BACKEND_NAME,
                 "Couldn't render Masonry content into target texture: {err}"
             );
-            return;
+            return FrameOutcome::Skipped;
         }
         Self::present_surface(surface, surface_texture, &window.handle, device, queue);
+        FrameOutcome::Presented
     }
 
     fn acquire_surface_texture(
         surface: &mut RenderSurface<'_>,
         window: &Window,
         render_cx: &RenderContext,
-    ) -> Option<wgpu::SurfaceTexture> {
+    ) -> Result<wgpu::SurfaceTexture, FrameOutcome> {
         use wgpu::CurrentSurfaceTexture;
 
+        if surface.needs_reconfigure {
+            render_cx.configure_surface(surface);
+        }
         let mut reconfigured = false;
         loop {
             match surface.surface.get_current_texture() {
-                // TODO: in case of `Suboptimal`, wgpu recommends reconfiguring the surface. We
-                // could consider adding a `RenderSurface::needs_reconfigure` flag, set it in
-                // case of `Suboptimal`, and reconfigure before the next acquire.
-                CurrentSurfaceTexture::Success(texture)
-                | CurrentSurfaceTexture::Suboptimal(texture) => return Some(texture),
+                CurrentSurfaceTexture::Success(texture) => return Ok(texture),
+                CurrentSurfaceTexture::Suboptimal(texture) => {
+                    // Reconfigure only once the acquired texture is no longer alive.
+                    surface.needs_reconfigure = true;
+                    return Ok(texture);
+                }
                 CurrentSurfaceTexture::Outdated if !reconfigured => {
-                    let size = window.handle.inner_size();
-                    if size.width == 0 || size.height == 0 {
-                        return None;
+                    let size = window_size(&window.handle);
+                    if size.width == 0 || size.height == 0 || size != window.render_root.size() {
+                        return Err(FrameOutcome::Resize(size));
                     }
-                    if size.width != surface.config.width || size.height != surface.config.height {
-                        window.handle.request_redraw();
-                        return None;
-                    }
-                    render_cx.resize_surface(surface, size.width, size.height);
+                    // Same dimensions: reconfigure without allocating an intermediate texture.
+                    render_cx.configure_surface(surface);
                     reconfigured = true;
                 }
-                // wgpu recommends skipping the frame in these cases.
-                reason @ (CurrentSurfaceTexture::Timeout | CurrentSurfaceTexture::Occluded) => {
-                    tracing::debug!(
-                        "Skipping frame, swap chain texture not available: '{reason:?}'"
-                    );
-                    return None;
+                CurrentSurfaceTexture::Timeout => {
+                    window.handle.request_redraw();
+                    return Err(FrameOutcome::Skipped);
                 }
-                other if reconfigured => {
-                    // This is a common occurrence on X11 and Xwayland with NVIDIA drivers
-                    // when opening and resizing the window.
-                    tracing::error!(
-                        "Couldn't get swap chain texture after configuring. Cause: '{other:?}'"
-                    );
-                    return None;
-                }
+                CurrentSurfaceTexture::Occluded => return Err(FrameOutcome::Skipped),
+                CurrentSurfaceTexture::Lost => return Err(FrameOutcome::SurfaceLost),
                 other => {
-                    tracing::error!(
-                        "Couldn't get swap chain texture, operation unrecoverable: {other:?}"
-                    );
-                    return None;
+                    tracing::error!(?other, reconfigured, "Couldn't acquire swap chain texture");
+                    return Err(FrameOutcome::Skipped);
                 }
             }
         }
@@ -911,6 +1039,7 @@ impl MasonryState {
                 window
                     .render_root
                     .handle_window_event(WindowEvent::Rescale(scale_factor));
+                window.update_size(window_size(&window.handle));
             }
             WinitWindowEvent::RedrawRequested => {
                 self.redraw(handle_id, app_driver);
@@ -921,15 +1050,18 @@ impl MasonryState {
             WinitWindowEvent::Resized(size) => {
                 #[cfg(target_os = "macos")]
                 {
-                    self.resized_window = Some(handle_id);
+                    if let Some(previous) = self.resized_window.replace(handle_id)
+                        && previous != handle_id
+                        && let Some(surface) = self.surfaces.get_mut(&previous)
+                    {
+                        self.render_cx.on_window_resize_state_change(surface, false);
+                    }
                     if let Some(surface) = self.surfaces.get_mut(&handle_id) {
                         self.render_cx.on_window_resize_state_change(surface, true);
                     }
                 }
 
-                window
-                    .render_root
-                    .handle_window_event(WindowEvent::Resize(size));
+                window.update_size(size);
             }
             WinitWindowEvent::Ime(ime) => {
                 let ime = winit_ime_to_masonry(ime);
@@ -940,13 +1072,15 @@ impl MasonryState {
                     .render_root
                     .handle_text_event(&TextEvent::WindowFocusChange(new_focus));
             }
+            WinitWindowEvent::Occluded(false) => {
+                window.sync_geometry();
+                window.surface_recovery_attempted = false;
+                window.handle.request_redraw();
+            }
             _ => (),
         }
 
         self.handle_signals(event_loop, app_driver);
-        if self.exit {
-            event_loop.exit();
-        }
     }
 
     fn translate_input(
@@ -1008,37 +1142,27 @@ impl MasonryState {
         event: MasonryUserEvent,
         app_driver: &mut dyn AppDriver,
     ) {
-        let window = match &event {
-            MasonryUserEvent::AccessKit(handle_id, ..) => {
-                let Some(state) = self.windows.get_mut(handle_id) else {
-                    tracing::warn!(handle = ?handle_id, "Got accesskit user event for unknown window");
-                    return;
-                };
-                state
-            }
-            MasonryUserEvent::AsyncAction(window_id, ..) => {
-                let Some(window_id) = self.window_id_to_handle_id.get(window_id) else {
-                    tracing::warn!(id = ?window_id, "Got action user event for unknown window");
-                    return;
-                };
-                let Some(window) = self.windows.get_mut(window_id) else {
-                    return;
-                };
-                window
-            }
-        };
+        if self.exit {
+            event_loop.exit();
+            return;
+        }
         match event {
-            MasonryUserEvent::AccessKit(_, event) => {
+            MasonryUserEvent::GpuDeviceLost(dev_id) => self.handle_device_lost(dev_id, app_driver),
+            MasonryUserEvent::AccessKit(handle_id, event) => {
+                let Some(window) = self.windows.get_mut(&handle_id) else {
+                    tracing::debug!(handle = ?handle_id, "Dropping accesskit event for closed window");
+                    return;
+                };
                 match event {
-                    // Note that this event can be called at any time, even multiple times if
-                    // the user restarts their screen reader.
                     accesskit_winit::WindowEvent::InitialTreeRequested => {
                         window
                             .render_root
                             .handle_window_event(WindowEvent::EnableAccessTree);
                     }
                     accesskit_winit::WindowEvent::ActionRequested(action_request) => {
-                        window.render_root.handle_access_event(action_request);
+                        if !self.is_suspended {
+                            window.render_root.handle_access_event(action_request);
+                        }
                     }
                     accesskit_winit::WindowEvent::AccessibilityDeactivated => {
                         window
@@ -1047,122 +1171,180 @@ impl MasonryState {
                     }
                 }
             }
-            MasonryUserEvent::AsyncAction(_, action) => {
-                app_driver.on_async_action(
-                    window.id,
-                    &mut DriverCtx::new(self, event_loop),
-                    action,
-                );
+            MasonryUserEvent::AsyncAction(id, action) => {
+                if self.is_suspended {
+                    if self.window_id_to_handle_id.contains_key(&id)
+                        || self.new_windows.iter().any(|window| window.id == id)
+                    {
+                        self.suspended_actions.push_back((id, action));
+                    }
+                    return;
+                }
+                if self
+                    .handle_id(id)
+                    .is_none_or(|handle| !self.windows.contains_key(&handle))
+                {
+                    tracing::debug!(?id, "Dropping async action for closed window");
+                    return;
+                }
+                app_driver.on_async_action(id, &mut DriverCtx::new(self, event_loop), action);
             }
         }
 
         self.handle_signals(event_loop, app_driver);
     }
 
+    fn handle_device_lost(&mut self, dev_id: GpuDeviceId, app_driver: &mut dyn AppDriver) {
+        if !self
+            .render_cx
+            .devices
+            .get(&dev_id)
+            .is_some_and(crate::vello_util::DeviceHandle::is_lost)
+        {
+            return;
+        }
+        self.surfaces.retain(|id, surface| {
+            if surface.dev_id != dev_id {
+                return true;
+            }
+            if let Some(window) = self.windows.get_mut(id) {
+                window.surface_recovery_attempted = false;
+                if !self.is_suspended {
+                    window.handle.request_redraw();
+                }
+            }
+            false
+        });
+        if let Some(device) = self.render_cx.devices.remove(&dev_id)
+            && device.ready_notified
+        {
+            app_driver.on_wgpu_lost(dev_id);
+        }
+    }
+
     // --- MARK: SIGNALS
     fn handle_signals(&mut self, event_loop: &ActiveEventLoop, app_driver: &mut dyn AppDriver) {
+        if self.exit {
+            event_loop.exit();
+            return;
+        }
         if self.is_suspended {
-            tracing::warn!("Tried to handle a signal whilst suspended");
             return;
         }
 
         let mut need_redraw = HashSet::<HandleId>::new();
 
-        loop {
+        while !self.exit {
+            self.initialize_windows(app_driver);
             let Some((window_id, signal)) = self.signal_receiver.try_iter().next() else {
                 break;
             };
 
-            let Some(handle_id) = self.window_id_to_handle_id.get(&window_id) else {
-                tracing::warn!(id = ?window_id, signal = ?signal, "Got a signal for an unknown window");
-                continue;
-            };
-
-            let Some(window) = self.windows.get_mut(handle_id) else {
-                continue;
-            };
-            let handle = &window.handle;
-
-            match signal {
-                RenderRootSignal::Action(action, widget_id) => {
-                    let window_id = window.id;
-                    trace!(
-                        "Action {:?} on widget {:?}",
-                        (*action).type_name(),
-                        widget_id
-                    );
-                    app_driver.on_action(
-                        window_id,
-                        &mut DriverCtx::new(self, event_loop),
-                        widget_id,
-                        action,
-                    );
-                }
-                RenderRootSignal::StartIme => {
-                    handle.set_ime_allowed(true);
-                }
-                RenderRootSignal::EndIme => {
-                    handle.set_ime_allowed(false);
-                }
-                RenderRootSignal::ImeMoved(position, size) => {
-                    handle.set_ime_cursor_area(position, size);
-                }
-                RenderRootSignal::ClipboardStore(text) => {
-                    if let Err(err) = self.clipboard_cx.set_contents(text) {
-                        tracing::warn!(?err, "Unable to write clipboard contents");
-                    }
-                }
-                RenderRootSignal::RequestRedraw | RenderRootSignal::RequestAnimFrame => {
-                    need_redraw.insert(*handle_id);
-                }
-                RenderRootSignal::TakeFocus => {
-                    handle.focus_window();
-                }
-                RenderRootSignal::SetCursor(cursor) => {
-                    handle.set_cursor(cursor);
-                }
-                RenderRootSignal::SetSize(size) => {
-                    // TODO - Handle return value?
-                    let _ = handle.request_inner_size(size);
-                }
-                RenderRootSignal::SetTitle(title) => {
-                    handle.set_title(&title);
-                }
-                RenderRootSignal::DragWindow => {
-                    // TODO - Handle return value?
-                    let _ = handle.drag_window();
-                }
-                RenderRootSignal::DragResizeWindow(direction) => {
-                    // TODO - Handle return value?
-                    let direction = masonry_resize_direction_to_winit(direction);
-                    let _ = handle.drag_resize_window(direction);
-                }
-                RenderRootSignal::ToggleMaximized => {
-                    handle.set_maximized(!handle.is_maximized());
-                }
-                RenderRootSignal::Minimize => {
-                    handle.set_minimized(true);
-                }
-                RenderRootSignal::Exit => {
-                    event_loop.exit();
-                }
-                RenderRootSignal::ShowWindowMenu(position) => {
-                    handle.show_window_menu(position);
-                }
-                RenderRootSignal::WidgetSelectedInInspector(widget_id) => {
-                    Self::report_inspector_selection(window, widget_id);
-                }
-                RenderRootSignal::NewLayer(_type, root, pos) => {
-                    window.render_root.add_layer(root, pos);
-                }
-                RenderRootSignal::RemoveLayer(root_id) => window.render_root.remove_layer(root_id),
-                RenderRootSignal::RepositionLayer(root_id, new_pos) => {
-                    window.render_root.reposition_layer(root_id, new_pos);
-                }
-            }
+            self.handle_signal(window_id, signal, event_loop, app_driver, &mut need_redraw);
         }
 
-        self.schedule_redraws(need_redraw, app_driver);
+        if self.exit {
+            event_loop.exit();
+        } else {
+            self.schedule_redraws(need_redraw, app_driver);
+        }
+    }
+
+    fn handle_signal(
+        &mut self,
+        window_id: WindowId,
+        signal: RenderRootSignal,
+        event_loop: &ActiveEventLoop,
+        app_driver: &mut dyn AppDriver,
+        need_redraw: &mut HashSet<HandleId>,
+    ) {
+        let Some(handle_id) = self.window_id_to_handle_id.get(&window_id) else {
+            tracing::warn!(id = ?window_id, signal = ?signal, "Got a signal for an unknown window");
+            return;
+        };
+
+        let Some(window) = self.windows.get_mut(handle_id) else {
+            return;
+        };
+        let handle = &window.handle;
+
+        match signal {
+            RenderRootSignal::Action(action, widget_id) => {
+                trace!(
+                    "Action {:?} on widget {:?}",
+                    (*action).type_name(),
+                    widget_id
+                );
+                app_driver.on_action(
+                    window_id,
+                    &mut DriverCtx::new(self, event_loop),
+                    widget_id,
+                    action,
+                );
+            }
+            RenderRootSignal::StartIme => {
+                handle.set_ime_allowed(true);
+            }
+            RenderRootSignal::EndIme => {
+                handle.set_ime_allowed(false);
+            }
+            RenderRootSignal::ImeMoved(position, size) => {
+                handle.set_ime_cursor_area(position, size);
+            }
+            RenderRootSignal::ClipboardStore(text) => {
+                if let Err(err) = self.clipboard_cx.set_contents(text) {
+                    tracing::warn!(?err, "Unable to write clipboard contents");
+                }
+            }
+            RenderRootSignal::RequestRedraw | RenderRootSignal::RequestAnimFrame => {
+                need_redraw.insert(*handle_id);
+            }
+            RenderRootSignal::TakeFocus => {
+                handle.focus_window();
+            }
+            RenderRootSignal::SetCursor(cursor) => {
+                handle.set_cursor(cursor);
+            }
+            RenderRootSignal::SetSize(size) => {
+                if let Some(applied) = handle.request_inner_size(size) {
+                    window.update_size(applied);
+                }
+            }
+            RenderRootSignal::SetTitle(title) => {
+                handle.set_title(&title);
+            }
+            RenderRootSignal::DragWindow => {
+                // TODO - Handle return value?
+                let _ = handle.drag_window();
+            }
+            RenderRootSignal::DragResizeWindow(direction) => {
+                // TODO - Handle return value?
+                let direction = masonry_resize_direction_to_winit(direction);
+                let _ = handle.drag_resize_window(direction);
+            }
+            RenderRootSignal::ToggleMaximized => {
+                handle.set_maximized(!handle.is_maximized());
+            }
+            RenderRootSignal::Minimize => {
+                handle.set_minimized(true);
+            }
+            RenderRootSignal::Exit => {
+                self.exit = true;
+            }
+            RenderRootSignal::ShowWindowMenu(position) => {
+                handle.show_window_menu(position);
+            }
+            RenderRootSignal::WidgetSelectedInInspector(widget_id) => {
+                Self::report_inspector_selection(window, widget_id);
+            }
+            RenderRootSignal::NewLayer(_type, root, pos) => {
+                window.render_root.add_layer(root, pos);
+            }
+            RenderRootSignal::RemoveLayer(root_id) => window.render_root.remove_layer(root_id),
+            RenderRootSignal::RepositionLayer(root_id, new_pos) => {
+                window.render_root.reposition_layer(root_id, new_pos);
+            }
+        }
     }
 
     fn report_inspector_selection(window: &Window, widget_id: masonry_core::core::WidgetId) {
@@ -1225,11 +1407,29 @@ impl MasonryState {
             .map(|window| &mut window.render_root)
     }
 
+    /// Returns the device identity of a live window surface, if it has one.
+    #[must_use = "Identify the GPU owning the window surface."]
+    pub fn gpu_device_id(&self, window_id: WindowId) -> Option<GpuDeviceId> {
+        let surface = self.surfaces.get(&self.handle_id(window_id)?)?;
+        (!self.render_cx.devices.get(&surface.dev_id)?.is_lost()).then_some(surface.dev_id)
+    }
+
+    /// Returns the configured presentation mode of a live surface.
+    ///
+    /// Automatic modes remain automatic; WGPU chooses the concrete mode.
+    #[must_use = "Inspect the configured presentation mode."]
+    pub fn present_mode(&self, window_id: WindowId) -> Option<wgpu::PresentMode> {
+        let surface = self.surfaces.get(&self.handle_id(window_id)?)?;
+        self.gpu_device_id(window_id)?;
+        Some(surface.config.present_mode)
+    }
+
     /// Sets how frames are presented to the user.
     ///
     /// This affects what users commonly know as "vertical sync".
     /// Returns false if the window is unknown or its live surface does not support the mode.
-    /// A mode selected before surface creation is validated when the surface is created.
+    /// A mode selected before surface creation is retained as a preference; if unavailable
+    /// on a new or recovered surface, a supported fallback is used.
     pub fn set_present_mode(
         &mut self,
         window_id: WindowId,
@@ -1242,12 +1442,36 @@ impl MasonryState {
             return false;
         };
         if let Some(surface) = self.surfaces.get_mut(&handle_id)
+            && !self.render_cx.devices[&surface.dev_id].is_lost()
             && !self.render_cx.set_present_mode(surface, present_mode)
         {
             return false;
         }
-        window.present_mode = present_mode;
+        if window.present_mode != present_mode {
+            window.present_mode = present_mode;
+            window.handle.request_redraw();
+        }
         true
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum FrameOutcome {
+    Presented,
+    Skipped,
+    Resize(PhysicalSize<u32>),
+    SurfaceLost,
+}
+
+fn window_size(handle: &WindowHandle) -> PhysicalSize<u32> {
+    // https://github.com/rust-windowing/winit/issues/2308
+    #[cfg(target_os = "ios")]
+    {
+        handle.outer_size()
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        handle.inner_size()
     }
 }
 
@@ -1259,3 +1483,6 @@ fn create_surface(
 ) -> Result<RenderSurface<'static>, RenderSurfaceError> {
     render_cx.create_surface(handle, size.width, size.height, present_mode)
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod lifecycle_tests;

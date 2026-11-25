@@ -58,23 +58,6 @@ impl<Seq> ZStack<Seq> {
     }
 }
 
-mod hidden {
-    use super::ZStackElement;
-    use crate::core::AppendVec;
-
-    #[doc(hidden)]
-    #[expect(
-        unnameable_types,
-        reason = "Implementation detail, public because of trait visibility rules"
-    )]
-    pub struct ZStackState<SeqState> {
-        pub(crate) seq_state: SeqState,
-        pub(crate) scratch: AppendVec<ZStackElement>,
-    }
-}
-
-use hidden::ZStackState;
-
 impl<Seq> ViewMarker for ZStack<Seq> {}
 impl<State, Action, Seq> View<State, Action, ViewCtx> for ZStack<Seq>
 where
@@ -84,7 +67,7 @@ where
 {
     type Element = Pod<widgets::ZStack>;
 
-    type ViewState = ZStackState<Seq::SeqState>;
+    type ViewState = super::CollectionState<Seq::SeqState, ZStackElement>;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let mut elements = AppendVec::default();
@@ -96,7 +79,7 @@ where
         let pod = Pod::new(widget);
         (
             pod,
-            ZStackState {
+            super::CollectionState {
                 seq_state,
                 scratch: elements,
             },
@@ -106,7 +89,7 @@ where
     fn rebuild(
         &self,
         prev: &Self,
-        ZStackState { seq_state, scratch }: &mut Self::ViewState,
+        view_state: &mut Self::ViewState,
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
@@ -115,37 +98,10 @@ where
             widgets::ZStack::set_alignment(&mut element, self.alignment);
         }
 
-        let mut splice = ZStackSplice::new(element, scratch);
-        self.sequence
-            .seq_rebuild(&prev.sequence, seq_state, ctx, &mut splice, app_state);
-        debug_assert!(scratch.is_empty());
+        view_state.rebuild(&self.sequence, &prev.sequence, ctx, element, app_state);
     }
 
-    fn teardown(
-        &self,
-        ZStackState { seq_state, scratch }: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
-    ) {
-        let mut splice = ZStackSplice::new(element, scratch);
-        self.sequence.seq_teardown(seq_state, ctx, &mut splice);
-        debug_assert!(scratch.is_empty());
-    }
-
-    fn message(
-        &self,
-        ZStackState { seq_state, scratch }: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        let mut splice = ZStackSplice::new(element, scratch);
-        let result = self
-            .sequence
-            .seq_message(seq_state, message, &mut splice, app_state);
-        debug_assert!(scratch.is_empty());
-        result
-    }
+    collection_lifecycle!();
 }
 
 // --- MARK: ZStackExt

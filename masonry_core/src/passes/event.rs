@@ -3,15 +3,15 @@
 
 use tracing::{info_span, trace};
 
-use crate::app::{RenderRoot, RenderRootSignal};
+use crate::app::{PointerPress, RenderRoot, RenderRootSignal};
 use crate::core::keyboard::{Key, KeyState, NamedKey};
 use crate::core::{
     AccessEvent, EventCtx, Handled, Ime, PointerButtonEvent, PointerEvent, PointerGestureEvent,
     PointerInfo, PointerScrollEvent, PointerType, PointerUpdate, PropertiesMut, TextEvent, Widget,
-    WidgetId,
+    WidgetId, WidgetState,
 };
 use crate::dpi::{LogicalPosition, PhysicalPosition};
-use crate::passes::update::find_next_focusable;
+use crate::passes::update::{find_next_focusable, run_update_pointer_pass};
 use crate::passes::{enter_span, merge_state_up};
 
 // --- MARK: HELPERS
@@ -20,7 +20,7 @@ fn get_pointer_target(
     pointer_pos: Option<LogicalPosition<f64>>,
 ) -> Option<WidgetId> {
     // See the [pointer capture documentation](../doc/06_masonry_concepts.md#pointer-capture).
-    if let Some(capture_target) = root.global_state.pointer_capture_target
+    if let Some(capture_target) = root.global_state.pointer_capture_target()
         && root.widget_arena.has(capture_target)
     {
         return Some(capture_target);
@@ -29,8 +29,7 @@ fn get_pointer_target(
     if let Some(pointer_pos) = pointer_pos {
         let pointer_pos = (pointer_pos.x, pointer_pos.y).into();
         return root
-            .get_widget(root.root_id())?
-            .find_widget_under_pointer(pointer_pos)
+            .widget_at_position(pointer_pos)
             .map(|widget| widget.id());
     }
 
@@ -68,12 +67,19 @@ const fn try_event_position(event: &PointerEvent) -> Option<PhysicalPosition<f64
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EventRoute {
+    Bubble,
+    BubbleIncludingDisabled,
+    TargetOnly,
+}
+
 fn run_event_pass<E>(
     root: &mut RenderRoot,
     target: Option<WidgetId>,
     event: &E,
-    skip_if_disabled: bool,
-    allow_pointer_capture: bool,
+    route: EventRoute,
+    pointer_press: Option<PointerPress>,
     pass_fn: impl FnMut(&mut dyn Widget, &mut EventCtx<'_>, &mut PropertiesMut<'_>, &E),
     trace: bool,
 ) -> Handled {
@@ -90,13 +96,13 @@ fn run_event_pass<E>(
             break;
         };
 
-        if skip_if_disabled && node.item.state.is_disabled() {
+        if route == EventRoute::Bubble && node.item.state.is_disabled() {
             // If the widget is disabled, we skip it and bubble to its parent.
             target_widget_id = parent_id;
             continue;
         }
 
-        if !is_handled {
+        if !is_handled && (route != EventRoute::TargetOnly || widget_id == original_target) {
             let _span = enter_span(&node.item.state);
             let widget_type_id = node.item.widget.as_ref().type_id();
             let stack = root
@@ -108,7 +114,7 @@ fn run_event_pass<E>(
                 children: node.children.reborrow_mut(),
                 property_arena: &root.property_arena,
                 target: original_target,
-                allow_pointer_capture,
+                pointer_press,
                 is_handled: false,
             };
             let widget = &mut *node.item.widget;
@@ -140,6 +146,31 @@ fn run_event_pass<E>(
     Handled::from(is_handled)
 }
 
+impl PointerPress {
+    // Capture owns a single pointer/button interaction. Identity-free cancellation
+    // is a window-wide synthetic cancel; an unrelated contact is not.
+    fn accepts_event(self, event: &PointerEvent) -> bool {
+        let same_pointer = |pointer: &PointerInfo| {
+            self.pointer.pointer_id.map_or_else(
+                || *pointer == self.pointer,
+                |id| pointer.pointer_id == Some(id),
+            )
+        };
+        match event {
+            PointerEvent::Down(_) => false,
+            PointerEvent::Up(release) => {
+                same_pointer(&release.pointer) && self.button == release.button
+            }
+            PointerEvent::Cancel(pointer) => pointer.pointer_id.is_none() || same_pointer(pointer),
+            PointerEvent::Move(PointerUpdate { pointer, .. })
+            | PointerEvent::Scroll(PointerScrollEvent { pointer, .. })
+            | PointerEvent::Gesture(PointerGestureEvent { pointer, .. })
+            | PointerEvent::Enter(pointer)
+            | PointerEvent::Leave(pointer) => same_pointer(pointer),
+        }
+    }
+}
+
 // --- MARK: POINTER_EVENT
 fn capture_layer_pointer_events(root: &mut RenderRoot, event: &PointerEvent) {
     let layer_ids = root.layer_root_ids();
@@ -158,7 +189,7 @@ fn capture_layer_pointer_events(root: &mut RenderRoot, event: &PointerEvent) {
                 children: layer_root.children.reborrow_mut(),
                 property_arena: &root.property_arena,
                 target: layer_id,
-                allow_pointer_capture: false,
+                pointer_press: None,
                 is_handled: false,
             };
             let mut props = PropertiesMut {
@@ -185,12 +216,26 @@ pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEv
         pointer_event_short_name(event)
     );
 
+    if let Some(capture) = root.global_state.pointer_capture
+        && !capture.press.accepts_event(event)
+    {
+        return Handled::No;
+    }
+
     let event_pos = try_event_position(event).map(|p| p.to_logical(root.global_state.scale_factor));
 
-    if event_pos != root.global_state.last_mouse_pos {
-        root.global_state.last_mouse_pos = event_pos;
-    }
+    let position_changed = event_pos != root.global_state.last_mouse_pos;
+    root.global_state.last_mouse_pos = event_pos;
     root.global_state.set_needs_pointer_pass(true);
+
+    // A release may arrive at a different location without an intervening Move
+    // (notably on touch devices). Click handlers must see the release position.
+    if position_changed
+        && root.global_state.pointer_capture.is_some()
+        && matches!(event, PointerEvent::Up(_))
+    {
+        run_update_pointer_pass(root);
+    }
 
     if root.global_state.inspector_state.is_picking_widget
         && matches!(event, PointerEvent::Move(..))
@@ -242,13 +287,23 @@ pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEv
         }
     }
 
-    let skip_if_disabled = !matches!(event, PointerEvent::Cancel { .. });
+    let route = if matches!(event, PointerEvent::Cancel { .. }) {
+        EventRoute::BubbleIncludingDisabled
+    } else {
+        EventRoute::Bubble
+    };
     let handled = run_event_pass(
         root,
         target_widget_id,
         event,
-        skip_if_disabled,
-        matches!(event, PointerEvent::Down { .. }),
+        route,
+        match event {
+            PointerEvent::Down(press) => Some(PointerPress {
+                pointer: press.pointer,
+                button: press.button,
+            }),
+            _ => None,
+        },
         |widget, ctx, props, event| {
             widget.on_pointer_event(ctx, props, event);
         },
@@ -256,10 +311,12 @@ pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEv
     );
 
     if matches!(event, PointerEvent::Up { .. } | PointerEvent::Cancel(..)) {
-        // Automatically release the pointer on pointer up or leave. If a widget holds the capture,
+        // Only the initiating release or an applicable cancel can reach this point.
+        // If a widget holds the capture,
         // it is notified of the pointer event before the capture is released, so it knows it is
         // about to lose the pointer.
-        root.global_state.pointer_capture_target = None;
+        root.global_state.pointer_capture = None;
+        root.global_state.set_needs_pointer_pass(true);
     }
 
     if !is_very_frequent(event) {
@@ -273,10 +330,54 @@ pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEv
     handled
 }
 
+// IME events belong to one text-input owner. In particular the final Disabled
+// event must reach that owner even if it has just become disabled or stashed.
+fn dispatch_ime(root: &mut RenderRoot, owner: WidgetId, event: &TextEvent) -> Handled {
+    run_event_pass(
+        root,
+        Some(owner),
+        event,
+        EventRoute::TargetOnly,
+        None,
+        Widget::on_text_event,
+        true,
+    )
+}
+
+pub(crate) fn end_ime_session(root: &mut RenderRoot) {
+    if !root.global_state.is_ime_active() {
+        return;
+    }
+    root.global_state.set_is_ime_active(false);
+    root.global_state.emit_signal(RenderRootSignal::EndIme);
+    if let Some(owner) = root.global_state.focused_widget
+        && root.has_widget(owner)
+    {
+        dispatch_ime(root, owner, &TextEvent::Ime(Ime::Disabled));
+    }
+}
+
 // --- MARK: TEXT EVENT
 /// See the [passes documentation](crate::doc::pass_system#event-passes).
 pub(crate) fn run_on_text_event_pass(root: &mut RenderRoot, event: &TextEvent) -> Handled {
+    if let TextEvent::WindowFocusChange(focused) = event {
+        root.global_state.set_window_focused(*focused);
+    } else if !root.global_state.window_focused() {
+        return Handled::No;
+    }
+
+    if matches!(event, TextEvent::Ime(_)) {
+        if root.global_state.is_ime_active()
+            && let Some(owner) = root.global_state.focused_widget
+            && root.is_still_interactive(owner)
+        {
+            return dispatch_ime(root, owner, event);
+        }
+        return Handled::No;
+    }
+
     if matches!(event, TextEvent::WindowFocusChange(false)) {
+        end_ime_session(root);
         run_on_pointer_event_pass(
             root,
             &PointerEvent::Cancel(PointerInfo {
@@ -291,10 +392,6 @@ pub(crate) fn run_on_text_event_pass(root: &mut RenderRoot, event: &TextEvent) -
 
     trace!("Running ON_TEXT_EVENT pass with {}", event.short_name());
 
-    if let TextEvent::WindowFocusChange(focused) = event {
-        root.global_state.set_window_focused(*focused);
-    }
-
     let target = root.global_state.focused_widget.or_else(|| {
         if let Some(focus_fallback) = root.global_state.focus_fallback
             && root.is_still_interactive(focus_fallback)
@@ -305,55 +402,20 @@ pub(crate) fn run_on_text_event_pass(root: &mut RenderRoot, event: &TextEvent) -
         }
     });
 
-    let skip_if_disabled = !matches!(event, TextEvent::Ime(Ime::Disabled));
     let mut handled = run_event_pass(
         root,
         target,
         event,
-        skip_if_disabled,
-        false,
+        EventRoute::Bubble,
+        None,
         |widget, ctx, props, event| {
             widget.on_text_event(ctx, props, event);
         },
         true,
     );
 
-    if let TextEvent::Keyboard(key) = event {
-        // Handle Tab focus
-        if key.key == Key::Named(NamedKey::Tab)
-            && key.state == KeyState::Down
-            && handled == Handled::No
-        {
-            let forward = !key.modifiers.shift();
-            let next_focused_widget = find_next_focusable(root, forward);
-            root.global_state.next_focused_widget = next_focused_widget;
-            handled = Handled::Yes;
-        }
-
-        if key.key == Key::Named(NamedKey::F11)
-            && key.state == KeyState::Down
-            && handled == Handled::No
-        {
-            root.global_state.inspector_state.is_picking_widget =
-                !root.global_state.inspector_state.is_picking_widget;
-            root.global_state.inspector_state.hovered_widget = None;
-            if let Some(state) = root.root_state_mut() {
-                state.set_needs_paint(true);
-            }
-            handled = Handled::Yes;
-        }
-
-        if key.key == Key::Named(NamedKey::F12)
-            && key.state == KeyState::Down
-            && handled == Handled::No
-        {
-            root.global_state
-                .set_debug_paint(!root.global_state.debug_paint());
-            if let Some(state) = root.root_state_mut() {
-                state.set_needs_paint(true);
-            }
-            handled = Handled::Yes;
-        }
+    if handled == Handled::No {
+        handled = handle_global_shortcut(root, event);
     }
 
     trace!(
@@ -363,6 +425,38 @@ pub(crate) fn run_on_text_event_pass(root: &mut RenderRoot, event: &TextEvent) -
     );
 
     handled
+}
+
+fn handle_global_shortcut(root: &mut RenderRoot, event: &TextEvent) -> Handled {
+    let TextEvent::Keyboard(key) = event else {
+        return Handled::No;
+    };
+    if key.state != KeyState::Down {
+        return Handled::No;
+    }
+    match key.key {
+        Key::Named(NamedKey::Tab) => {
+            root.global_state.next_focused_widget =
+                find_next_focusable(root, !key.modifiers.shift());
+        }
+        Key::Named(NamedKey::F11) if !key.repeat => {
+            root.global_state.inspector_state.is_picking_widget =
+                !root.global_state.inspector_state.is_picking_widget;
+            root.global_state.inspector_state.hovered_widget = None;
+            if let Some(state) = root.root_state_mut() {
+                state.set_needs_paint(true);
+            }
+        }
+        Key::Named(NamedKey::F12) if !key.repeat => {
+            root.global_state
+                .set_debug_paint(!root.global_state.debug_paint());
+            if let Some(state) = root.root_state_mut() {
+                state.set_needs_paint(true);
+            }
+        }
+        _ => return Handled::No,
+    }
+    Handled::Yes
 }
 
 // --- MARK: ACCESS EVENT
@@ -375,22 +469,43 @@ pub(crate) fn run_on_access_event_pass(
     let _span = info_span!("access_event").entered();
     trace!("Running ON_ACCESS_EVENT pass with {}", event.short_name());
 
-    let skip_if_disabled = true;
-    let mut handled = run_event_pass(
-        root,
-        Some(target),
-        event,
-        skip_if_disabled,
-        false,
-        |widget, ctx, props, event| {
-            widget.on_access_event(ctx, props, event);
-        },
-        true,
-    );
+    // Accessibility events may be queued against a previous tree revision.
+    // A hidden target must not receive an event or activate a visible ancestor.
+    let Some(state) = root.widget_arena.get_state(target) else {
+        return Handled::No;
+    };
+    if state.is_stashed() {
+        return Handled::No;
+    }
+
+    let mut handled = if state.is_disabled() {
+        // A disabled node may still be inspected or scrolled into view, but
+        // it must not turn a stale activation into a click on its ancestor.
+        Handled::No
+    } else {
+        run_event_pass(
+            root,
+            Some(target),
+            event,
+            EventRoute::Bubble,
+            None,
+            |widget, ctx, props, event| {
+                widget.on_access_event(ctx, props, event);
+            },
+            true,
+        )
+    };
 
     // Handle focus events
     match event.action {
-        accesskit::Action::Focus if !handled.is_handled() && root.is_still_interactive(target) => {
+        accesskit::Action::Focus
+            if !handled.is_handled()
+                && root.is_still_interactive(target)
+                && root
+                    .widget_arena
+                    .get_state(target)
+                    .is_some_and(WidgetState::accepts_focus) =>
+        {
             root.global_state.next_focused_widget = Some(target);
             handled = Handled::Yes;
         }

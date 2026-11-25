@@ -1,6 +1,7 @@
 // Copyright 2024 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
+use std::cell::Cell;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::rc::Rc;
@@ -20,7 +21,8 @@ use crate::core::{MessageCtx, MessageResult, Mut, NoElement, View, ViewMarker};
 /// The `TaskProxy` can be used to send a message to `on_event`, which can then update
 /// the app's state.
 /// The `ShutdownSignal` can be used to detect whether the view has disappeared and
-/// a shutdown request has been made (because a future cannot be canceled from the outside).
+/// a shutdown request has been made. This task uses cooperative shutdown so the future
+/// can perform asynchronous cleanup. Messages are rejected once the state is removed.
 ///
 /// Note that this task will not be updated if the view is rebuilt, so `init_future`
 /// cannot capture.
@@ -112,10 +114,27 @@ pub struct Task<F, H, M> {
 )]
 pub struct TaskState {
     abort_handle: Option<AbortHandle>,
+    active: Rc<Cell<bool>>,
+}
+
+impl TaskState {
+    fn shutdown(&mut self) {
+        self.active.set(false);
+        if let Some(handle) = self.abort_handle.take() {
+            handle.abort();
+        }
+    }
+}
+
+impl Drop for TaskState {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
 }
 
 pub struct TaskProxy {
     thunk: Rc<MessageThunk>,
+    active: Rc<Cell<bool>>,
 }
 
 impl TaskProxy {
@@ -123,9 +142,15 @@ impl TaskProxy {
     where
         M: AnyDebug,
     {
+        if !self.active.get() {
+            return;
+        }
         let thunk = Rc::clone(&self.thunk);
+        let active = Rc::clone(&self.active);
         spawn_local(async move {
-            thunk.push_message(message);
+            if active.get() {
+                thunk.push_message(message);
+            }
         });
     }
 }
@@ -148,11 +173,14 @@ where
     fn build(&self, ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
         let thunk = ctx.message_thunk();
         let (shutdown_signal, abort_handle) = ShutdownSignal::new();
+        let active = Rc::new(Cell::new(true));
         let view_state = TaskState {
             abort_handle: Some(abort_handle),
+            active: Rc::clone(&active),
         };
         let proxy = TaskProxy {
             thunk: Rc::new(thunk),
+            active,
         };
         spawn_local((self.init_future)(proxy, shutdown_signal));
         (NoElement, view_state)
@@ -175,19 +203,17 @@ where
         _: &mut ViewCtx,
         (): Mut<'_, Self::Element>,
     ) {
-        if let Some(handle) = view_state.abort_handle.take() {
-            handle.abort();
-        }
+        view_state.shutdown();
     }
 
     fn message(
         &self,
-        _: &mut Self::ViewState,
+        view_state: &mut Self::ViewState,
         message: &mut MessageCtx,
         (): Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        if !message.remaining_path().is_empty() {
+        if !view_state.active.get() || !message.remaining_path().is_empty() {
             return MessageResult::Stale;
         }
         let Some(message) = message.take_message::<M>() else {

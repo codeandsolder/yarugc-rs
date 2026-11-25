@@ -88,8 +88,14 @@ where
     S: BuildHasher + 'static,
 {
     fn styles_iter(&self) -> impl Iterator<Item = (CowStr, Option<CowStr>)> {
-        self.iter()
-            .map(|s| (s.0.clone().into(), s.1.clone().into()))
+        // Equality ignores the hash table's iteration order, but retained
+        // modifier indices and CSS declaration order cannot.
+        let mut entries: Vec<_> = self
+            .iter()
+            .map(|(key, value)| (key.clone().into(), value.clone().into()))
+            .collect();
+        entries.sort_unstable();
+        entries.into_iter()
     }
 }
 
@@ -126,24 +132,20 @@ pub struct Styles {
     idx: usize,
 }
 
-fn set_style(element: &web_sys::Element, name: &str, value: &str) {
-    if let Some(el) = element.dyn_ref::<web_sys::HtmlElement>() {
-        el.style().set_property(name, value).unwrap_throw();
-    } else if let Some(el) = element.dyn_ref::<web_sys::SvgElement>() {
-        el.style().set_property(name, value).unwrap_throw();
-    } else if let Some(el) = element.dyn_ref::<web_sys::MathMlElement>() {
-        el.style().set_property(name, value).unwrap_throw();
-    }
-}
-
-fn remove_style(element: &web_sys::Element, name: &str) {
-    if let Some(el) = element.dyn_ref::<web_sys::HtmlElement>() {
-        el.style().remove_property(name).unwrap_throw();
-    } else if let Some(el) = element.dyn_ref::<web_sys::SvgElement>() {
-        el.style().remove_property(name).unwrap_throw();
-    } else if let Some(el) = element.dyn_ref::<web_sys::MathMlElement>() {
-        el.style().remove_property(name).unwrap_throw();
-    }
+fn style_declaration(element: &web_sys::Element) -> Option<web_sys::CssStyleDeclaration> {
+    element
+        .dyn_ref::<web_sys::HtmlElement>()
+        .map(web_sys::HtmlElement::style)
+        .or_else(|| {
+            element
+                .dyn_ref::<web_sys::SvgElement>()
+                .map(web_sys::SvgElement::style)
+        })
+        .or_else(|| {
+            element
+                .dyn_ref::<web_sys::MathMlElement>()
+                .map(web_sys::MathMlElement::style)
+        })
 }
 
 impl Styles {
@@ -160,30 +162,29 @@ impl Styles {
     /// Applies potential changes of the inline styles of an element to the underlying DOM node.
     pub fn apply_changes(this: Modifier<'_, Self>, element: &web_sys::Element) {
         let Modifier { modifier, flags } = this;
-        if flags.in_hydration() {
+        if flags.in_hydration() || (!flags.was_created() && modifier.updated.is_empty()) {
             return;
-        } else if flags.was_created() {
-            for modifier in &modifier.modifiers {
-                match modifier {
-                    StyleModifier::Remove(name) => remove_style(element, name),
-                    StyleModifier::Set(name, value) => set_style(element, name, value),
+        }
+        let Some(style) = style_declaration(element) else {
+            modifier.updated.clear();
+            return;
+        };
+
+        // CSS shorthands and longhands can overlap. A change to one name can
+        // affect any later modifier, even one whose value did not change.
+        // Remove changed/deleted properties first, then replay in view order
+        // exactly as on initial creation. Unchanged elements do no DOM work.
+        for (name, ()) in modifier.updated.drain() {
+            style.remove_property(&name).unwrap_throw();
+        }
+        for entry in &modifier.modifiers {
+            match entry {
+                StyleModifier::Remove(name) => {
+                    style.remove_property(name).unwrap_throw();
                 }
-            }
-        } else if !modifier.updated.is_empty() {
-            for entry in modifier.modifiers.iter().rev() {
-                match entry {
-                    StyleModifier::Remove(name) if modifier.updated.remove(name).is_some() => {
-                        remove_style(element, name);
-                    }
-                    StyleModifier::Set(name, value) if modifier.updated.remove(name).is_some() => {
-                        set_style(element, name, value);
-                    }
-                    _ => {}
+                StyleModifier::Set(name, value) => {
+                    style.set_property(name, value).unwrap_throw();
                 }
-            }
-            // if there's any remaining key in updated, it means these are deleted keys
-            for (name, ()) in modifier.updated.drain() {
-                remove_style(element, &name);
             }
         }
         debug_assert!(modifier.updated.is_empty());
@@ -713,5 +714,41 @@ where
         app_state: &mut State,
     ) -> MessageResult<Action> {
         self.el.message(view_state, message, element, app_state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn equivalent_hash_maps_have_the_same_modifier_order() {
+        let first = HashMap::from([
+            ("margin", Some(CowStr::from("4px"))),
+            ("margin-left", Some(CowStr::from("21px"))),
+            ("color", Some(CowStr::from("red"))),
+        ]);
+        let second = HashMap::from([
+            ("color", Some(CowStr::from("red"))),
+            ("margin-left", Some(CowStr::from("21px"))),
+            ("margin", Some(CowStr::from("4px"))),
+        ]);
+        assert_eq!(first, second);
+        let expected = [
+            ("color", Some(CowStr::from("red"))),
+            ("margin", Some(CowStr::from("4px"))),
+            ("margin-left", Some(CowStr::from("21px"))),
+        ];
+        assert_eq!(
+            first.styles_iter().collect::<Vec<_>>(),
+            expected
+                .into_iter()
+                .map(|(key, value)| (CowStr::from(key), value))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            first.styles_iter().collect::<Vec<_>>(),
+            second.styles_iter().collect::<Vec<_>>()
+        );
     }
 }

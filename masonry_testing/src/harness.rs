@@ -450,6 +450,9 @@ impl<W: Widget> TestHarness<W> {
     ///
     /// This will run [rewrite passes](masonry_core::doc::pass_system#rewrite-passes) after the event is processed.
     pub fn process_window_event(&mut self, event: WindowEvent) -> Handled {
+        if let WindowEvent::Resize(size) = event {
+            self.window_size = size;
+        }
         let handled = self.render_root.handle_window_event(event);
         self.process_signals();
         handled
@@ -729,8 +732,7 @@ impl<W: Widget> TestHarness<W> {
         }
         if self
             .render_root
-            .get_layer_root(0)
-            .and_then(|root| root.find_widget_under_pointer(center))
+            .widget_at_position(center)
             .map(|widget| widget.id())
             != Some(id)
         {
@@ -767,7 +769,7 @@ impl<W: Widget> TestHarness<W> {
     /// [`ScrollIntoView`]: masonry_core::accesskit::Action::ScrollIntoView
     #[track_caller]
     pub fn scroll_into_view(&mut self, id: WidgetId) {
-        self.render_root.handle_access_event(ActionRequest {
+        self.process_access_event(ActionRequest {
             action: Action::ScrollIntoView,
             target_tree: TreeId::ROOT,
             target_node: id.to_raw().into(),
@@ -781,16 +783,13 @@ impl<W: Widget> TestHarness<W> {
     /// which may have different behavior compared to a normal mouse click.
     ///
     /// Unlike [`Self::mouse_click_on`], the event will be routed to the target widget
-    /// even if it's not visible, or hidden behind other widgets.
-    ///
-    /// # Panics
-    ///
-    /// - If the widget is not found in the tree.
+    /// even if it is occluded by other widgets. Removed, stashed and disabled
+    /// targets are ignored.
     ///
     /// [`Click`]: masonry_core::accesskit::Action::Click
     #[track_caller]
     pub fn accessibility_click_on(&mut self, id: WidgetId) {
-        self.render_root.handle_access_event(ActionRequest {
+        self.process_access_event(ActionRequest {
             action: Action::Click,
             target_tree: TreeId::ROOT,
             target_node: id.to_raw().into(),
@@ -800,7 +799,8 @@ impl<W: Widget> TestHarness<W> {
 
     // TODO - Handle complicated IME
     // TODO - Mock Winit keyboard events
-    /// Sends a [`TextEvent`] for each character in the given string.
+    /// Simulates IME text commits for the focused text-input widget.
+    /// This does not synthesize keyboard key presses.
     pub fn keyboard_type_chars(&mut self, text: &str) {
         // For each character
         for c in text.split("").filter(|s| !s.is_empty()) {

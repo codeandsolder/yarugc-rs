@@ -3,7 +3,7 @@
 
 use std::marker::PhantomData;
 
-use masonry::widgets::{self, SliderMoved};
+use masonry::widgets::{self, SliderMoved, SliderState};
 
 use crate::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use crate::{Pod, ViewCtx, WidgetView};
@@ -44,7 +44,7 @@ impl<State, Action, F> Slider<State, Action, F> {
     /// Sets the stepping interval of the slider.
     #[must_use = "Use the configured view."]
     pub fn step(mut self, step: f64) -> Self {
-        if step > 0.0 {
+        if step.is_finite() && step > 0.0 {
             self.step = Some(step);
         }
         self
@@ -70,10 +70,9 @@ where
     fn build(&self, ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
         (
             ctx.with_action_widget({
-                let mut widget = widgets::Slider::new(self.min, self.max, self.value);
-                if let Some(step) = self.step {
-                    widget = widget.with_step(step);
-                }
+                let widget = widgets::Slider::from_state(SliderState::new(
+                    self.min, self.max, self.value, self.step,
+                ));
                 let mut pod = Pod::new(widget);
                 pod.new_widget.options.disabled = self.disabled;
                 pod
@@ -93,15 +92,10 @@ where
         if prev.disabled != self.disabled {
             element.ctx.set_disabled(self.disabled);
         }
-        if prev.value.to_bits() != self.value.to_bits() {
-            widgets::Slider::set_value(&mut element, self.value);
-        }
-        if prev.min.to_bits() != self.min.to_bits() || prev.max.to_bits() != self.max.to_bits() {
-            widgets::Slider::set_range(&mut element, self.min, self.max);
-        }
-        if prev.step != self.step {
-            widgets::Slider::set_step(&mut element, self.step);
-        }
+        widgets::Slider::set_state(
+            &mut element,
+            SliderState::new(self.min, self.max, self.value, self.step),
+        );
     }
 
     fn teardown(
@@ -117,9 +111,12 @@ where
         &self,
         (): &mut Self::ViewState,
         message: &mut MessageCtx,
-        _: Mut<'_, Self::Element>,
+        element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
+        if element.ctx.is_disabled() || element.ctx.is_stashed() {
+            return MessageResult::Stale;
+        }
         if message.take_first().is_some() {
             tracing::warn!("Got unexpected id path in Slider::message");
             return MessageResult::Stale;
@@ -132,5 +129,53 @@ where
             return MessageResult::Stale;
         };
         MessageResult::Action((self.on_change)(app_state, value.value))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{render_root, view_context};
+
+    #[test]
+    fn rebuild_applies_new_configuration_atomically_and_restores_controlled_value() {
+        let mut ctx = view_context();
+        let callback = |_: &mut (), _| ();
+        let initial = slider(0.0, 10.0, 5.0, callback).step(5.0);
+        let updated = slider(20.0, 40.0, 32.0, callback).step(3.0);
+        let (pod, mut state) = initial.build(&mut ctx, &mut ());
+        let id = pod.new_widget.id();
+        let (mut root, _receive) = render_root(pod.new_widget, (200, 32));
+        root.edit_base_layer(|element| {
+            updated.rebuild(&initial, &mut state, &mut ctx, element, &mut ());
+        })
+        .unwrap();
+        assert_eq!(
+            root.get_widget(id)
+                .unwrap()
+                .downcast::<widgets::Slider>()
+                .unwrap()
+                .value(),
+            32.0,
+            "new value must use new range and step, not old configuration"
+        );
+
+        root.edit_base_layer(|mut element| {
+            widgets::Slider::set_value(&mut element, 38.0);
+        })
+        .unwrap();
+        root.edit_base_layer(|element| {
+            updated.rebuild(&updated, &mut state, &mut ctx, element, &mut ());
+        })
+        .unwrap();
+        assert_eq!(
+            root.get_widget(id)
+                .unwrap()
+                .downcast::<widgets::Slider>()
+                .unwrap()
+                .value(),
+            32.0,
+            "unchanged declarative value must restore controlled state"
+        );
     }
 }

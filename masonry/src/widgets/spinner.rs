@@ -10,7 +10,7 @@ use tracing::{Span, trace_span};
 
 use crate::core::{
     AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NoAction, PaintCtx, PropertiesMut,
-    PropertiesRef, RegisterCtx, Update, UpdateCtx, UsesProperty, Widget, WidgetId,
+    PropertiesRef, Property, RegisterCtx, Update, UpdateCtx, UsesProperty, Widget, WidgetId,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Arc, Axis, Cap, Size, Stroke, Vec2};
@@ -27,6 +27,7 @@ use crate::theme;
     include_doc_path!("screenshots/spinner_init.png"),
     ")",
 )]
+/// Non-positive or non-finite animation durations pause rotation.
 pub struct Spinner {
     rotation_progress: f64,
 }
@@ -64,11 +65,6 @@ impl Widget for Spinner {
         interval: u64,
     ) {
         let animation_duration_secs = props.get::<AnimationDuration>(ctx.property_cache()).seconds;
-        debug_assert!(
-            animation_duration_secs > 0.0 && animation_duration_secs != f64::INFINITY,
-            "Animation duration must be non-zero positive and finite."
-        );
-
         if !animation_duration_secs.is_finite() || animation_duration_secs <= 0. {
             return;
         }
@@ -82,7 +78,14 @@ impl Widget for Spinner {
 
     fn register_children(&mut self, _ctx: &mut RegisterCtx<'_>) {}
 
-    fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: TypeId) {}
+    fn property_changed(&mut self, ctx: &mut UpdateCtx<'_>, property_type: TypeId) {
+        if AnimationDuration::matches(property_type) {
+            ctx.request_anim_frame();
+        }
+        if TrackColor::matches(property_type) || TrackThickness::matches(property_type) {
+            ctx.request_paint_only();
+        }
+    }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
@@ -126,6 +129,9 @@ impl Widget for Spinner {
         let colors = props.get::<TrackColor>(cache);
         let thickness = props.get::<TrackThickness>(cache).0.get().min(radius);
 
+        if thickness <= 0.0 {
+            return;
+        }
         let radii = Vec2::splat(radius - (thickness / 2.0));
         painter
             .stroke(
@@ -181,6 +187,49 @@ mod tests {
     use crate::core::NewWidget;
     use crate::testing::{TestHarness, assert_render_snapshot};
     use crate::theme::test_property_set;
+
+    #[test]
+    fn paused_animation_restarts_and_repaints_changed_properties() {
+        let spinner = Spinner::new()
+            .prepare()
+            .with_props(AnimationDuration { seconds: 0.0 });
+        let mut harness = TestHarness::create_with_size(test_property_set(), spinner, (100, 100));
+        harness.animate_ms(250);
+        assert_eq!(harness.root_widget().unwrap().rotation_progress, 0.0);
+        let initial = harness.render().unwrap();
+        harness
+            .edit_root_widget(|mut spinner| {
+                spinner.insert_prop(TrackColor {
+                    active: Color::from_rgba8(0xff, 0, 0, 0xff),
+                    inactive: Color::from_rgba8(0, 0, 0xff, 0xff),
+                });
+            })
+            .unwrap();
+        let recolored = harness.render().unwrap();
+        assert!(initial != recolored);
+        harness
+            .edit_root_widget(|mut spinner| {
+                spinner.insert_prop(TrackThickness(0.px()));
+            })
+            .unwrap();
+        assert!(recolored != harness.render().unwrap());
+        harness
+            .edit_root_widget(|mut spinner| {
+                spinner.insert_prop(AnimationDuration { seconds: 1.0 });
+            })
+            .unwrap();
+        harness.animate_ms(250);
+        assert_eq!(harness.root_widget().unwrap().rotation_progress, 0.25);
+        for seconds in [f64::NAN, f64::INFINITY, -1.0] {
+            harness
+                .edit_root_widget(|mut spinner| {
+                    spinner.insert_prop(AnimationDuration { seconds });
+                })
+                .unwrap();
+            harness.animate_ms(250);
+            assert_eq!(harness.root_widget().unwrap().rotation_progress, 0.25);
+        }
+    }
 
     #[test]
     fn simple_spinner() {

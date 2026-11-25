@@ -59,8 +59,7 @@ The hovered status of the capturing widget will be updated, meaning a widget tha
 - The pointer's cursor icon will be updated as if the pointer stayed over the capturing widget.
 - If the widget loses pointer capture for some reason (e.g. the pointer is disconnected), the widget will get a [`Cancel`] event.
 
-Masonry should guarantee that pointers can only be captured by one widget at a time.
-Masonry should force the widget to lose pointer capture when some events occur; not just "mouse leave", but also `Tab` being pressed, the window losing focus, the widget being disabled, etc.
+Masonry supports one captured interaction per window. Capture is associated with the initiating pointer and button. Unrelated contacts and button events cannot change the active capture or hover state. The matching release, pointer cancellation, explicit release, window focus loss, or loss of widget interactivity ends capture.
 
 Examples of use cases for pointer capture include selecting text, dragging a slider, or long-pressing a button.
 
@@ -104,10 +103,11 @@ In that case, we still mark the widget as focused, but with a different color to
 
 Masonry drivers have the option to give set a widget as the "focus fallback".
 
-In that case, if no widget is focused, text events will get to the fallback widget instead.
+In that case, if no widget is focused, keyboard and clipboard events will get to the fallback widget instead.
 
 The focus fallback isn't considered as "focused" and will not get [`FocusChanged`] events or be visually marked as focused.
 
+IME events are delivered only to the focused text-input widget, not its ancestors or the focus fallback. Losing window focus ends its IME session without clearing logical widget focus; regaining window focus starts a new session if the focused widget accepts text input.
 
 ## Disabled
 
@@ -263,13 +263,13 @@ There is always at least one layer, called the "base layer".
 It's the one in which almost all content (buttons, texts, images) will be drawn.
 
 Other layers can represent tooltips, menus, dialogs, etc.
-They are created with a pre-set position and are drawn on top of the base layer.
+They are drawn on top of the base layer. Absolute layers have a fixed origin, while popup layers are anchored to a rectangle and constrained to the available viewport.
 
 ### Adding a layer
 
 <!-- TODO - Flesh this out -->
 
-Most context methods have a `create_layer(layer_type, fallback_widget, pos)` method.
+Most context methods have a `create_layer(layer_type, fallback_widget, placement)` method.
 
 `layer_type` and `fallback_widget` are two redundant representations of the same layer:
 

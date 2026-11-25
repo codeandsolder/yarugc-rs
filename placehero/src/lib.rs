@@ -27,7 +27,7 @@ use xilem::core::one_of::{Either, OneOf, OneOf3, OneOf6};
 use xilem::core::{NoElement, View, fork, lens, map_action, map_state};
 use xilem::masonry::layout::AsUnit;
 use xilem::style::Style;
-use xilem::tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use xilem::tokio::sync::mpsc::{Receiver, Sender};
 use xilem::view::{
     CrossAxisAlignment, FlexExt, MainAxisAlignment, flex_col, flex_row, label, prose, sized_box,
     spinner, split, task_raw, text_button, text_input, worker_raw,
@@ -146,8 +146,8 @@ struct Placehero {
     timeline: Timeline,
     show_context: Option<Status>,
     context: Option<Context>,
-    context_sender: Option<UnboundedSender<String>>,
-    account_sender: Option<UnboundedSender<String>>,
+    context_sender: Option<Sender<String>>,
+    account_sender: Option<Sender<String>>,
     timeline_box_contents: String,
     loading_timeline: bool,
     not_found_acct: Option<String>,
@@ -265,7 +265,7 @@ fn app_logic(app_state: &mut Placehero) -> impl WidgetView<Placehero> + use<> {
                     let requested = state
                         .context_sender
                         .as_ref()
-                        .is_some_and(|sender| sender.send(status.id.clone()).is_ok());
+                        .is_some_and(|sender| sender.try_send(status.id.clone()).is_ok());
                     state.show_context = Some(status);
                     state.context_error =
                         (!requested).then(|| "Thread worker is unavailable".to_owned());
@@ -278,7 +278,7 @@ fn app_logic(app_state: &mut Placehero) -> impl WidgetView<Placehero> + use<> {
                     let requested = state
                         .account_sender
                         .as_ref()
-                        .is_some_and(|sender| sender.send(user).is_ok());
+                        .is_some_and(|sender| sender.try_send(user).is_ok());
                     state.loading_timeline = requested;
                     state.account_error =
                         (!requested).then(|| "Account worker is unavailable".to_owned());
@@ -305,18 +305,19 @@ fn load_contexts(
     mastodon: Mastodon,
 ) -> impl View<Placehero, (), ViewCtx, Element = NoElement> + use<> {
     worker_raw(
-        move |result, mut recv: UnboundedReceiver<String>| {
+        std::num::NonZeroUsize::MIN,
+        move |result, mut recv: Receiver<String>| {
             let mastodon = mastodon.clone();
             async move {
+                let mut task = tokio::task::JoinSet::new();
                 while let Some(req) = recv.recv().await {
+                    // Only the newest thread request is useful. Abort and
+                    // reap the superseded task before starting another.
+                    task.shutdown().await;
                     let mastodon = mastodon.clone();
                     let result = result.clone();
-                    // TODO: Cancel the previous task?
-                    // There is probably some `select!`-adjacent helper for this?
-                    tokio::task::spawn(async move {
-                        // Note that error handling is deferred to the on_response handler
+                    task.spawn(async move {
                         let context_result = mastodon.get_status_context(req.clone(), None).await;
-                        // We choose not to handle the case where the event loop has ended
                         drop(result.message((context_result, req)));
                     });
                 }
@@ -377,7 +378,8 @@ fn load_account(
     mastodon: Mastodon,
 ) -> impl View<Placehero, (), ViewCtx, Element = NoElement> + use<> {
     worker_raw(
-        move |result, mut recv: UnboundedReceiver<String>| {
+        std::num::NonZeroUsize::MIN,
+        move |result, mut recv: Receiver<String>| {
             let mastodon = mastodon.clone();
             async move {
                 while let Some(req) = recv.recv().await {

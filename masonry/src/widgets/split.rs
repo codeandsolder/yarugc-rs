@@ -8,9 +8,9 @@ use tracing::{Span, trace_span};
 use crate::core::keyboard::{Key, NamedKey};
 use crate::core::{
     AccessCtx, AccessEvent, ChildrenIds, CursorIcon, EventCtx, FromDynWidget, LayoutCtx,
-    MeasureCtx, NewWidget, NoAction, PaintCtx, PointerButtonEvent, PointerEvent, PointerUpdate,
-    PropertiesMut, PropertiesRef, QueryCtx, RegisterCtx, TextEvent, Update, UpdateCtx, Widget,
-    WidgetId, WidgetMut, WidgetPod,
+    MeasureCtx, NewWidget, NoAction, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent,
+    PointerState, PointerUpdate, PropertiesMut, PropertiesRef, QueryCtx, RegisterCtx, TextEvent,
+    Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Join, Line, Point, Size, Stroke};
@@ -35,6 +35,92 @@ pub enum SplitPoint {
     FromEnd(Length),
 }
 
+impl SplitPoint {
+    /// Normalizes fractional positions, clamping infinities and using the
+    /// midpoint for NaN. Fixed-length positions are already validated.
+    #[must_use = "Use the normalized split point."]
+    pub const fn normalized(self) -> Self {
+        match self {
+            Self::Fraction(value) => Self::Fraction(if value.is_nan() {
+                0.5
+            } else {
+                value.clamp(0.0, 1.0)
+            }),
+            other => other,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SplitGeometry {
+    space: f64,
+    bar: f64,
+    min: f64,
+    max: f64,
+    first: f64,
+}
+
+impl SplitGeometry {
+    const fn new(total: f64, bar: Length, minimums: (Length, Length), point: SplitPoint) -> Self {
+        let bar = bar.get().min(total);
+        let space = total - bar;
+        let (first, second) = (minimums.0.get(), minimums.1.get());
+        let max = (space - second).max(0.0);
+        let (min, max) = if first <= max && second <= space {
+            (first, max)
+        } else {
+            // Proportionally compress infeasible minima. Scaling before the
+            // sum prevents overflow even for extremely large finite lengths.
+            let scale = first.max(second);
+            let ratio = if scale > 0.0 {
+                (first / scale) / (first / scale + second / scale)
+            } else {
+                0.5
+            };
+            let fixed = space * ratio;
+            (fixed, fixed)
+        };
+        let requested = match point {
+            SplitPoint::Fraction(fraction) => space * fraction,
+            SplitPoint::FromStart(length) => length.get(),
+            SplitPoint::FromEnd(length) => space - length.get(),
+        };
+        Self {
+            space,
+            bar,
+            min,
+            max,
+            first: requested.clamp(min, max),
+        }
+    }
+
+    const fn bar_edges(self) -> (f64, f64) {
+        (self.first, self.first + self.bar)
+    }
+
+    const fn center(self) -> f64 {
+        self.bar.mul_add(0.5, self.first)
+    }
+
+    const fn hit(self, minimum_area: Length, pos: f64) -> bool {
+        let padding = (minimum_area.get() - self.bar).max(0.0);
+        let second = self.space - self.first;
+        let pad1 = (padding * 0.5).min(self.first);
+        let pad2 = (padding - pad1).min(second);
+        let pad1 = (padding - pad2).min(self.first);
+        let (edge1, edge2) = self.bar_edges();
+        pos >= edge1 - pad1 && pos <= edge2 + pad2
+    }
+
+    const fn step(self) -> f64 {
+        (self.space / 100.0).max(1.0)
+    }
+
+    const fn movable(self) -> bool {
+        self.min < self.max
+    }
+}
+
 /// A container containing two other widgets, splitting the area either horizontally or vertically.
 ///
 #[doc = concat!(
@@ -49,7 +135,6 @@ where
 {
     axis: Axis,
     chosen_point: SplitPoint,
-    effective_point: f64,
     min_lengths: (Length, Length),
     bar_thickness: Length,
     min_bar_area: Length,
@@ -58,7 +143,7 @@ where
     /// Offset from the bar center to the actual position where the bar was clicked.
     /// This is used to ensure a click without moving is a no-op,
     /// instead of re-centering the bar to the click position.
-    click_offset: f64,
+    click_offset: Option<f64>,
     child1: WidgetPod<ChildA>,
     child2: WidgetPod<ChildB>,
 }
@@ -71,13 +156,12 @@ impl<ChildA: Widget + ?Sized, ChildB: Widget + ?Sized> Split<ChildA, ChildB> {
         Self {
             axis: Axis::Horizontal,
             chosen_point: SplitPoint::Fraction(0.5),
-            effective_point: 0.5,
             min_lengths: (Length::ZERO, Length::ZERO),
             bar_thickness: 6.px(),
             min_bar_area: 6.px(),
             solid: false,
             draggable: true,
-            click_offset: 0.0,
+            click_offset: None,
             child1: child1.into_pod(),
             child2: child2.into_pod(),
         }
@@ -97,22 +181,19 @@ impl<ChildA: Widget + ?Sized, ChildB: Widget + ?Sized> Split<ChildA, ChildB> {
 
     /// Builder-style method to set the split point as a fraction of the split axis.
     ///
-    /// The value is clamped to `0.0..=1.0`.
+    /// The value is clamped to `0.0..=1.0`, with NaN selecting the midpoint.
     ///
     /// The default split point is `0.5`.
     #[must_use = "Use the returned value."]
     pub const fn split_fraction(mut self, split_point: f64) -> Self {
-        self.chosen_point = SplitPoint::Fraction(split_point.clamp(0.0, 1.0));
+        self.chosen_point = SplitPoint::Fraction(split_point).normalized();
         self
     }
 
     /// Builder-style method to set the split point.
     #[must_use = "Use the returned value."]
     pub const fn split_point(mut self, split_point: SplitPoint) -> Self {
-        self.chosen_point = match split_point {
-            SplitPoint::Fraction(frac) => SplitPoint::Fraction(frac.clamp(0.0, 1.0)),
-            other => other,
-        };
+        self.chosen_point = split_point.normalized();
         self
     }
 
@@ -190,105 +271,41 @@ impl<ChildA: Widget + ?Sized, ChildB: Widget + ?Sized> Split<ChildA, ChildB> {
 
 // --- MARK: METHODS
 impl<ChildA: Widget + ?Sized, ChildB: Widget + ?Sized> Split<ChildA, ChildB> {
-    /// Returns the thickness of the splitter bar area.
-    #[inline]
-    const fn bar_area(&self) -> f64 {
-        self.bar_thickness.max(self.min_bar_area).get()
+    const fn geometry(&self, total: f64) -> SplitGeometry {
+        SplitGeometry::new(
+            total,
+            self.bar_thickness,
+            self.min_lengths,
+            self.chosen_point,
+        )
     }
 
-    /// Returns the splitter bar center point.
-    fn bar_center(&self, length: f64) -> f64 {
-        let (edge1, edge2) = self.bar_edges(length);
-        f64::midpoint(edge1, edge2)
-    }
-
-    /// Returns the location of the edges of the splitter bar,
-    /// given the specified total length.
-    fn bar_edges(&self, length: f64) -> (f64, f64) {
-        let bar_thickness = self.bar_thickness.get();
-        let reduced_length = length - bar_thickness;
-        let edge = reduced_length * self.effective_point;
-        (edge, edge + bar_thickness)
-    }
-
-    /// Returns the location of the edges of the splitter bar area,
-    /// given the specified total length.
-    fn bar_area_edges(&self, length: f64) -> (f64, f64) {
-        let (edge1, edge2) = self.bar_edges(length);
-        let (space1, space2) = (edge1.max(0.), (length - edge2).max(0.));
-        let padding = self.bar_area() - self.bar_thickness.get();
-
-        // Half the padding to the first edge
-        let pad1 = (0.5 * padding).min(space1);
-        // Remainder to the second edge
-        let pad2 = (padding - pad1).min(space2);
-        // First edge gets more, in case space2 was low but space1 is high
-        let pad1 = (padding - pad2).min(space1);
-
-        (edge1 - pad1, edge2 + pad2)
-    }
-
-    /// Returns `true` if the provided position is on the splitter bar area.
-    fn bar_area_hit_test(&self, length: f64, pos: f64) -> bool {
-        let (edge1, edge2) = self.bar_area_edges(length);
-        pos >= edge1 && pos <= edge2
-    }
-
-    /// Returns the minimum and maximum split coordinate of the provided length.
-    fn split_side_limits(&self, length: f64) -> (f64, f64) {
-        let (min_child1, min_child2) = self.min_lengths;
-        let mut min_limit = min_child1.get();
-        let mut max_limit = (length - min_child2.get()).max(0.0);
-
-        if min_limit > max_limit {
-            min_limit = f64::midpoint(min_limit, max_limit);
-            max_limit = min_limit;
+    // Input changes the requested policy only when effective geometry moves.
+    // A no-op at a constrained endpoint must not discard the preferred size.
+    fn move_split(&mut self, ctx: &mut EventCtx<'_>, geometry: SplitGeometry, first: f64) {
+        if !first.is_finite() || !geometry.movable() {
+            return;
         }
-
-        (min_limit, max_limit)
-    }
-
-    fn calc_effective_split_point(&self, length: f64) -> f64 {
-        let (min_limit, max_limit) = self.split_side_limits(length);
-        if length <= f64::EPSILON {
-            0.5
-        } else {
-            let child1_len = match self.chosen_point {
-                SplitPoint::Fraction(frac) => length * frac,
-                SplitPoint::FromStart(len) => len.get(),
-                SplitPoint::FromEnd(len) => length - len.get(),
-            };
-            (child1_len / length).clamp(min_limit / length, max_limit / length)
+        let first = first.clamp(geometry.min, geometry.max);
+        if first.to_bits() == geometry.first.to_bits() {
+            return;
         }
+        self.chosen_point = match self.chosen_point {
+            SplitPoint::Fraction(_) => SplitPoint::Fraction(first / geometry.space),
+            SplitPoint::FromStart(_) => SplitPoint::FromStart(first.px()),
+            SplitPoint::FromEnd(_) => SplitPoint::FromEnd((geometry.space - first).px()),
+        };
+        ctx.request_layout();
     }
 
-    fn set_chosen_from_child1_len(&mut self, length: f64, child1_len: f64) {
-        let (min_limit, max_limit) = self.split_side_limits(length);
-        let child1_len = child1_len.clamp(min_limit, max_limit);
-
-        match self.chosen_point {
-            SplitPoint::Fraction(_) => {
-                self.chosen_point = SplitPoint::Fraction(if length <= f64::EPSILON {
-                    0.5
-                } else {
-                    child1_len / length
-                });
-            }
-            SplitPoint::FromStart(_) => {
-                self.chosen_point = SplitPoint::FromStart(Length::px(child1_len));
-            }
-            SplitPoint::FromEnd(_) => {
-                let child2_len = (length - child1_len).max(0.0);
-                self.chosen_point = SplitPoint::FromEnd(Length::px(child2_len));
-            }
+    fn drag_to(&mut self, ctx: &mut EventCtx<'_>, state: &PointerState) {
+        if let Some(offset) = self.click_offset {
+            let geometry = self.geometry(ctx.content_box().size().get_coord(self.axis));
+            let pos = ctx.local_position(state.position).get_coord(self.axis);
+            let first = geometry.bar.mul_add(-0.5, pos - offset);
+            self.move_split(ctx, geometry, first);
         }
-    }
-
-    fn update_split_point_from_bar_center(&mut self, total_length: f64, bar_center: f64) {
-        let bar_thickness = self.bar_thickness.get();
-        let split_space = (total_length - bar_thickness).max(0.0);
-        let child1_len = bar_thickness.mul_add(-0.5, bar_center);
-        self.set_chosen_from_child1_len(split_space, child1_len);
+        ctx.set_handled();
     }
 
     /// Returns the color of the splitter bar.
@@ -305,7 +322,7 @@ impl<ChildA: Widget + ?Sized, ChildB: Widget + ?Sized> Split<ChildA, ChildB> {
 
     fn paint_focus_bar(&self, ctx: &PaintCtx<'_>, scene: &mut Painter<'_>) {
         let length = ctx.content_box().size().get_coord(self.axis);
-        let (edge1, edge2) = self.bar_edges(length);
+        let (edge1, edge2) = self.geometry(length).bar_edges();
 
         let mut rect = ctx.border_box();
         rect.set_coords(self.axis, edge1, edge2);
@@ -319,7 +336,7 @@ impl<ChildA: Widget + ?Sized, ChildB: Widget + ?Sized> Split<ChildA, ChildB> {
 
     fn paint_solid_bar(&self, ctx: &PaintCtx<'_>, scene: &mut Painter<'_>, color: Color) {
         let length = ctx.content_box().size().get_coord(self.axis);
-        let (edge1, edge2) = self.bar_edges(length);
+        let (edge1, edge2) = self.geometry(length).bar_edges();
 
         let mut rect = ctx.border_box();
         rect.set_coords(self.axis, edge1, edge2);
@@ -331,9 +348,9 @@ impl<ChildA: Widget + ?Sized, ChildB: Widget + ?Sized> Split<ChildA, ChildB> {
         let length = ctx.content_box().size().get_coord(self.axis);
         // Set the line width to a third of the splitter bar thickness,
         // because we'll paint two equal lines at the edges.
-        let line_width = self.bar_thickness.get() / 3.0;
+        let line_width = self.geometry(length).bar / 3.0;
         let line_midpoint = line_width / 2.0;
-        let (edge1, edge2) = self.bar_edges(length);
+        let (edge1, edge2) = self.geometry(length).bar_edges();
 
         let edge1_line_pos = edge1 + line_midpoint;
         let edge2_line_pos = edge2 - line_midpoint;
@@ -367,8 +384,12 @@ where
 
     /// Sets the split axis.
     pub fn set_split_axis(this: &mut WidgetMut<'_, Self>, axis: Axis) {
-        this.widget.axis = axis;
-        this.ctx.request_layout();
+        if this.widget.axis != axis {
+            this.widget.axis = axis;
+            this.widget.click_offset = None;
+            this.ctx.request_layout();
+            this.ctx.request_cursor_icon_change();
+        }
     }
 
     /// Sets the split point as a fraction of the split axis.
@@ -376,25 +397,31 @@ where
     /// The value must be between `0.0` and `1.0`, inclusive.
     /// The default split point is `0.5`.
     pub fn set_split_point(this: &mut WidgetMut<'_, Self>, split_point: SplitPoint) {
-        this.widget.chosen_point = match split_point {
-            SplitPoint::Fraction(frac) => SplitPoint::Fraction(frac.clamp(0.0, 1.0)),
-            other => other,
-        };
-        this.ctx.request_layout();
+        let point = split_point.normalized();
+        if this.widget.chosen_point != point {
+            this.widget.chosen_point = point;
+            this.widget.click_offset = None;
+            this.ctx.request_layout();
+        }
     }
 
     /// Sets the minimum lengths for both sides of the split axis.
     pub fn set_min_lengths(this: &mut WidgetMut<'_, Self>, first: Length, second: Length) {
-        this.widget.min_lengths = (first, second);
-        this.ctx.request_layout();
+        if this.widget.min_lengths != (first, second) {
+            this.widget.min_lengths = (first, second);
+            this.ctx.request_layout();
+        }
     }
 
     /// Sets the thickness of the splitter bar.
     ///
     /// The default splitter bar thickness is `6.0`.
     pub fn set_bar_thickness(this: &mut WidgetMut<'_, Self>, bar_thickness: Length) {
-        this.widget.bar_thickness = bar_thickness;
-        this.ctx.request_layout();
+        if this.widget.bar_thickness != bar_thickness {
+            this.widget.bar_thickness = bar_thickness;
+            this.widget.click_offset = None;
+            this.ctx.request_layout();
+        }
     }
 
     /// Sets the minimum thickness of the splitter bar area.
@@ -409,25 +436,31 @@ where
     ///
     /// The default minimum splitter bar area thickness is `6.0`.
     pub fn set_min_bar_area(this: &mut WidgetMut<'_, Self>, min_bar_area: Length) {
-        this.widget.min_bar_area = min_bar_area;
-        this.ctx.request_layout();
+        if this.widget.min_bar_area != min_bar_area {
+            this.widget.min_bar_area = min_bar_area;
+            this.ctx.request_cursor_icon_change();
+        }
     }
 
     /// Sets whether the split point can be changed by dragging.
     pub fn set_draggable(this: &mut WidgetMut<'_, Self>, draggable: bool) {
-        this.widget.draggable = draggable;
-        // Bar mutability impacts appearance, but not accessibility node
-        // TODO - This might change in a future implementation
-        this.ctx.request_paint_only();
+        if this.widget.draggable != draggable {
+            this.widget.draggable = draggable;
+            this.widget.click_offset = None;
+            this.ctx.set_tab_focusable(draggable);
+            this.ctx.request_render();
+            this.ctx.request_cursor_icon_change();
+        }
     }
 
     /// Sets whether the splitter bar is drawn as a solid rectangle.
     ///
     /// If this is `false` (the default), the bar will be drawn as two parallel lines.
     pub fn set_bar_solid(this: &mut WidgetMut<'_, Self>, solid: bool) {
-        this.widget.solid = solid;
-        // Bar solidity impacts appearance, but not accessibility node
-        this.ctx.request_paint_only();
+        if this.widget.solid != solid {
+            this.widget.solid = solid;
+            this.ctx.request_paint_only();
+        }
     }
 }
 
@@ -440,7 +473,7 @@ where
     type Action = NoAction;
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.draggable
     }
 
     fn on_pointer_event(
@@ -449,32 +482,37 @@ where
         _props: &mut PropertiesMut<'_>,
         event: &PointerEvent,
     ) {
-        if self.draggable {
-            match event {
-                PointerEvent::Down(PointerButtonEvent { state, .. }) => {
-                    let pos = ctx.local_position(state.position).get_coord(self.axis);
-                    let length = ctx.content_box().size().get_coord(self.axis);
-                    if self.bar_area_hit_test(length, pos) {
-                        ctx.set_handled();
-                        ctx.capture_pointer();
-                        ctx.request_focus();
-                        // Save the delta between the click position and the bar center.
-                        self.click_offset = pos - self.bar_center(length);
-                    }
+        if !self.draggable {
+            return;
+        }
+        match event {
+            PointerEvent::Down(PointerButtonEvent {
+                button: None | Some(PointerButton::Primary),
+                state,
+                ..
+            }) => {
+                let pos = ctx.local_position(state.position).get_coord(self.axis);
+                let geometry = self.geometry(ctx.content_box().size().get_coord(self.axis));
+                if geometry.movable() && geometry.hit(self.min_bar_area, pos) {
+                    ctx.set_handled();
+                    ctx.capture_pointer();
+                    ctx.request_focus();
+                    self.click_offset = Some(pos - geometry.center());
                 }
-                PointerEvent::Move(PointerUpdate { current, .. }) if ctx.is_active() => {
-                    let pos = ctx.local_position(current.position).get_coord(self.axis);
-                    let length = ctx.content_box().size().get_coord(self.axis);
-                    // If widget has pointer capture, assume always it's hovered
-                    let effective_center = pos - self.click_offset;
-                    self.update_split_point_from_bar_center(length, effective_center);
-                    ctx.request_layout();
-                }
-                PointerEvent::Up(..) | PointerEvent::Cancel(..) => {
-                    self.click_offset = 0.0;
-                }
-                _ => {}
             }
+            PointerEvent::Move(PointerUpdate { current, .. })
+                if ctx.is_pointer_capture_target() =>
+            {
+                self.drag_to(ctx, current);
+            }
+            PointerEvent::Up(PointerButtonEvent { state, .. })
+                if ctx.is_pointer_capture_target() =>
+            {
+                self.drag_to(ctx, state);
+                self.click_offset = None;
+            }
+            PointerEvent::Cancel(..) => self.click_offset = None,
+            _ => {}
         }
     }
 
@@ -495,46 +533,30 @@ where
             return;
         }
 
-        let length = ctx.content_box().size().get_coord(self.axis);
-        let bar_thickness = self.bar_thickness.get();
-        let split_space = (length - bar_thickness).max(0.0);
-        if split_space <= f64::EPSILON {
-            return;
-        }
-
-        let step = (split_space / 100.0).max(1.0);
-        let big_step = step * 10.0;
-        let delta = if key_event.modifiers.shift() {
-            big_step
-        } else {
-            step
-        };
-
-        let mut child1_len = split_space * self.effective_point;
-        match key_event.key {
+        let geometry = self.geometry(ctx.content_box().size().get_coord(self.axis));
+        let delta = geometry.step()
+            * if key_event.modifiers.shift() {
+                10.0
+            } else {
+                1.0
+            };
+        let first = match key_event.key {
             Key::Named(NamedKey::ArrowLeft) if self.axis == Axis::Horizontal => {
-                child1_len -= delta;
+                geometry.first - delta
             }
             Key::Named(NamedKey::ArrowRight) if self.axis == Axis::Horizontal => {
-                child1_len += delta;
+                geometry.first + delta
             }
-            Key::Named(NamedKey::ArrowUp) if self.axis == Axis::Vertical => {
-                child1_len -= delta;
-            }
+            Key::Named(NamedKey::ArrowUp) if self.axis == Axis::Vertical => geometry.first - delta,
             Key::Named(NamedKey::ArrowDown) if self.axis == Axis::Vertical => {
-                child1_len += delta;
+                geometry.first + delta
             }
-            Key::Named(NamedKey::Home) => {
-                child1_len = self.split_side_limits(split_space).0;
-            }
-            Key::Named(NamedKey::End) => {
-                child1_len = self.split_side_limits(split_space).1;
-            }
+            Key::Named(NamedKey::Home) => geometry.min,
+            Key::Named(NamedKey::End) => geometry.max,
             _ => return,
-        }
-
-        self.set_chosen_from_child1_len(split_space, child1_len);
-        ctx.request_layout();
+        };
+        self.move_split(ctx, geometry, first);
+        ctx.set_handled();
     }
 
     fn on_access_event(
@@ -543,37 +565,27 @@ where
         _props: &mut PropertiesMut<'_>,
         event: &AccessEvent,
     ) {
-        if ctx.is_disabled() || !self.draggable {
+        if ctx.is_disabled() || !self.draggable || ctx.target() != ctx.widget_id() {
             return;
         }
-
-        let length = ctx.content_box().size().get_coord(self.axis);
-        let bar_thickness = self.bar_thickness.get();
-        let split_space = (length - bar_thickness).max(0.0);
-        if split_space <= f64::EPSILON {
-            return;
-        }
-
-        let step = (split_space / 100.0).max(1.0);
-        let mut child1_len = split_space * self.effective_point;
-
-        match event.action {
-            accesskit::Action::Increment => child1_len += step,
-            accesskit::Action::Decrement => child1_len -= step,
+        let geometry = self.geometry(ctx.content_box().size().get_coord(self.axis));
+        let first = match event.action {
+            accesskit::Action::Increment => geometry.first + geometry.step(),
+            accesskit::Action::Decrement => geometry.first - geometry.step(),
             accesskit::Action::SetValue => match &event.data {
-                Some(ActionData::NumericValue(value)) => child1_len = *value,
+                Some(ActionData::NumericValue(value)) => *value,
                 Some(ActionData::Value(value)) => {
-                    if let Ok(value) = value.parse() {
-                        child1_len = value;
-                    }
+                    let Ok(value) = value.parse() else {
+                        return;
+                    };
+                    value
                 }
                 _ => return,
             },
             _ => return,
-        }
-
-        self.set_chosen_from_child1_len(split_space, child1_len);
-        ctx.request_layout();
+        };
+        self.move_split(ctx, geometry, first);
+        ctx.set_handled();
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
@@ -583,10 +595,17 @@ where
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
-            Update::FocusChanged(_)
+            Update::FocusChanged(false)
+            | Update::DisabledChanged(true)
+            | Update::StashedChanged(true)
+            | Update::ActiveChanged(false) => {
+                self.click_offset = None;
+                ctx.request_paint_only();
+            }
+            Update::FocusChanged(true)
             | Update::HoveredChanged(_)
-            | Update::ActiveChanged(_)
-            | Update::DisabledChanged(_) => {
+            | Update::ActiveChanged(true)
+            | Update::DisabledChanged(false) => {
                 ctx.request_paint_only();
             }
             _ => {}
@@ -617,13 +636,8 @@ where
             .map(|cross_length| {
                 // We need to split the cross length if it's our split axis
                 if cross == self.axis {
-                    let cross_space = cross_length.saturating_sub(self.bar_thickness);
-                    let split_point = self.calc_effective_split_point(cross_space.get());
-                    let child1_cross_space = (cross_space.get() * split_point).px();
-                    (
-                        child1_cross_space,
-                        cross_space.saturating_sub(child1_cross_space),
-                    )
+                    let geometry = self.geometry(cross_length.get());
+                    (geometry.first.px(), (geometry.space - geometry.first).px())
                 } else {
                     (cross_length, cross_length)
                 }
@@ -657,15 +671,10 @@ where
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let bar_thickness = self.bar_thickness.get();
-        let split_space = (size.get_coord(self.axis) - bar_thickness).max(0.);
+        let geometry = self.geometry(size.get_coord(self.axis));
         let cross_space = size.get_coord(self.axis.cross());
-
-        // Update our effective split point to respect our size
-        self.effective_point = self.calc_effective_split_point(split_space);
-
-        let child1_split_space = (split_space * self.effective_point).max(0.);
-        let child2_split_space = (split_space - child1_split_space).max(0.);
+        let child1_split_space = geometry.first;
+        let child2_split_space = geometry.space - geometry.first;
 
         let child1_size = self.axis.pack_size(child1_split_space, cross_space);
         let child2_size = self.axis.pack_size(child2_split_space, cross_space);
@@ -675,7 +684,7 @@ where
 
         // Top-left align both children.
         let child1_origin = Point::ORIGIN;
-        let child2_origin = self.axis.pack_point(child1_split_space + bar_thickness, 0.);
+        let child2_origin = self.axis.pack_point(child1_split_space + geometry.bar, 0.);
         ctx.place_child(&self.child1, child1_origin);
         ctx.place_child(&self.child2, child2_origin);
     }
@@ -687,6 +696,10 @@ where
         painter: &mut Painter<'_>,
     ) {
         // TODO - Paint differently if the bar is draggable and hovered.
+        let geometry = self.geometry(ctx.content_box().size().get_coord(self.axis));
+        if geometry.bar <= 0.0 {
+            return;
+        }
         let bar_color = self.bar_color(ctx);
         if self.solid {
             self.paint_solid_bar(ctx, painter, bar_color);
@@ -694,7 +707,7 @@ where
             self.paint_stroked_bar(ctx, painter, bar_color);
         }
 
-        if ctx.is_focus_target() && self.draggable && !ctx.is_disabled() {
+        if ctx.is_focus_target() && self.draggable && geometry.movable() && !ctx.is_disabled() {
             self.paint_focus_bar(ctx, painter);
         }
         // TODO: Child painting should probably be clipped, in such a way that
@@ -705,9 +718,14 @@ where
     fn get_cursor(&self, ctx: &QueryCtx<'_>, pos: Point) -> CursorIcon {
         let length = ctx.content_box().size().get_coord(self.axis);
         let local_pos = ctx.window_to_local(pos).get_coord(self.axis);
-        let is_bar_area_hovered = self.bar_area_hit_test(length, local_pos);
+        let geometry = self.geometry(length);
+        let is_bar_area_hovered = geometry.hit(self.min_bar_area, local_pos);
 
-        if self.draggable && (ctx.is_active() || is_bar_area_hovered) {
+        if self.draggable
+            && !ctx.is_disabled()
+            && geometry.movable()
+            && (self.click_offset.is_some() || is_bar_area_hovered)
+        {
             match self.axis {
                 Axis::Horizontal => CursorIcon::EwResize,
                 Axis::Vertical => CursorIcon::NsResize,
@@ -727,26 +745,26 @@ where
         _props: &PropertiesRef<'_>,
         node: &mut Node,
     ) {
-        let length = ctx.content_box().size().get_coord(self.axis);
-        let bar_thickness = self.bar_thickness.get();
-        let split_space = (length - bar_thickness).max(0.0);
-        let (min_limit, max_limit) = self.split_side_limits(split_space);
-        let child1_len = split_space * self.effective_point;
+        let geometry = self.geometry(ctx.content_box().size().get_coord(self.axis));
 
         node.set_orientation(match self.axis {
             Axis::Horizontal => accesskit::Orientation::Horizontal,
             Axis::Vertical => accesskit::Orientation::Vertical,
         });
-        node.set_value(child1_len.to_string());
-        node.set_numeric_value(child1_len);
-        node.set_min_numeric_value(min_limit);
-        node.set_max_numeric_value(max_limit);
-        node.set_numeric_value_step((split_space / 100.0).max(1.0));
+        node.set_value(geometry.first.to_string());
+        node.set_numeric_value(geometry.first);
+        node.set_min_numeric_value(geometry.min);
+        node.set_max_numeric_value(geometry.max);
+        node.set_numeric_value_step(geometry.step());
 
-        if self.draggable && !ctx.is_disabled() {
+        if self.draggable && !ctx.is_disabled() && geometry.movable() {
             node.add_action(accesskit::Action::SetValue);
-            node.add_action(accesskit::Action::Increment);
-            node.add_action(accesskit::Action::Decrement);
+            if geometry.first < geometry.max {
+                node.add_action(accesskit::Action::Increment);
+            }
+            if geometry.first > geometry.min {
+                node.add_action(accesskit::Action::Decrement);
+            }
         }
     }
 
@@ -769,6 +787,177 @@ mod tests {
     use crate::testing::{TestHarness, assert_render_snapshot};
     use crate::theme::test_property_set;
     use crate::widgets::Label;
+
+    #[test]
+    fn geometry_respects_allocations_and_infeasible_minima() {
+        for total in [0.0, 2.0, 6.0, 56.0, 206.0, f64::MAX] {
+            for minimums in [
+                (80.px(), 20.px()),
+                (0.px(), 100.px()),
+                (Length::ZERO, Length::ZERO),
+                (Length::px(f64::MAX), Length::px(f64::MAX)),
+            ] {
+                for point in [
+                    SplitPoint::Fraction(0.0),
+                    SplitPoint::Fraction(0.8),
+                    SplitPoint::Fraction(1.0),
+                    SplitPoint::FromStart(50.px()),
+                    SplitPoint::FromEnd(30.px()),
+                ] {
+                    let geometry = SplitGeometry::new(total, 6.px(), minimums, point);
+                    assert!(
+                        geometry.min >= 0.0
+                            && geometry.max <= geometry.space
+                            && geometry.min <= geometry.first
+                            && geometry.first <= geometry.max,
+                        "invalid split bounds for total {total}, minima {minimums:?}, point {point:?}"
+                    );
+                    let (start, end) = geometry.bar_edges();
+                    assert!(
+                        start >= 0.0 && end <= total && end >= start,
+                        "bar must fit inside allocation"
+                    );
+                    assert!((geometry.space + geometry.bar - total).abs() <= total * f64::EPSILON);
+                }
+            }
+        }
+        let geometry =
+            SplitGeometry::new(56.0, 6.px(), (80.px(), 20.px()), SplitPoint::Fraction(0.8));
+        assert_eq!(
+            geometry.first.to_bits(),
+            40.0_f64.to_bits(),
+            "infeasible minima compress proportionally"
+        );
+        assert!(!geometry.movable());
+    }
+
+    #[test]
+    fn resize_preserves_requested_policy_and_compact_geometry() {
+        use crate::properties::Dimensions;
+        use crate::widgets::SizedBox;
+        let widget = Split::new(SizedBox::empty().prepare(), SizedBox::empty().prepare())
+            .min_lengths(80.px(), 20.px())
+            .split_fraction(0.8)
+            .prepare()
+            .with_props(Dimensions::FIT);
+        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (56, 40));
+        let id = harness.root_id();
+        let check = |harness: &TestHarness<Split<SizedBox, SizedBox>>, expected: [f64; 2]| {
+            for (child, expected) in harness
+                .root_widget()
+                .unwrap()
+                .children()
+                .iter()
+                .zip(expected)
+            {
+                assert!(
+                    (child.ctx().border_box().width() - expected).abs() < 1e-8,
+                    "actual pane width differs from expected {expected}"
+                );
+            }
+        };
+        check(&harness, [40.0, 10.0]);
+        let _ = harness.redraw();
+        assert!(
+            !harness
+                .access_node(id)
+                .unwrap()
+                .data()
+                .supports_action(accesskit::Action::SetValue)
+        );
+        harness.process_window_event(WindowEvent::Resize(PhysicalSize::new(2, 40)));
+        check(&harness, [0.0, 0.0]);
+        let _ = harness.redraw();
+        harness.process_window_event(WindowEvent::Resize(PhysicalSize::new(206, 40)));
+        check(&harness, [160.0, 40.0]);
+        assert_eq!(
+            harness.root_widget().unwrap().chosen_point,
+            SplitPoint::Fraction(0.8),
+            "constraint must not overwrite preferred point"
+        );
+    }
+
+    #[test]
+    fn drag_release_and_focusability_follow_current_state() {
+        use crate::testing::PRIMARY_MOUSE;
+        use accesskit::{Action, ActionRequest, TreeId};
+        let widget = Split::new(
+            Label::new("First").prepare(),
+            Label::new("Second").prepare(),
+        )
+        .draggable(false)
+        .prepare();
+        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (150, 100));
+        let id = harness.root_id();
+        let focus_action = |action| ActionRequest {
+            action,
+            target_tree: TreeId::ROOT,
+            target_node: id.into(),
+            data: None,
+        };
+        let _ = harness.redraw();
+        assert!(
+            !harness
+                .access_node(id)
+                .unwrap()
+                .data()
+                .supports_action(Action::Focus)
+        );
+        harness.process_access_event(focus_action(Action::Focus));
+        assert_eq!(
+            harness.focused_widget_id(),
+            None,
+            "stale accessibility focus must not restore a noninteractive tab stop"
+        );
+        harness
+            .edit_root_widget(|mut split| Split::set_draggable(&mut split, true))
+            .unwrap();
+        let _ = harness.redraw();
+        assert!(
+            harness
+                .access_node(id)
+                .unwrap()
+                .data()
+                .supports_action(Action::Focus)
+        );
+        harness.mouse_move((75.0, 20.0));
+        harness.mouse_button_press(Some(PointerButton::Secondary));
+        assert_eq!(
+            harness.pointer_capture_target_id(),
+            None,
+            "secondary press cannot start dragging"
+        );
+        harness.mouse_button_release(Some(PointerButton::Secondary));
+        harness.mouse_button_press(None);
+        assert_eq!(harness.pointer_capture_target_id(), Some(id));
+        harness.process_pointer_event(&PointerEvent::Up(PointerButtonEvent {
+            pointer: PRIMARY_MOUSE,
+            button: None,
+            state: PointerState {
+                position: crate::dpi::PhysicalPosition::new(105.0, 20.0),
+                ..PointerState::default()
+            },
+        }));
+        assert!(
+            (harness.root_widget().unwrap().children()[0]
+                .ctx()
+                .border_box()
+                .width()
+                - 102.0)
+                .abs()
+                < 1e-8,
+            "final release position must move the bar"
+        );
+        assert_eq!(harness.focused_widget_id(), Some(id));
+        harness
+            .edit_root_widget(|mut split| Split::set_draggable(&mut split, false))
+            .unwrap();
+        let _ = harness.redraw();
+        assert_eq!(harness.focused_widget_id(), None);
+        let node = harness.access_node(id).unwrap();
+        assert!(!node.data().supports_action(Action::Focus));
+        assert!(!node.data().supports_action(Action::SetValue));
+    }
 
     #[test]
     fn columns() {

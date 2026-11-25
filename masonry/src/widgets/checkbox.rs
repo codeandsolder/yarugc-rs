@@ -5,13 +5,13 @@ use std::any::TypeId;
 
 use accesskit::{Node, Role, Toggled};
 use include_doc_path::include_doc_path;
-use tracing::{Span, trace, trace_span};
+use tracing::{Span, trace_span};
 
-use crate::core::keyboard::Key;
+use super::selection_control::{indicator_border, indicator_side};
 use crate::core::{
-    AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
-    PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, Property, RegisterCtx, TextEvent, Update,
-    UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
+    PropertiesMut, PropertiesRef, Property, RegisterCtx, Update, UpdateCtx, UsesProperty, Widget,
+    WidgetId, WidgetMut, WidgetPod,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, BezPath, Cap, Dashes, Join, Size, Stroke};
@@ -19,7 +19,6 @@ use crate::layout::{LenReq, Length};
 use crate::properties::{
     BorderColor, BorderWidth, CheckmarkColor, CheckmarkStrokeWidth, CornerRadius,
 };
-use crate::theme;
 use crate::widgets::Label;
 
 /// A checkbox that can be toggled.
@@ -39,6 +38,7 @@ use crate::widgets::Label;
 /// and ensure that its value is based on their correct source of truth.
 pub struct Checkbox {
     checked: bool,
+    activation: super::selection_control::Activation,
     // FIXME - Remove label child, have this widget only be a box with a checkmark.
     label: WidgetPod<Label>,
 }
@@ -49,6 +49,7 @@ impl Checkbox {
     pub fn new(checked: bool, text: impl Into<ArcStr>) -> Self {
         Self {
             checked,
+            activation: super::selection_control::Activation::new(),
             label: WidgetPod::new(Label::new(text)),
         }
     }
@@ -58,6 +59,7 @@ impl Checkbox {
     pub fn from_label(checked: bool, label: NewWidget<Label>) -> Self {
         Self {
             checked,
+            activation: super::selection_control::Activation::new(),
             label: label.into_pod(),
         }
     }
@@ -67,9 +69,10 @@ impl Checkbox {
 impl Checkbox {
     /// Checks or unchecks the box.
     pub fn set_checked(this: &mut WidgetMut<'_, Self>, checked: bool) {
-        this.widget.checked = checked;
-        // Checked state impacts appearance and accessibility node
-        this.ctx.request_render();
+        if this.widget.checked != checked {
+            this.widget.checked = checked;
+            this.ctx.request_render();
+        }
     }
 
     label_text_accessors!();
@@ -84,70 +87,33 @@ impl UsesProperty<CheckmarkColor> for Checkbox {}
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct CheckboxToggled(pub bool);
 
+impl Checkbox {
+    fn activate(&self, ctx: &mut EventCtx<'_>) {
+        ctx.submit_action::<CheckboxToggled>(CheckboxToggled(!self.checked));
+    }
+}
+
 // --- MARK: IMPL WIDGET
 impl Widget for Checkbox {
     type Action = CheckboxToggled;
 
-    fn on_pointer_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &PointerEvent,
-    ) {
-        match event {
-            PointerEvent::Down { .. } => {
-                ctx.capture_pointer();
-                trace!("Checkbox {:?} pressed", ctx.widget_id());
-            }
-            PointerEvent::Up { .. } if ctx.is_active() && ctx.is_hovered() => {
-                ctx.submit_action::<Self::Action>(CheckboxToggled(!self.checked));
-                trace!("Checkbox {:?} released", ctx.widget_id());
-            }
-            _ => (),
-        }
-    }
+    super::selection_control::activation_methods!();
 
-    fn on_text_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &TextEvent,
-    ) {
-        match event {
-            TextEvent::Keyboard(event) if event.state.is_up() => {
-                if matches!(&event.key, Key::Character(c) if c == " ") {
-                    ctx.submit_action::<Self::Action>(CheckboxToggled(!self.checked));
-                }
-            }
-            _ => (),
-        }
+    fn accepts_focus(&self) -> bool {
+        true
     }
 
     fn propagates_pointer_interaction(&self) -> bool {
         false
     }
 
-    fn accepts_focus(&self) -> bool {
-        true
-    }
-
-    fn on_access_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &AccessEvent,
-    ) {
-        match event.action {
-            accesskit::Action::Click => {
-                ctx.submit_action::<Self::Action>(CheckboxToggled(!self.checked));
-            }
-            _ => {}
-        }
-    }
-
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        self.activation.update(event);
         match event {
-            Update::HoveredChanged(_) | Update::FocusChanged(_) | Update::DisabledChanged(_) => {
+            Update::HoveredChanged(_)
+            | Update::ActiveChanged(_)
+            | Update::FocusChanged(_)
+            | Update::DisabledChanged(_) => {
                 ctx.request_paint_only();
             }
             _ => {}
@@ -179,12 +145,20 @@ impl Widget for Checkbox {
         props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
-        let side = theme::BASIC_WIDGET_HEIGHT.get();
+        let side = indicator_side(ctx.content_box().size());
+        if side <= 0.0 {
+            return;
+        }
         let check_size = Size::new(side, side);
 
         let cache = ctx.property_cache();
-        let border_width = *props.get::<BorderWidth>(cache);
-        let border_radius = *props.get::<CornerRadius>(cache);
+        let border_width = indicator_border(side, *props.get::<BorderWidth>(cache));
+        let border_radius = CornerRadius {
+            radius: props
+                .get::<CornerRadius>(cache)
+                .radius
+                .min(Length::px(side / 2.0)),
+        };
 
         let border_rect = border_width.border_rect(check_size.to_rect(), border_radius);
 
@@ -192,22 +166,36 @@ impl Widget for Checkbox {
 
         // Paint the checkbox box border
         let border_stroke = Stroke::new(border_width.width.get()).with_join(Join::Miter);
-        painter
-            .stroke(border_rect, &border_stroke, border_color.color)
-            .draw();
+        if border_width.width.get() > 0.0 {
+            painter
+                .stroke(border_rect, &border_stroke, border_color.color)
+                .draw();
+        }
 
         // Paint the checkmark if checked
         if self.checked {
             let checkmark_width = *props.get::<CheckmarkStrokeWidth>(cache);
             let brush = *props.get::<CheckmarkColor>(cache);
 
+            // The nominal checkmark is centered in an 18px square. Scale
+            // with constrained content and further fit it inside the border.
+            let interior = (-2.0_f64).mul_add(border_width.width.get(), side);
+            let stroke_width = (checkmark_width.width * (side / 18.0)).min(interior / 3.0);
+            if !checkmark_width.width.is_finite() || stroke_width <= 0.0 {
+                return;
+            }
+            let scale = (side / 18.0).min((interior - stroke_width) / 10.0);
+            let center = side / 2.0;
             let mut path = BezPath::new();
-            path.move_to((4.0, 9.0));
-            path.line_to((8.0, 13.0));
-            path.line_to((14.0, 5.0));
+            path.move_to(((-5.0_f64).mul_add(scale, center), center));
+            path.line_to((center - scale, 4.0_f64.mul_add(scale, center)));
+            path.line_to((
+                5.0_f64.mul_add(scale, center),
+                (-4.0_f64).mul_add(scale, center),
+            ));
 
             let style = Stroke {
-                width: checkmark_width.width,
+                width: stroke_width,
                 join: Join::Round,
                 miter_limit: 10.0,
                 start_cap: Cap::Round,
@@ -258,7 +246,7 @@ impl Widget for Checkbox {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{PropertySet, StyleProperty};
+    use crate::core::{PropertySet, StyleProperty, TextEvent, keyboard::Key};
     use crate::layout::AsUnit;
     use crate::properties::{ContentColor, Padding};
     use crate::testing::{TestHarness, TestHarnessParams, assert_render_snapshot};
@@ -282,6 +270,8 @@ mod tests {
             Some((CheckboxToggled(true), checkbox_id))
         );
 
+        assert_eq!(harness.focused_widget_id(), Some(checkbox_id));
+        harness.focus_on(None);
         assert_render_snapshot!(harness, "checkbox_hello_hovered");
 
         harness

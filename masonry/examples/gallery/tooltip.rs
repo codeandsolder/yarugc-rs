@@ -71,7 +71,10 @@ impl DemoPage for TooltipDemo {
                 .with_style(StyleProperty::FontSize(14.0))
                 .prepare(),
         ));
-        render_root.add_layer(tooltip.erased(), Point::new(320.0, 120.0));
+        render_root.add_layer(
+            tooltip.erased(),
+            masonry::core::LayerPlacement::Absolute(Point::new(320.0, 120.0)),
+        );
         Handled::Yes
     }
 }

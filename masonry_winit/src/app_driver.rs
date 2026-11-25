@@ -18,8 +18,7 @@ use crate::event_loop_runner::{NewWindow, Window, WindowCreationError};
 ///
 /// [`MasonryState`] internally maps these to winit window ids ([`winit::window::WindowId`]).
 /// Applications should only use this struct and not be concerned with the winit window ids.
-/// When the application is suspended and resumed this id will stay the same, while the
-/// winit window id will change.
+/// The identifier remains stable while the window is suspended and resumed.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct WindowId(pub(crate) NonZeroU64);
 
@@ -34,6 +33,17 @@ impl WindowId {
     #[must_use = "Use the identifier in a trace."]
     pub fn trace(self) -> DisplayValue<NonZeroU64> {
         tracing::field::display(self.0)
+    }
+}
+
+/// Identity of a GPU device incarnation, unique for the process lifetime.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct GpuDeviceId(pub(crate) NonZeroU64);
+
+impl GpuDeviceId {
+    pub(crate) fn next() -> Self {
+        static DEVICE_ID_COUNTER: IdAllocator = IdAllocator::new();
+        Self(DEVICE_ID_COUNTER.allocate())
     }
 }
 
@@ -56,6 +66,8 @@ impl<'a> DriverCtx<'a> {
 /// (textures, pipelines, etc.) using the same `Device`/`Queue` as Masonry.
 #[derive(Debug)]
 pub struct WgpuContext<'a> {
+    /// Stable identity of this device incarnation.
+    pub id: GpuDeviceId,
     /// The WGPU instance used by Masonry.
     pub instance: &'a wgpu::Instance,
     /// The WGPU adapter used to create the device.
@@ -109,24 +121,34 @@ pub trait AppDriver {
     ) {
     }
 
-    /// A hook which will be executed when the application starts, to allow initial configuration of the `MasonryState`.
+    /// Called exactly once, after the first resume and initial window setup.
     ///
-    /// Use cases include loading fonts.
-    ///
-    /// There are circumstances under which this will be called multiple times during the lifecycle of your app.
-    /// This is not intended to be the behaviour of Masonry Winit long-term, but this method should currently
-    /// not assume it will only be called once (but should feel free to waste work if it is called multiple times,
-    /// for example, as the mentioned circumstances are very rare).
-    // TODO: Turn into something like on window created, or split into two.
+    /// This is also called if the application starts without any windows.
     fn on_start(&mut self, state: &mut MasonryState) {}
+
+    /// Called once for every successfully created window, before its first
+    /// frame or any queued actions are delivered to the driver.
+    fn on_window_created(&mut self, window_id: WindowId, window: &mut Window) {}
+
+    /// Called when a queued window could not be created after resuming.
+    ///
+    /// Immediate creation failures are returned directly by the creation method.
+    fn on_window_creation_failed(&mut self, window_id: WindowId, error: &WindowCreationError) {}
 
     /// A hook called when a user has requested to close a window.
     fn on_close_requested(&mut self, window_id: WindowId, ctx: &mut DriverCtx<'_>) {
         ctx.exit();
     }
 
-    /// Called when Masonry has created its WGPU device.
+    /// Called before first use of each WGPU device.
+    ///
+    /// This also runs when a lost device has been replaced. Applications must
+    /// recreate device-specific resources for the supplied device and queue.
     fn on_wgpu_ready(&mut self, _wgpu: &WgpuContext<'_>) {}
+
+    /// Called once when a previously announced GPU device is lost.
+    /// Release application-owned resources associated with this identity.
+    fn on_wgpu_lost(&mut self, id: GpuDeviceId) {}
 }
 
 impl DriverCtx<'_> {

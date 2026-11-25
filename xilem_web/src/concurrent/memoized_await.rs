@@ -4,6 +4,7 @@
 use std::future::Future;
 use std::marker::PhantomData;
 
+use futures_util::future::{AbortHandle, Abortable};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, UnwrapThrowExt};
 use wasm_bindgen_futures::spawn_local;
@@ -53,14 +54,25 @@ where
         self
     }
 
-    fn init_future(&self, ctx: &mut ViewCtx, generation: u64) {
+    fn init_future(&self, ctx: &mut ViewCtx, generation: u64) -> AwaitPhase {
         ctx.with_id(ViewId::new(generation), |ctx| {
             let thunk = ctx.message_thunk();
             let future = (self.init_future)(&self.data);
+            let (handle, registration) = AbortHandle::new_pair();
             spawn_local(async move {
-                thunk.push_message(MemoizedAwaitMessage::<FOut>::Output(future.await));
+                // Cancellation is expected when a new request supersedes this one.
+                let _ = Abortable::new(
+                    async move {
+                        thunk.push_message(MemoizedAwaitMessage::<FOut>::Output(future.await));
+                    },
+                    registration,
+                )
+                .await;
             });
-        });
+            AwaitPhase::Running {
+                _task: RunningFuture(handle),
+            }
+        })
     }
 }
 
@@ -123,11 +135,21 @@ pub struct MemoizedAwaitState {
 enum AwaitPhase {
     #[default]
     Idle,
-    Running,
+    Running {
+        _task: RunningFuture,
+    },
     Scheduled {
         _timer: ScheduledUpdate,
     },
     Ready,
+}
+
+struct RunningFuture(AbortHandle);
+
+impl Drop for RunningFuture {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 struct ScheduledUpdate {
@@ -214,8 +236,7 @@ where
         if self.debounce_ms > 0 {
             state.schedule_update::<FOut>(ctx, self.debounce_ms);
         } else {
-            state.phase = AwaitPhase::Running;
-            self.init_future(ctx, state.generation);
+            state.phase = self.init_future(ctx, state.generation);
         }
 
         (NoElement, state)
@@ -234,8 +255,7 @@ where
             || prev.debounce_ms != self.debounce_ms;
         let data_changed = prev.data != self.data;
         if matches!(view_state.phase, AwaitPhase::Ready) {
-            view_state.phase = AwaitPhase::Running;
-            self.init_future(ctx, view_state.generation);
+            view_state.phase = self.init_future(ctx, view_state.generation);
             return;
         }
         if scheduled && !settings_changed && (!data_changed || !self.reset_debounce_on_update) {
@@ -248,8 +268,7 @@ where
             view_state.next_generation();
             view_state.phase = AwaitPhase::Idle;
             if self.debounce_ms == 0 {
-                view_state.phase = AwaitPhase::Running;
-                self.init_future(ctx, view_state.generation);
+                view_state.phase = self.init_future(ctx, view_state.generation);
             } else {
                 view_state.schedule_update::<FOut>(ctx, self.debounce_ms);
             }
@@ -280,7 +299,7 @@ where
             };
             match *payload {
                 MemoizedAwaitMessage::Output(future_output)
-                    if matches!(view_state.phase, AwaitPhase::Running) =>
+                    if matches!(view_state.phase, AwaitPhase::Running { .. }) =>
                 {
                     view_state.phase = AwaitPhase::Idle;
                     (self.callback)(app_state, future_output)

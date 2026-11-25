@@ -7,15 +7,16 @@ use accesskit::{Node, Role};
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, ArcStr, ChildrenIds, LayoutCtx, MeasureCtx, NoAction, PaintCtx, PropertiesMut,
-    PropertiesRef, Property, RegisterCtx, Update, UpdateCtx, UsesProperty, Widget, WidgetId,
-    WidgetMut,
+    AccessCtx, ArcStr, ChildrenIds, LayoutCtx, MeasureCtx, NoAction, PaintCtx, PropertiesRef,
+    Property, RegisterCtx, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Size};
 use crate::layout::{LenReq, Length};
 use crate::peniko::ImageBrush;
 use crate::properties::ObjectFit;
+
+use super::image_common::{image_metadata_methods, image_widget_methods};
 
 // TODO: Make this a configurable option of the widget.
 /// The scale that the image is native to.
@@ -90,26 +91,21 @@ impl Image {
     /// Sets new `ImageBrush`.
     #[inline]
     pub fn set_brush(this: &mut WidgetMut<'_, Self>, brush: impl Into<ImageBrush>) {
-        this.widget.brush = brush.into();
-        this.ctx.request_layout();
+        let brush = brush.into();
+        if this.widget.brush == brush {
+            return;
+        }
+        let dimensions_changed = this.widget.brush.image.width != brush.image.width
+            || this.widget.brush.image.height != brush.image.height;
+        this.widget.brush = brush;
+        if dimensions_changed {
+            this.ctx.request_layout();
+        } else {
+            this.ctx.request_paint_only();
+        }
     }
 
-    /// Sets whether the image is decorative, meaning it doesn't have meaningful content
-    /// and is only for visual presentation.
-    ///
-    /// See [`Image::decorative`] for details.
-    pub fn set_decorative(this: &mut WidgetMut<'_, Self>, is_decorative: bool) {
-        this.widget.decorative = is_decorative;
-        this.ctx.request_accessibility_update();
-    }
-
-    /// Sets the text that will describe the image to screen readers.
-    ///
-    /// See [`Image::with_alt_text`] for details.
-    pub fn set_alt_text(this: &mut WidgetMut<'_, Self>, alt_text: Option<impl Into<ArcStr>>) {
-        this.widget.alt_text = alt_text.map(Into::into);
-        this.ctx.request_accessibility_update();
-    }
+    image_metadata_methods!();
 }
 
 impl Image {
@@ -133,36 +129,7 @@ impl UsesProperty<ObjectFit> for Image {}
 impl Widget for Image {
     type Action = NoAction;
 
-    fn register_children(&mut self, _ctx: &mut RegisterCtx<'_>) {}
-
-    fn property_changed(&mut self, ctx: &mut UpdateCtx<'_>, property_type: TypeId) {
-        if ObjectFit::matches(property_type) {
-            ctx.request_layout();
-        }
-    }
-
-    fn update(
-        &mut self,
-        _ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &Update,
-    ) {
-    }
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        props: &PropertiesRef<'_>,
-        axis: Axis,
-        len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        let cache = ctx.property_cache();
-        let object_fit = props.get::<ObjectFit>(cache);
-        let preferred_size = self.preferred_size();
-
-        object_fit.measure(axis, len_req, cross_length, preferred_size)
-    }
+    image_widget_methods!();
 
     fn layout(&mut self, _ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, _size: Size) {}
 
@@ -181,33 +148,14 @@ impl Widget for Image {
             f64::from(self.brush.image.width),
             f64::from(self.brush.image.height),
         );
+        if image_size.is_zero_area() || content_box.is_zero_area() {
+            return;
+        }
         let transform = object_fit.affine(content_box, image_size.to_rect());
 
         painter.with_fill_clip(content_box, |painter| {
             painter.draw_image(&self.brush, transform);
         });
-    }
-
-    fn accessibility_role(&self) -> Role {
-        Role::Image
-    }
-
-    fn accessibility(
-        &mut self,
-        _ctx: &mut AccessCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        node: &mut Node,
-    ) {
-        if let Some(alt_text) = &self.alt_text {
-            node.set_description(&**alt_text);
-        }
-        if self.decorative {
-            node.set_hidden();
-        }
-    }
-
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::new()
     }
 
     fn make_trace_span(&self, id: WidgetId) -> Span {
@@ -270,6 +218,56 @@ mod tests {
         let mut harness =
             TestHarness::create_with_size(test_property_set(), image_widget, (40, 60));
         assert_render_snapshot!(harness, "image_tall_paint");
+    }
+
+    #[test]
+    fn same_size_image_updates_do_not_relayout_the_parent() {
+        use crate::core::WidgetTag;
+        use crate::kurbo::Point;
+        use crate::layout::SizeDef;
+        use crate::testing::ModularWidget;
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let image = |width: u32, color: [u8; 4]| ImageData {
+            data: color.repeat(usize::try_from(width).unwrap()).into(),
+            format: ImageFormat::Rgba8,
+            alpha_type: ImageAlphaType::Alpha,
+            width,
+            height: 1,
+        };
+        let original = image(1, [255, 0, 0, 255]);
+        let tag = WidgetTag::unique();
+        let layouts = Rc::new(Cell::new(0));
+        let count = layouts.clone();
+        let parent =
+            ModularWidget::new_parent(Image::new(original.clone()).prepare().with_tag(tag))
+                .layout_fn(move |child, ctx, _, size| {
+                    count.set(count.get() + 1);
+                    let child_size = ctx.compute_size(child, SizeDef::fit(size), size.into());
+                    ctx.run_layout(child, child_size);
+                    ctx.place_child(child, Point::ORIGIN);
+                });
+        let mut harness = TestHarness::create(test_property_set(), parent.prepare());
+        let before = harness.render().unwrap();
+        let initial_layouts = layouts.get();
+        harness
+            .edit_widget(tag, |mut widget| Image::set_brush(&mut widget, original))
+            .unwrap();
+        assert_eq!(layouts.get(), initial_layouts);
+        harness
+            .edit_widget(tag, |mut widget| {
+                Image::set_brush(&mut widget, image(1, [0, 0, 255, 255]))
+            })
+            .unwrap();
+        assert_eq!(layouts.get(), initial_layouts);
+        assert!(harness.render().unwrap() != before);
+        harness
+            .edit_widget(tag, |mut widget| {
+                Image::set_brush(&mut widget, image(2, [0, 0, 255, 255]))
+            })
+            .unwrap();
+        assert!(layouts.get() > initial_layouts);
     }
 
     #[test]

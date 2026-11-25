@@ -31,6 +31,7 @@ peniko.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 imaging_wgpu.workspace = true
+thiserror = "2.0.18"
 imaging_vello = { workspace = true, optional = true }
 imaging_vello_hybrid = { workspace = true, optional = true }
 imaging_skia = { workspace = true, optional = true }

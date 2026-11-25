@@ -4,15 +4,15 @@
 use std::any::TypeId;
 use std::sync::Arc;
 
-use accesskit::{Node, Role};
+use accesskit::{AriaCurrent, Node, Role};
 use include_doc_path::include_doc_path;
-use tracing::{Span, trace, trace_span};
+use tracing::{Span, trace_span};
 
-use crate::core::keyboard::{Key, NamedKey};
+use super::selection_control::{Activation, ActivationButtons, ActivationKeys};
 use crate::core::pointer::PointerButton;
 use crate::core::{
-    AccessCtx, AccessEvent, EventCtx, NewWidget, PointerButtonEvent, PointerEvent, PropertiesMut,
-    PropertiesRef, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetPod,
+    AccessCtx, AccessEvent, EventCtx, NewWidget, PointerEvent, PropertiesMut, PropertiesRef,
+    TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::layout::{Length, UnitPoint};
 use crate::theme;
@@ -29,6 +29,8 @@ use crate::widgets::Label;
 )]
 pub struct Button {
     child: WidgetPod<dyn Widget>,
+    activation: Activation,
+    aria_current: Option<AriaCurrent>,
 }
 
 // --- MARK: BUILDERS
@@ -50,7 +52,16 @@ impl Button {
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
             child: child.erased().into_pod(),
+            activation: Activation::new(),
+            aria_current: None,
         }
+    }
+
+    /// Marks this button as the current item in a navigation or related set.
+    #[must_use = "Use the configured button."]
+    pub const fn with_aria_current(mut self, current: AriaCurrent) -> Self {
+        self.aria_current = Some(current);
+        self
     }
 
     /// Creates a new button with a label widget.
@@ -71,6 +82,14 @@ impl Button {
 // --- MARK: WIDGETMUT
 impl Button {
     child_accessors!(child, set_child, child_mut, erased);
+
+    /// Sets the accessible current-item state independently of enabled state.
+    pub fn set_aria_current(this: &mut WidgetMut<'_, Self>, current: Option<AriaCurrent>) {
+        if this.widget.aria_current != current {
+            this.widget.aria_current = current;
+            this.ctx.request_accessibility_update();
+        }
+    }
 }
 
 /// A button was pressed.
@@ -99,23 +118,10 @@ impl Widget for Button {
         _props: &mut PropertiesMut<'_>,
         event: &PointerEvent,
     ) {
-        match event {
-            PointerEvent::Down(..) => {
-                ctx.request_focus();
-                ctx.capture_pointer();
-                // Changes in pointer capture impact appearance, but not accessibility node
-                ctx.request_paint_only();
-                trace!("Button {:?} pressed", ctx.widget_id());
-            }
-            PointerEvent::Up(PointerButtonEvent { button, .. }) => {
-                if ctx.is_active() && ctx.is_hovered() {
-                    ctx.submit_action::<Self::Action>(ButtonPress { button: *button });
-                    trace!("Button {:?} released", ctx.widget_id());
-                }
-                // Changes in pointer capture impact appearance, but not accessibility node
-                ctx.request_paint_only();
-            }
-            _ => (),
+        if let Some(release) = Activation::pointer_event(ctx, event, ActivationButtons::Any) {
+            ctx.submit_action::<Self::Action>(ButtonPress {
+                button: release.button,
+            });
         }
     }
 
@@ -125,15 +131,11 @@ impl Widget for Button {
         _props: &mut PropertiesMut<'_>,
         event: &TextEvent,
     ) {
-        match event {
-            TextEvent::Keyboard(event)
-                if event.state.is_up()
-                    && (matches!(&event.key, Key::Character(c) if c == " ")
-                        || event.key == Key::Named(NamedKey::Enter)) =>
-            {
-                ctx.submit_action::<Self::Action>(ButtonPress { button: None });
-            }
-            _ => (),
+        if self
+            .activation
+            .keyboard_with_keys(ctx, event, ActivationKeys::SpaceOrEnter)
+        {
+            ctx.submit_action::<Self::Action>(ButtonPress { button: None });
         }
     }
 
@@ -143,20 +145,13 @@ impl Widget for Button {
         _props: &mut PropertiesMut<'_>,
         event: &AccessEvent,
     ) {
-        match event.action {
-            accesskit::Action::Click => {
-                ctx.submit_action::<Self::Action>(ButtonPress { button: None });
-            }
-            _ => {}
+        if Activation::access(ctx, event) {
+            ctx.submit_action::<Self::Action>(ButtonPress { button: None });
         }
     }
 
-    fn update(
-        &mut self,
-        _ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &Update,
-    ) {
+    fn update(&mut self, _ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        self.activation.update(event);
     }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: TypeId) {}
@@ -171,6 +166,9 @@ impl Widget for Button {
         _props: &PropertiesRef<'_>,
         node: &mut Node,
     ) {
+        if let Some(current) = self.aria_current {
+            node.set_aria_current(current);
+        }
         node.add_action(accesskit::Action::Click);
     }
 
@@ -196,6 +194,7 @@ mod tests {
     use std::assert_matches;
 
     use super::*;
+    use crate::core::keyboard::{Key, NamedKey};
     use crate::core::{CollectionWidget, PointerButton, PropertySet, StyleProperty};
     use crate::layout::AsUnit;
     use crate::properties::{
@@ -240,6 +239,65 @@ mod tests {
         harness.process_text_event(&TextEvent::key_up(Key::Character(" ".into())));
         assert_eq!(
             harness.pop_action().unwrap(),
+            Some((ButtonPress { button: None }, button_id))
+        );
+    }
+
+    #[test]
+    fn activation_requires_a_matching_focused_key_press() {
+        let mut harness =
+            TestHarness::create(test_property_set(), Button::with_text("Button").prepare());
+        let id = harness.root_id();
+        harness.focus_on(Some(id));
+        for key in [Key::Character(" ".into()), Key::Named(NamedKey::Enter)] {
+            let press = TextEvent::key_down(key.clone());
+            let release = TextEvent::key_up(key);
+            harness.process_text_event(&release);
+            assert!(harness.pop_action_erased().is_none());
+            harness.process_text_event(&press);
+            harness.process_text_event(&TextEvent::WindowFocusChange(false));
+            harness.process_text_event(&TextEvent::WindowFocusChange(true));
+            harness.process_text_event(&release);
+            assert!(harness.pop_action_erased().is_none());
+            harness.process_text_event(&press);
+            harness.process_text_event(&release);
+            assert_eq!(
+                harness.pop_action::<ButtonPress>().unwrap(),
+                Some((ButtonPress { button: None }, id))
+            );
+        }
+        harness
+            .mouse_click_on(id, Some(PointerButton::Secondary))
+            .unwrap();
+        assert_eq!(
+            harness.pop_action::<ButtonPress>().unwrap(),
+            Some((
+                ButtonPress {
+                    button: Some(PointerButton::Secondary)
+                },
+                id
+            ))
+        );
+    }
+
+    #[test]
+    fn accessible_click_targets_only_the_intended_control() {
+        use accesskit::{Action, ActionRequest, TreeId};
+        let label = Label::new("Button").prepare();
+        let label_id = label.id();
+        let mut harness = TestHarness::create(test_property_set(), Button::new(label).prepare());
+        let button_id = harness.root_id();
+        let click = |id: WidgetId| ActionRequest {
+            action: Action::Click,
+            target_tree: TreeId::ROOT,
+            target_node: id.into(),
+            data: None,
+        };
+        harness.process_access_event(click(label_id));
+        assert!(harness.pop_action_erased().is_none());
+        harness.process_access_event(click(button_id));
+        assert_eq!(
+            harness.pop_action::<ButtonPress>().unwrap(),
             Some((ButtonPress { button: None }, button_id))
         );
     }

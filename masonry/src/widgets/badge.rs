@@ -147,6 +147,14 @@ impl Widget for Badge {
         }
     }
 
+    fn accepts_pointer_interaction(&self) -> bool {
+        false
+    }
+
+    fn propagates_pointer_interaction(&self) -> bool {
+        false
+    }
+
     fn accessibility_role(&self) -> Role {
         Role::GenericContainer
     }
@@ -181,7 +189,10 @@ mod tests {
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (80, 40));
         let badge_id = harness.root_id();
 
-        harness.mouse_click_on(badge_id, None).unwrap();
+        assert!(harness.mouse_move_to(badge_id).is_err());
+        harness.mouse_move_to_unchecked(badge_id).unwrap();
+        harness.mouse_button_press(None);
+        harness.mouse_button_release(None);
         assert!(harness.pop_action_erased().is_none());
         assert!(harness.focused_widget().is_none());
     }

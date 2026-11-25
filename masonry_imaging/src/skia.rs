@@ -13,12 +13,18 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Backend(err) => write!(f, "Skia render failed: {err:?}"),
+            Self::Backend(err) => write!(f, "Skia render failed: {err}"),
         }
     }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Backend(err) => Some(err),
+        }
+    }
+}
 
 /// Stable backend name for diagnostics.
 pub const BACKEND_NAME: &str = "imaging_skia";

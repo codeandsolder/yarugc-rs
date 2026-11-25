@@ -3,17 +3,20 @@
 
 use std::collections::HashSet;
 
+use kurbo::Rect;
 use tracing::{info_span, trace};
 use tree_arena::{ArenaMut, ArenaMutList, ArenaRef};
 use ui_events::pointer::PointerType;
 
 use crate::app::{RenderRoot, RenderRootSignal, RenderRootState};
 use crate::core::{
-    ClassSetDiff, CursorIcon, DefaultProperties, Ime, PointerEvent, PointerInfo, PropertiesMut,
-    PropertyArena, PropertyCache, PseudoClass, RegisterCtx, TextEvent, Update, UpdateCtx, Widget,
+    ClassSetDiff, CursorIcon, DefaultProperties, PointerEvent, PointerInfo, PropertiesMut,
+    PropertyArena, PropertyCache, PseudoClass, RegisterCtx, Update, UpdateCtx, Widget,
     WidgetArenaNode, WidgetId, WidgetState,
 };
-use crate::passes::event::{run_on_pointer_event_pass, run_on_text_event_pass};
+use crate::passes::compose::run_compose_pass;
+use crate::passes::event::{end_ime_session, run_on_pointer_event_pass};
+use crate::passes::layout::run_layout_pass;
 use crate::passes::{enter_span, enter_span_if, merge_state_up, recurse_on_children};
 use crate::properties::core_property_changed;
 use crate::util::ParentLinkedList;
@@ -45,60 +48,14 @@ fn dummy_pointer_cancel() -> PointerEvent {
     })
 }
 
-fn run_targeted_update_pass(
+// Construct the same update context for single-node and ancestor-chain passes.
+fn update_widget(
     root: &mut RenderRoot,
-    target: Option<WidgetId>,
-    mut pass_fn: impl FnMut(&mut dyn Widget, &mut UpdateCtx<'_>, &mut PropertiesMut<'_>),
-) {
-    let mut current_id = target;
-    while let Some(widget_id) = current_id {
-        let parent_id = root.widget_arena.parent_of(widget_id);
-        let Some(node) = root.widget_arena.nodes.find_mut(widget_id) else {
-            break;
-        };
-
-        let children = node.children;
-        let widget = &mut *node.item.widget;
-        let state = &mut node.item.state;
-        let properties = &mut node.item.properties;
-        let class_set = &node.item.class_set;
-        let stack = root
-            .property_arena
-            .get(state.property_stack_id, widget.type_id());
-
-        let mut ctx = UpdateCtx {
-            global_state: &mut root.global_state,
-            widget_state: state,
-            children,
-            ancestors: None,
-            property_arena: &root.property_arena,
-        };
-        let mut props = PropertiesMut {
-            local: properties,
-            default_map: root
-                .property_arena
-                .default_properties
-                .for_widget(widget.type_id()),
-            stack,
-            class_set,
-        };
-        pass_fn(widget, &mut ctx, &mut props);
-
-        merge_state_up(&mut root.widget_arena, widget_id);
-        current_id = parent_id;
-    }
-}
-
-fn run_single_update_pass(
-    root: &mut RenderRoot,
-    target: Option<WidgetId>,
-    mut pass_fn: impl FnMut(&mut dyn Widget, &mut UpdateCtx<'_>, &mut PropertiesMut<'_>),
-) {
-    let Some(target) = target else {
-        return;
-    };
+    target: WidgetId,
+    pass_fn: &mut impl FnMut(&mut dyn Widget, &mut UpdateCtx<'_>, &mut PropertiesMut<'_>),
+) -> bool {
     let Some(node) = root.widget_arena.nodes.find_mut(target) else {
-        return;
+        return false;
     };
 
     let children = node.children;
@@ -127,7 +84,36 @@ fn run_single_update_pass(
         class_set,
     };
     pass_fn(widget, &mut ctx, &mut props);
+    true
+}
 
+fn run_targeted_update_pass(
+    root: &mut RenderRoot,
+    target: Option<WidgetId>,
+    mut pass_fn: impl FnMut(&mut dyn Widget, &mut UpdateCtx<'_>, &mut PropertiesMut<'_>),
+) {
+    let mut current_id = target;
+    while let Some(widget_id) = current_id {
+        let parent_id = root.widget_arena.parent_of(widget_id);
+        if !update_widget(root, widget_id, &mut pass_fn) {
+            break;
+        }
+        merge_state_up(&mut root.widget_arena, widget_id);
+        current_id = parent_id;
+    }
+}
+
+fn run_single_update_pass(
+    root: &mut RenderRoot,
+    target: Option<WidgetId>,
+    mut pass_fn: impl FnMut(&mut dyn Widget, &mut UpdateCtx<'_>, &mut PropertiesMut<'_>),
+) {
+    let Some(target) = target else {
+        return;
+    };
+    if !update_widget(root, target, &mut pass_fn) {
+        return;
+    }
     let mut current_id = Some(target);
     while let Some(widget_id) = current_id {
         merge_state_up(&mut root.widget_arena, widget_id);
@@ -164,6 +150,11 @@ impl PathStatus {
                 Self::Hovered => Update::ChildHoveredChanged(value),
                 Self::Focused => Update::ChildFocusChanged(value),
             };
+            match self {
+                Self::Active => ctx.widget_state.set_has_active(value),
+                Self::Hovered => ctx.widget_state.set_has_hovered(value),
+                Self::Focused => ctx.widget_state.set_has_focus_target(value),
+            }
             widget.update(ctx, props, &event);
             if matches!(self, Self::Focused) {
                 ctx.widget_state
@@ -173,11 +164,6 @@ impl PathStatus {
                 ctx.widget_state.set_request_update_props(true);
                 ctx.widget_state.set_needs_update_props(true);
             }
-        }
-        match self {
-            Self::Active => ctx.widget_state.set_has_active(value),
-            Self::Hovered => ctx.widget_state.set_has_hovered(value),
-            Self::Focused => ctx.widget_state.set_has_focus_target(value),
         }
     }
 }
@@ -428,169 +414,152 @@ fn notify_inherited_state_change(
     widget.update(&mut ctx, &mut props, event);
 }
 
-// --- MARK: DISABLED
-/// See the [passes documentation](crate::doc::pass_system#update-passes).
-/// See the [disabled status documentation](../doc/06_masonry_concepts.md#disabled).
-fn update_disabled_for_widget(
+// --- MARK: INHERITED STATE
+// Both flags inherit from ancestors. Only their side effects differ.
+#[derive(Clone, Copy)]
+enum InheritedStatus {
+    Disabled,
+    Stashed,
+}
+
+impl InheritedStatus {
+    const fn explicit(self, state: &WidgetState) -> bool {
+        match self {
+            Self::Disabled => state.is_explicitly_disabled(),
+            Self::Stashed => state.is_explicitly_stashed(),
+        }
+    }
+
+    const fn effective(self, state: &WidgetState) -> bool {
+        match self {
+            Self::Disabled => state.is_disabled(),
+            Self::Stashed => state.is_stashed(),
+        }
+    }
+
+    const fn pending(self, state: &WidgetState) -> bool {
+        match self {
+            Self::Disabled => state.needs_update_disabled(),
+            Self::Stashed => state.needs_update_stashed(),
+        }
+    }
+
+    const fn consume(self, state: &mut WidgetState) {
+        match self {
+            Self::Disabled => state.set_needs_update_disabled(false),
+            Self::Stashed => state.set_needs_update_stashed(false),
+        }
+    }
+
+    fn change(self, state: &mut WidgetState, value: bool) -> Update {
+        state.set_needs_update_focusable(true);
+        match self {
+            Self::Disabled => {
+                state.set_is_disabled(value);
+                state.class_diff.pseudo.set(PseudoClass::Disabled, value);
+                state.set_request_update_props(true);
+                state.set_needs_update_props(true);
+                state.set_request_accessibility(true);
+                state.set_needs_accessibility(true);
+                Update::DisabledChanged(value)
+            }
+            Self::Stashed => {
+                state.set_is_stashed(value);
+                if !value {
+                    // Hidden widgets can have changed since their last layout.
+                    state.set_needs_layout(true);
+                    state.set_request_layout(true);
+                    state.set_request_paint(true);
+                    state.set_needs_paint(true);
+                    state.set_needs_accessibility(true);
+                    state.set_request_accessibility(true);
+                }
+                Update::StashedChanged(value)
+            }
+        }
+    }
+
+    const fn invalidate_parent(self, parent: &mut WidgetState) {
+        if matches!(self, Self::Stashed) {
+            // The visible child list and union of paint bounds both changed.
+            parent.set_request_accessibility(true);
+            parent.set_needs_accessibility(true);
+            parent.set_needs_paint(true);
+            parent.set_needs_compose(true);
+        }
+    }
+}
+
+fn update_inherited_status(
     global_state: &mut RenderRootState,
-    default_properties: &DefaultProperties,
     property_arena: &PropertyArena,
     node: ArenaMut<'_, WidgetArenaNode>,
-    parent_disabled: bool,
-) {
+    status: InheritedStatus,
+    parent_value: bool,
+) -> bool {
     let mut children = node.children;
     let widget = &mut *node.item.widget;
     let state = &mut node.item.state;
-    let properties = &mut node.item.properties;
-    let class_set = &node.item.class_set;
-    let id = state.id;
-
-    let _span = enter_span(state);
-
-    let disabled = state.is_explicitly_disabled() || parent_disabled;
-    if !state.needs_update_disabled() && disabled == state.is_disabled() {
-        return;
+    let value = status.explicit(state) || parent_value;
+    let changed = value != status.effective(state);
+    if !changed && !status.pending(state) {
+        return false;
     }
-
-    if disabled != state.is_disabled() {
+    let _span = enter_span(state);
+    status.consume(state);
+    if changed {
+        let event = status.change(state, value);
         notify_inherited_state_change(
             global_state,
-            default_properties,
+            &property_arena.default_properties,
             property_arena,
             state,
             children.reborrow_mut(),
-            (widget, properties, class_set),
-            &Update::DisabledChanged(disabled),
+            (widget, &mut node.item.properties, &node.item.class_set),
+            &event,
         );
-        state.set_is_disabled(disabled);
-        state.class_diff.pseudo.set(PseudoClass::Disabled, disabled);
-        state.set_request_update_props(true);
-        state.set_needs_update_props(true);
-        state.set_needs_update_focusable(true);
-        state.set_request_accessibility(true);
-        state.set_needs_accessibility(true);
     }
 
-    state.set_needs_update_disabled(false);
-
-    let parent_state = state;
-    recurse_on_children(id, widget, children, |mut node| {
-        update_disabled_for_widget(
+    recurse_on_children(state.id, widget, children, |mut node| {
+        if update_inherited_status(
             global_state,
-            default_properties,
             property_arena,
             node.reborrow_mut(),
-            disabled,
-        );
-        parent_state.merge_up(&node.item.state);
+            status,
+            value,
+        ) {
+            status.invalidate_parent(state);
+        }
+        state.merge_up(&node.item.state);
     });
+    changed
+}
+
+fn run_inherited_status_pass(root: &mut RenderRoot, status: InheritedStatus) {
+    if !root.root_state().is_some_and(|state| status.pending(state)) {
+        return;
+    }
+    // Effective visibility and disabled state both affect hit testing.
+    root.global_state.set_needs_pointer_pass(true);
+    if let Some(root_node) = root.widget_arena.nodes.find_mut(root.root_id()) {
+        update_inherited_status(
+            &mut root.global_state,
+            &root.property_arena,
+            root_node,
+            status,
+            false,
+        );
+    }
 }
 
 pub(crate) fn run_update_disabled_pass(root: &mut RenderRoot) {
     let _span = info_span!("update_disabled").entered();
-
-    // If a widget was enabled or disabled, the pointer icon may need to change.
-    if root
-        .root_state()
-        .is_some_and(WidgetState::needs_update_disabled)
-    {
-        root.global_state.set_needs_pointer_pass(true);
-    }
-
-    let Some(root_node) = root.widget_arena.nodes.find_mut(root.root_id()) else {
-        return;
-    };
-    update_disabled_for_widget(
-        &mut root.global_state,
-        &root.property_arena.default_properties,
-        &root.property_arena,
-        root_node,
-        false,
-    );
-}
-
-// ----------------
-
-// *Stashed* is for widgets that are no longer "part of the graph". So they can't get keyboard events, don't get painted, etc, but should keep some state.
-// Scrolled-out widgets are *not* stashed.
-
-// --- MARK: STASHED
-/// See the [passes documentation](crate::doc::pass_system#update-passes).
-/// See the [stashed status documentation](../doc/06_masonry_concepts.md#stashed).
-fn update_stashed_for_widget(
-    global_state: &mut RenderRootState,
-    default_properties: &DefaultProperties,
-    property_arena: &PropertyArena,
-    node: ArenaMut<'_, WidgetArenaNode>,
-    parent_stashed: bool,
-) {
-    let mut children = node.children;
-    let widget = &mut *node.item.widget;
-    let state = &mut node.item.state;
-    let properties = &mut node.item.properties;
-    let class_set = &node.item.class_set;
-    let id = state.id;
-
-    let _span = enter_span(state);
-
-    let stashed = state.is_explicitly_stashed() || parent_stashed;
-    if !state.needs_update_stashed() && stashed == state.is_stashed() {
-        return;
-    }
-
-    if stashed != state.is_stashed() {
-        notify_inherited_state_change(
-            global_state,
-            default_properties,
-            property_arena,
-            state,
-            children.reborrow_mut(),
-            (widget, properties, class_set),
-            &Update::StashedChanged(stashed),
-        );
-        state.set_is_stashed(stashed);
-        state.set_needs_update_focusable(true);
-
-        // Items may have been changed while they were stashed in ways that require a
-        // relayout and a re-render.
-        if !stashed {
-            state.set_needs_layout(true);
-            state.set_request_layout(true);
-            state.set_request_paint(true);
-            state.set_needs_paint(true);
-            state.set_needs_accessibility(true);
-            state.set_request_accessibility(true);
-        }
-    }
-
-    state.set_needs_update_stashed(false);
-
-    let parent_state = state;
-    recurse_on_children(id, widget, children, |mut node| {
-        update_stashed_for_widget(
-            global_state,
-            default_properties,
-            property_arena,
-            node.reborrow_mut(),
-            stashed,
-        );
-        parent_state.merge_up(&node.item.state);
-    });
+    run_inherited_status_pass(root, InheritedStatus::Disabled);
 }
 
 pub(crate) fn run_update_stashed_pass(root: &mut RenderRoot) {
     let _span = info_span!("update_stashed").entered();
-
-    let Some(root_node) = root.widget_arena.nodes.find_mut(root.root_id()) else {
-        return;
-    };
-    update_stashed_for_widget(
-        &mut root.global_state,
-        &root.property_arena.default_properties,
-        &root.property_arena,
-        root_node,
-        false,
-    );
+    run_inherited_status_pass(root, InheritedStatus::Stashed);
 }
 
 // ----------------
@@ -737,54 +706,22 @@ pub(crate) fn run_update_focus_pass(root: &mut RenderRoot) {
     }
 
     let prev_focused = root.global_state.focused_widget;
-    let was_ime_active = root.global_state.is_ime_active();
 
-    if was_ime_active && prev_focused != root.global_state.next_focused_widget {
-        // IME was active, but the next focused widget is going to receive the Ime::Disabled event
-        // sent by the platform. Synthesize an `Ime::Disabled` event here and send it to the widget
-        // about to be unfocused.
-
-        // HACK: It's not valid to send an event to a non-existent widget, so we check that the "previously"
-        // focused widget hasn't just been deleted.
-        // This means that if a parent widget was handling IME events, it won't get this event.
-        // We know that IME events bubbling is not the correct behaviour, but have chosen to keep it for consistency,
-        // as we also are planning to refactor how IME is delivered as we update to use Android View.
-        if let Some(prev_focused) = prev_focused
-            && root.has_widget(prev_focused)
-        {
-            run_on_text_event_pass(root, &TextEvent::Ime(Ime::Disabled));
-        }
-
-        // Disable the IME, which was enabled specifically for this widget. Note that if the newly
-        // focused widget also requires IME, we will request it again - this resets the platform's
-        // state, ensuring that partial IME inputs do not "travel" between widgets
-        root.global_state.emit_signal(RenderRootSignal::EndIme);
-
-        // Note: handling of the Ime::Disabled event sent above may have changed the next focused
-        // widget. In particular, focus may have changed back to the original widget we just
-        // disabled IME for.
-        //
-        // In this unlikely case, the rest of this handler will short-circuit, and IME would not be
-        // re-enabled for this widget. Re-enable IME here; the resultant `Ime::Enabled` event sent
-        // by the platform will be routed to this widget as it remains the focused widget. We don't
-        // handle this as above to avoid loops.
-        //
-        // First do the disabled, stashed or removed check again.
+    if root.global_state.is_ime_active()
+        && (prev_focused != root.global_state.next_focused_widget
+            || !root.global_state.window_focused())
+    {
+        end_ime_session(root);
+        // The owner may request a different focus while processing Disabled.
         if let Some(id) = root.global_state.next_focused_widget
             && !root.is_still_interactive(id)
         {
             root.global_state.next_focused_widget = None;
         }
-        if prev_focused == root.global_state.next_focused_widget {
-            tracing::warn!(
-                id = prev_focused.map(WidgetId::trace),
-                "request_focus called whilst handling Ime::Disabled"
-            );
-            root.global_state.emit_signal(RenderRootSignal::StartIme);
-        }
     }
 
     let next_focused = root.global_state.next_focused_widget;
+    root.global_state.focused_widget = next_focused;
 
     // "Focused path" means the focused widget, and all its parents.
     let prev_focused_path = std::mem::take(&mut root.global_state.focused_path);
@@ -811,59 +748,100 @@ pub(crate) fn run_update_focus_pass(root: &mut RenderRoot) {
             ctx.widget_state.set_request_accessibility(true);
             ctx.widget_state.set_needs_accessibility(true);
         });
+    }
 
-        let accepts_text = next_focused
+    // A window may regain OS focus without changing its logical focus target.
+    let accepts_text = root.global_state.window_focused()
+        && next_focused
             .and_then(|id| root.widget_arena.get_state(id))
             .is_some_and(WidgetState::accepts_text_input);
-        root.global_state.set_is_ime_active(accepts_text);
-        if accepts_text {
-            root.global_state.emit_signal(RenderRootSignal::StartIme);
-        }
+    if accepts_text && !root.global_state.is_ime_active() {
+        root.global_state.start_ime_session();
     }
 
     if next_focused.is_some() {
         root.global_state.focus_anchor = next_focused;
     }
 
-    root.global_state.focused_widget = next_focused;
     root.global_state.focused_path = next_focused_path;
 }
 
 // ----------------
 
 // --- MARK: SCROLL
-// This pass will update scroll positions in cases where a widget has requested to be
-// scrolled into view (usually a text input getting text events).
-// Each parent that implements scrolling will update its scroll position to ensure the
-// child is visible. (If the target area is larger than the parent, the parent will try
-// to show the top left of that area.)
+// The request is carried in each widget's border-box coordinates.
+// Every ancestor sees the region at its actual composed position, and outer
+// ancestors see the portion left visible after the inner ancestor scrolls.
+fn child_rect_in_parent(root: &RenderRoot, child: WidgetId, rect: Rect) -> Option<Rect> {
+    let state = root.widget_arena.get_state(child)?;
+    if state.is_stashed() {
+        return None;
+    }
+    let rect = state.compose_local_transform().transform_rect_bbox(rect);
+    rect.is_finite().then_some(rect)
+}
+
+fn reveal_scroll_target(root: &mut RenderRoot, target: WidgetId, mut rect: Rect) {
+    if !rect.is_finite() {
+        return;
+    }
+    let mut child = target;
+    while let Some(parent) = root.widget_arena.parent_of(child) {
+        let Some(parent_rect) = child_rect_in_parent(root, child, rect) else {
+            return;
+        };
+        let Some(state) = root.widget_arena.get_state(parent) else {
+            return;
+        };
+        if state.is_stashed() {
+            return;
+        }
+        let event = Update::RequestPanToChild {
+            child,
+            rect: parent_rect - state.border_box_translation(),
+        };
+        run_single_update_pass(root, Some(parent), |widget, ctx, props| {
+            widget.update(ctx, props, &event);
+        });
+
+        // A scroll can change both the layout (virtualized children) and the
+        // composed translations. Reproject using the updated geometry before
+        // asking an outer scroller to reveal this region.
+        run_layout_pass(root);
+        run_compose_pass(root);
+        let Some(mut visible) = child_rect_in_parent(root, child, rect) else {
+            return;
+        };
+        let Some(state) = root.widget_arena.get_state(parent) else {
+            return;
+        };
+        if let Some(clip) = state.clip_path {
+            // Include zero-width caret rectangles on the clip boundary.
+            if visible.x1 < clip.x0
+                || visible.x0 > clip.x1
+                || visible.y1 < clip.y0
+                || visible.y0 > clip.y1
+            {
+                return;
+            }
+            visible = visible.intersect(clip);
+        }
+        rect = visible;
+        child = parent;
+    }
+}
+
 /// See the [passes documentation](crate::doc::pass_system#update-passes).
 pub(crate) fn run_update_scroll_pass(root: &mut RenderRoot) {
+    if root.global_state.scroll_request_targets.is_empty() {
+        return;
+    }
     let _span = info_span!("update_scroll").entered();
 
     let scroll_request_targets = std::mem::take(&mut root.global_state.scroll_request_targets);
+    run_compose_pass(root);
     for (target, rect) in scroll_request_targets {
-        // We start with target_rect being in the target's border-box coordinate space.
-        let mut target_rect = rect;
-
-        // We run the update pass on the target itself and then its ancestors.
-        run_targeted_update_pass(root, Some(target), |widget, ctx, props| {
-            // Convert the target_rect from border-box space to content-box space.
-            let local_rect = target_rect - ctx.widget_state.border_box_translation();
-
-            let event = Update::RequestPanToChild(local_rect);
-            widget.update(ctx, props, &event);
-
-            // TODO - We should run the compose method after this, so
-            // translations are updated and the rect passed to parents
-            // is more accurate. Until then we don't add scroll_translation
-            // at all and only support a single scrolling parent.
-
-            // Before continuing to the parent, we need to convert the target_rect from this
-            // widget's border-box coordinate space to the parent's border-box coordinate space.
-            let state = &ctx.widget_state;
-            target_rect = target_rect + state.origin.to_vec2();
-        });
+        reveal_scroll_target(root, target, rect);
     }
 }
 
@@ -898,10 +876,10 @@ pub(crate) fn run_update_pointer_pass(root: &mut RenderRoot) {
     }
 
     // Release pointer capture if target can no longer hold it.
-    if let Some(id) = root.global_state.pointer_capture_target
+    if let Some(id) = root.global_state.pointer_capture_target()
         && !root.is_still_interactive(id)
     {
-        // The event pass will set pointer_capture_target to None.
+        // The event pass will clear the captured interaction.
         run_on_pointer_event_pass(root, &dummy_pointer_cancel());
     }
 
@@ -909,7 +887,7 @@ pub(crate) fn run_update_pointer_pass(root: &mut RenderRoot) {
     // "Active path" means the widget which is considered active, and all its parents.
     let prev_active_path = std::mem::take(&mut root.global_state.active_path);
     let prev_active_widget = prev_active_path.first().copied();
-    let next_active_widget = root.global_state.pointer_capture_target;
+    let next_active_widget = root.global_state.pointer_capture_target();
     let next_active_path = get_id_path(root, next_active_widget);
 
     update_path_status(
@@ -927,7 +905,7 @@ pub(crate) fn run_update_pointer_pass(root: &mut RenderRoot) {
             .map(|widget| widget.id())
     });
     // If the pointer is captured, it can either hover its capture target or nothing.
-    if let Some(capture_target) = root.global_state.pointer_capture_target
+    if let Some(capture_target) = root.global_state.pointer_capture_target()
         && next_hovered_widget != Some(capture_target)
     {
         if is_ancestor_of(root, capture_target, next_hovered_widget) {
@@ -965,7 +943,7 @@ pub(crate) fn run_update_pointer_pass(root: &mut RenderRoot) {
     // capture target, even when not hovered.
     let icon_source = root
         .global_state
-        .pointer_capture_target
+        .pointer_capture_target()
         .or(next_hovered_widget);
 
     let new_icon = icon_source

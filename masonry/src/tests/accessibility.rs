@@ -77,7 +77,6 @@ fn access_node_children() {
     harness
         .edit_widget(parent_tag, |mut parent| {
             parent.ctx.set_stashed(&parent.widget.state[1], true);
-            parent.ctx.request_accessibility_update();
         })
         .unwrap();
     let _ = harness.render().unwrap();
@@ -87,6 +86,18 @@ fn access_node_children() {
     assert_eq!(
         Vec::<u64>::from_iter(parent_node.child_ids().map(node_local_id_to_u64)),
         vec![id_1.to_raw(), id_3.to_raw()]
+    );
+
+    harness
+        .edit_widget(parent_tag, |mut parent| {
+            parent.ctx.set_stashed(&parent.widget.state[1], false);
+        })
+        .unwrap();
+    let _ = harness.render().unwrap();
+    let parent_node = harness.access_node(parent_node_id).unwrap();
+    assert_eq!(
+        Vec::<u64>::from_iter(parent_node.child_ids().map(node_local_id_to_u64)),
+        vec![id_1.to_raw(), id_2.to_raw(), id_3.to_raw()]
     );
 }
 

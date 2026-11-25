@@ -3,69 +3,61 @@
 
 use std::collections::BTreeMap;
 use std::ops::Range;
+use std::sync::Arc;
 
 use understory_virtual_list::{ScrollAlign, SparsePrefixSumExtentModel, VirtualList};
 
 use crate::core::keyboard::{Key, KeyState, NamedKey};
 use crate::core::{
     AccessCtx, AccessEvent, ChildrenIds, ComposeCtx, EventCtx, FromDynWidget, KeyboardEvent,
-    LayoutCtx, MeasureCtx, NewWidget, PaintCtx, PointerEvent, PointerScrollEvent, PropertiesMut,
-    PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    LayoutCtx, MeasureCtx, NewWidget, PointerEvent, PointerScrollEvent, PropertiesMut,
+    PropertiesRef, RegisterCtx, ScrollDelta, TextEvent, Update, UpdateCtx, Widget, WidgetMut,
+    WidgetPod,
 };
 use crate::dpi::PhysicalPosition;
-use crate::imaging::Painter;
 use crate::kurbo::{Axis, Size};
 use crate::layout::{LenDef, LenReq, Length, SizeDef};
-use crate::util::debug_panic;
 
-/// The action type sent by the [`VirtualScroll`] widget when as of yet un-fetched children need to be fetched.
+mod extent_cache;
+use extent_cache::ExtentCache;
+
+/// Request to update the materialized children of a [`VirtualScroll`].
 ///
-/// Before handling this action, you must call [`VirtualScroll::will_handle_action`] using it.
-///
-/// Currently, this does not have utilities to produce the ranges which should be added and removed.
-/// The recommended approach is just to use the two loops, as the ranges are expected to be relatively small:
+/// Use [`VirtualScroll::begin_fetch`] to accept the request before modifying
+/// children. A request is accepted at most once and only by its originating
+/// widget. A delayed request invalidated by a length change is harmless.
 ///
 /// ```ignore
-/// let action = action.downcast::<VirtualScrollAction>().unwrap();
-/// let VirtualScrollAction::Fetch(action) = action else {
+/// let Some(mut fetch) = VirtualScroll::begin_fetch(&mut scroll, &action) else {
 ///     return;
 /// };
-/// // We tell the scroll area which action we're about to handle
-/// VirtualScroll::will_handle_action(&mut scroll, &action);
-/// for idx in action.old_active().clone() {
-///     if !action.target().contains(&idx) {
-///         VirtualScroll::remove_child(&mut scroll, idx);
-///     }
+/// for idx in action.removed() {
+///     // Tear down any associated application state before removing the widget.
+///     let _ = fetch.remove_child(idx);
 /// }
-/// for idx in action.target().clone() {
-///     if !action.old_active().contains(&idx) {
-///         let label = Label::new(format!("Child {idx}"));
-///         VirtualScroll::add_child(
-///             &mut scroll,
-///             idx,
-///             NewWidget::new(label).erased(),
-///         );
-///     }
+/// for idx in action.added() {
+///     let label = Label::new(format!("Child {idx}"));
+///     let _ = fetch.add_child(idx, NewWidget::new(label).erased());
 /// }
 /// ```
-///
-/// That is:
-/// - Any items which were in `old_active` and aren't in `target` should
-///   be removed from the `VirtualScroll` using [`remove_child`](VirtualScroll::remove_child).
-/// - Any items which are in `target` and aren't in `old_active` should
-///   be materialised and added to the `VirtualScroll` using [`add_child`](VirtualScroll::add_child).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VirtualScrollFetchAction {
-    /// The range of children ids which were "active" before this change.
-    /// That is, the items which the driver wanted to have available, to properly load what it needs.
-    /// Note that many of these items will likely still be active even after this event;
-    /// only those which aren't also in `target` must be removed.
+    request: Arc<FetchRequest>,
+}
+
+#[derive(Debug)]
+struct FetchRequest {
     old_active: Range<usize>,
-    /// The range of items which are now active.
-    ///
-    /// Note that many of these items will have previously been active before this event (and so require no action);
-    /// only those which aren't also in `target` must be removed.
     target: Range<usize>,
+}
+
+/// Mutable access to the children while applying an accepted fetch request.
+///
+/// The borrow prevents another fetch or list configuration change while editing.
+/// Retained children may also be edited via [`Self::child_mut`].
+#[derive(Debug)]
+pub struct VirtualScrollFetchMut<'a, 'w> {
+    scroll: &'a mut WidgetMut<'w, VirtualScroll>,
 }
 
 /// The action type sent by the [`VirtualScroll`] widget when the range of visible children changes as a result of scrolling.
@@ -95,6 +87,51 @@ pub enum ScrollDirection {
     RightToLeft,
 }
 
+/// The portion of the available main axis used as a virtual scroll viewport.
+///
+/// Both endpoints are fractions measured in the scroll direction, with zero
+/// at the start of the axis and one at the end. An empty viewport is valid.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ViewportRange {
+    start: f64,
+    end: f64,
+}
+
+impl ViewportRange {
+    /// Uses the full available extent.
+    pub const FULL: Self = Self { start: 0., end: 1. };
+
+    /// Constructs an ordered, finite interval within the available extent.
+    ///
+    /// Returns `None` for non-finite, out-of-bounds or reversed endpoints.
+    #[must_use = "Use the validated viewport interval."]
+    pub const fn new(start: f64, end: f64) -> Option<Self> {
+        if start >= 0. && end <= 1. && start <= end {
+            Some(Self { start, end })
+        } else {
+            None
+        }
+    }
+
+    /// Start fraction in scroll-direction coordinates.
+    #[must_use = "Use the viewport start."]
+    pub const fn start(self) -> f64 {
+        self.start
+    }
+
+    /// End fraction in scroll-direction coordinates.
+    #[must_use = "Use the viewport end."]
+    pub const fn end(self) -> f64 {
+        self.end
+    }
+}
+
+impl Default for ViewportRange {
+    fn default() -> Self {
+        Self::FULL
+    }
+}
+
 /// A virtual scrolling widget.
 ///
 /// Virtual scrolling is a technique to improve performance when scrolling through long lists, by
@@ -119,13 +156,12 @@ pub enum ScrollDirection {
 /// If only a subset of ids are valid, then the valid range of ids widget *must* be set.
 ///
 /// The widget will send a [`VirtualScrollFetchAction`] whenever the children it requires to be loaded (the active children) changes.
-/// To handle this, the driver must [add](Self::add_child) widgets for the ids which are in `target` but not in
-/// `old_active`, and [remove](Self::remove_child) those which are in `old_active` but not in `target`.
+/// To handle this, the driver must [add](VirtualScrollFetchMut::add_child) widgets for the ids which are in `target` but not in
+/// `old_active`, and [remove](VirtualScrollFetchMut::remove_child) those which are in `old_active` but not in `target`.
 /// (`VirtualScroll` does not remove the children itself to enable cleanup by the driver before the
 /// children get removed).
-/// You also need to call [`VirtualScroll::will_handle_action`] with this action, which allows the
-/// `VirtualScroll` controller to know which children it expects to be valid. This avoids issues caused by
-/// things going out of sync.
+/// Accept the action with [`VirtualScroll::begin_fetch`], then use the returned
+/// [`VirtualScrollFetchMut`] to update the children. Stale requests are rejected.
 /// The docs for [`VirtualScrollFetchAction`] include an example demonstrating this.
 ///
 /// It is invalid to not provide all items requested.
@@ -136,7 +172,7 @@ pub enum ScrollDirection {
 /// This widget avoids panicking and infinite loops in these cases, but this widget is not designed to
 /// handle them, and so arbitrarily janky behaviour may occur.
 ///
-/// As a special case, it is not possible to have an item with id [`i64::MAX`].
+/// As a special case, it is not possible to have an item with id [`usize::MAX`].
 /// This is because of the internal use of exclusive ranges.
 ///
 /// # Caveats
@@ -187,6 +223,7 @@ pub enum ScrollDirection {
 /// touch screens).
 pub struct VirtualScroll {
     virtual_list: VirtualList<SparsePrefixSumExtentModel<f64>>,
+    extent_cache: ExtentCache,
 
     /// The range in the id space which is "active", i.e. which the virtual scrolling has decided
     /// are in the range of the viewport and should be shown on screen.
@@ -195,23 +232,19 @@ pub struct VirtualScroll {
     /// This is still an invalid state, but we handle it as well as we can.
     active_range: Range<usize>,
 
-    /// Whether the most recent request we sent out was handled.
-    /// If it hasn't been handled, we won't send a new one.
-    action_handled: bool,
+    /// The single outstanding request, identified by its shared allocation.
+    pending_fetch: Option<Arc<FetchRequest>>,
 
-    /// We don't want to spam warnings about not being dense, but we want the user to be aware of it.
-    warned_not_dense: bool,
-
-    /// We don't want to spam warnings about missing an action, but we want the user to be aware of it.
-    missed_actions_count: u32,
+    // The strip used by the last layout, independent of what the driver has
+    // acknowledged. Scrolling within one large item can change its bounds.
+    laid_out_range: Range<usize>,
 
     items: BTreeMap<usize, WidgetPod<dyn Widget>>,
 
     anchor_index: usize,
     range_in_viewport: Range<usize>,
 
-    start_at: f64,
-    end_at: f64,
+    viewport: ViewportRange,
     direction: ScrollDirection,
 
     scrolling: bool,
@@ -221,15 +254,14 @@ impl std::fmt::Debug for VirtualScroll {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VirtualScroll")
             .field("virtual_list", &self.virtual_list)
+            .field("extent_cache", &self.extent_cache)
             .field("active_range", &self.active_range)
-            .field("action_handled", &self.action_handled)
-            .field("warned_not_dense", &self.warned_not_dense)
-            .field("missed_actions_count", &self.missed_actions_count)
+            .field("pending_fetch", &self.pending_fetch)
+            .field("laid_out_range", &self.laid_out_range)
             .field("items", &self.items.keys().collect::<Vec<_>>())
             .field("anchor_index", &self.anchor_index)
             .field("range_in_viewport", &self.range_in_viewport)
-            .field("start_at", &self.start_at)
-            .field("end_at", &self.end_at)
+            .field("viewport", &self.viewport)
             .field("direction", &self.direction)
             .field("scrolling", &self.scrolling)
             .finish()
@@ -243,13 +275,14 @@ impl VirtualScroll {
     /// Creates a new virtual scrolling list.
     ///
     /// The item at `initial_anchor` will have its top aligned with the top of
-    /// the scroll area to start with.
+    /// the scroll area to start with (clamped to the last item if necessary).
     ///
     /// Note that it is not possible to add children before the widget is "live".
     /// This is for simplicity, as the set of the children which should be loaded has
     /// not yet been determined.
     #[must_use = "Use the returned value."]
     pub fn new(initial_anchor: usize, len: usize) -> Self {
+        let initial_anchor = initial_anchor.min(len.saturating_sub(1));
         let mut virtual_list = VirtualList::new(
             SparsePrefixSumExtentModel::new(DEFAULT_MEAN_ITEM_LENGTH, len),
             0.,
@@ -258,16 +291,15 @@ impl VirtualScroll {
         virtual_list.scroll_to_index(initial_anchor, ScrollAlign::Start);
         Self {
             virtual_list,
+            extent_cache: ExtentCache::default(),
             // This range starts intentionally empty, as no items have been loaded.
             active_range: initial_anchor..initial_anchor,
-            action_handled: true,
-            warned_not_dense: false,
-            missed_actions_count: 0,
+            pending_fetch: None,
+            laid_out_range: initial_anchor..initial_anchor,
             items: BTreeMap::default(),
             anchor_index: initial_anchor,
             range_in_viewport: initial_anchor..initial_anchor,
-            start_at: 0.,
-            end_at: 1.,
+            viewport: ViewportRange::FULL,
             direction: ScrollDirection::TopToBottom,
             scrolling: false,
         }
@@ -278,15 +310,19 @@ impl VirtualScroll {
     #[must_use = "Use the returned value."]
     pub fn with_len(mut self, len: usize) -> Self {
         self.virtual_list.set_len(len);
+        self.anchor_index = self.anchor_index.min(len.saturating_sub(1));
+        self.virtual_list
+            .scroll_to_index(self.anchor_index, ScrollAlign::Start);
+        self.active_range = self.anchor_index..self.anchor_index;
+        self.laid_out_range = self.active_range.clone();
+        self.range_in_viewport = self.active_range.clone();
         self
     }
 
-    /// Sets the points (as ratios of the main-axis length) where the first item starts and
-    /// the last item ends in the viewport.
+    /// Sets the viewport interval in scroll-direction coordinates.
     #[must_use = "Use the returned value."]
-    pub const fn with_start_end(mut self, start_at: f64, end_at: f64) -> Self {
-        self.start_at = start_at;
-        self.end_at = end_at;
+    pub const fn with_viewport(mut self, viewport: ViewportRange) -> Self {
+        self.viewport = viewport;
         self
     }
 
@@ -321,18 +357,29 @@ impl VirtualScroll {
         self.items.len()
     }
 
-    /// Scroll by the specified amount of pixels.
-    ///
-    /// Returns `true` if the children needs to be laid out again as a result of the scroll.
-    pub fn scroll_by(&mut self, delta: f64) -> bool {
-        self.virtual_list
-            .scroll_by(-self.direction.appropriate(delta));
-        self.needs_layout()
+    // Deltas here are in index-order coordinates. Return whether the clamped
+    // offset changed, not merely whether the requested delta was nonzero.
+    fn advance_offset(&mut self, delta: f64) -> bool {
+        if !delta.is_finite() || delta == 0.0 {
+            return false;
+        }
+        let old = self.virtual_list.scroll_offset();
+        self.virtual_list.scroll_by(delta);
+        self.virtual_list.clamp_scroll_to_content();
+        self.virtual_list.scroll_offset().to_bits() != old.to_bits()
     }
 
-    /// Ensures that the correct follow-up passes are requested after the scroll position changes.
-    ///
-    /// `size` is the current viewport's size.
+    fn scroll_event(&mut self, ctx: &mut EventCtx<'_>, delta: f64) {
+        if self.advance_offset(delta) {
+            if self.needs_layout() {
+                ctx.request_layout();
+            }
+            ctx.request_compose();
+            ctx.set_handled();
+        }
+    }
+
+    /// Layout is necessary when the coordinate anchor or materialized strip changes.
     fn needs_layout(&mut self) -> bool {
         self.virtual_list.clamp_scroll_to_content();
 
@@ -340,6 +387,23 @@ impl VirtualScroll {
         let offset_of_anchor = self.virtual_list.offset_of(self.anchor_index);
         scroll_offset < offset_of_anchor
             || scroll_offset >= offset_of_anchor + self.virtual_list.extent_of(self.anchor_index)
+            || self.virtual_list.materialized_range() != self.laid_out_range
+    }
+
+    // Before changing the extent model, capture the actual logical item under
+    // the viewport, not the placement anchor from the previous layout.
+    fn current_anchor(&mut self) -> (usize, f64) {
+        if self.virtual_list.is_empty() {
+            return (0, 0.);
+        }
+        let offset = self.virtual_list.scroll_offset();
+        let previous = self.anchor_index.min(self.virtual_list.len() - 1);
+        let relative = offset - self.virtual_list.offset_of(previous);
+        if relative >= 0. && (relative == 0. || relative < self.virtual_list.extent_of(previous)) {
+            return (previous, relative);
+        }
+        let index = self.virtual_list.index_at_offset(offset);
+        (index, (offset - self.virtual_list.offset_of(index)).max(0.))
     }
 
     fn scroll_offset_from_anchor(&mut self) -> f64 {
@@ -354,18 +418,35 @@ impl VirtualScrollFetchAction {
     /// Note that many of these items will likely still be active even after this event;
     /// only those which aren't also in `target` must be removed.
     #[must_use = "Use the returned value."]
-    pub const fn old_active(&self) -> &Range<usize> {
-        &self.old_active
+    pub fn old_active(&self) -> &Range<usize> {
+        &self.request.old_active
     }
 
     /// The range of items which are now active.
     ///
     /// Note that many of these items will have previously been active before this event (and so require no action);
-    /// only those which aren't also in `target` must be removed.
+    /// only those which weren't also in `old_active` must be added.
     #[must_use = "Use the returned value."]
-    pub const fn target(&self) -> &Range<usize> {
-        &self.target
+    pub fn target(&self) -> &Range<usize> {
+        &self.request.target
     }
+
+    /// Indices that have left the materialized range.
+    #[must_use = "Iterate over the removed indices."]
+    pub fn removed(&self) -> impl Iterator<Item = usize> + '_ {
+        range_difference(self.old_active(), self.target())
+    }
+
+    /// Indices that have entered the materialized range.
+    #[must_use = "Iterate over the added indices."]
+    pub fn added(&self) -> impl Iterator<Item = usize> + '_ {
+        range_difference(self.target(), self.old_active())
+    }
+}
+
+// The difference of two half-open ranges has at most two contiguous pieces.
+fn range_difference(a: &Range<usize>, b: &Range<usize>) -> impl Iterator<Item = usize> {
+    (a.start..a.end.min(b.start)).chain(a.start.max(b.end)..a.end)
 }
 
 impl VirtualScrollScrollAction {
@@ -388,6 +469,17 @@ impl ScrollDirection {
         matches!(self, Self::BottomToTop | Self::RightToLeft)
     }
 
+    // Backward and forward relative to index order, not screen coordinates.
+    const fn access_actions(self) -> (accesskit::Action, accesskit::Action) {
+        use accesskit::Action::{ScrollDown, ScrollLeft, ScrollRight, ScrollUp};
+        match self {
+            Self::TopToBottom => (ScrollUp, ScrollDown),
+            Self::BottomToTop => (ScrollDown, ScrollUp),
+            Self::LeftToRight => (ScrollLeft, ScrollRight),
+            Self::RightToLeft => (ScrollRight, ScrollLeft),
+        }
+    }
+
     fn appropriate(self, delta: f64) -> f64 {
         if self.is_reverse() { -delta } else { delta }
     }
@@ -395,85 +487,30 @@ impl ScrollDirection {
 
 // --- MARK: WIDGETMUT
 impl VirtualScroll {
-    /// Indicates that `action` is about to be handled by the driver (which is calling this method).
+    /// Returns whether this request is still outstanding for this widget.
+    #[must_use = "Check whether this request can be accepted."]
+    pub fn is_pending_fetch(&self, action: &VirtualScrollFetchAction) -> bool {
+        self.pending_fetch
+            .as_ref()
+            .is_some_and(|pending| Arc::ptr_eq(pending, &action.request))
+    }
+
+    /// Accepts a fetch request and grants scoped access to its children.
     ///
-    /// This is required because if multiple actions stack up, `VirtualScroll` would assume that they have all been handled.
-    /// In particular, this method existing allows layout operations to happen after each individual action is handled, which
-    /// achieves several things:
-    /// - It improves robustness, by allowing layout methods to know exactly which indices are valid.
-    /// - It makes writing drivers easier, as the safety rails in `VirtualScroll` can be more precise.
-    // (It also simplifies writing tests)
-    // TODO: This could instead take ownership of the action, and return some kind of `{to_remove, to_add}` iterator index pair.
-    pub fn will_handle_action(this: &mut WidgetMut<'_, Self>, action: &VirtualScrollFetchAction) {
-        if this.widget.active_range != action.old_active {
-            debug_panic!(
-                "Handling a VirtualScrollFetchAction with the wrong range; got {:?}, expected {:?} for widget {}.\n\
-                Maybe this has been routed to the wrong `VirtualScroll`?",
-                action.old_active,
-                this.widget.active_range,
-                this.ctx.widget_id(),
-            );
+    /// Returns `None` for stale, already accepted, or misrouted requests,
+    /// without modifying the widget. Delayed valid requests remain acceptable
+    /// even when the viewport has moved; layout will request any newer range.
+    pub fn begin_fetch<'a, 'w>(
+        this: &'a mut WidgetMut<'w, Self>,
+        action: &VirtualScrollFetchAction,
+    ) -> Option<VirtualScrollFetchMut<'a, 'w>> {
+        if !this.widget.is_pending_fetch(action) {
+            return None;
         }
-        this.widget.action_handled = true;
-        if this.widget.missed_actions_count > 0 {
-            // Avoid spamming the "handling single action delay" warning.
-            this.widget.missed_actions_count = 1;
-        }
-        this.widget.active_range = action.target.clone();
+        this.widget.pending_fetch = None;
+        this.widget.active_range = action.target().clone();
         this.ctx.request_layout();
-    }
-
-    /// Add the child widget for the given index.
-    ///
-    /// This should be done only in the handling of a [`VirtualScrollAction`].
-    /// This must be called after [`VirtualScroll::will_handle_action`].
-    #[track_caller]
-    pub fn add_child(this: &mut WidgetMut<'_, Self>, idx: usize, child: NewWidget<dyn Widget>) {
-        // TODO: Maybe just warn?
-        debug_assert!(
-            this.widget.action_handled,
-            "You must call `will_handle_action` before `add_child`."
-        );
-        debug_assert!(
-            this.widget.active_range.contains(&idx),
-            "`add_child` should only be called with an index requested by the controller."
-        );
-        this.ctx.children_changed();
-        if this.widget.items.insert(idx, child.into_pod()).is_some() {
-            tracing::warn!("Tried to add child {idx} twice to VirtualScroll");
-        }
-    }
-
-    /// Removes the child widget with id `idx`.
-    ///
-    /// This will log an error if there was no child at the given index.
-    /// This should only happen if the driver does not meet the usage contract.
-    ///
-    /// This should be done only in the handling of a [`VirtualScrollAction`].
-    /// This must be called after [`VirtualScroll::will_handle_action`].
-    ///
-    /// Note that if you are changing the valid range, you should *not* remove any active children
-    /// outside of that range; instead the controller will send an action removing those children.
-    #[track_caller]
-    pub fn remove_child(this: &mut WidgetMut<'_, Self>, idx: usize) {
-        // TODO: Maybe just warn?
-        debug_assert!(
-            this.widget.action_handled,
-            "You must call `will_handle_action` before `remove_child`."
-        );
-        debug_assert!(
-            !this.widget.active_range.contains(&idx),
-            "`remove_child` should only be called with an index which is not active."
-        );
-        let child = this.widget.items.remove(&idx);
-        if let Some(child) = child {
-            this.ctx.remove_child(child);
-        } else if !this.widget.warned_not_dense {
-            // If we have already warned because there's a density problem, don't duplicate it with this error.
-            tracing::error!(
-                "Tried to remove child ({idx}) which has already been removed or was never added."
-            );
-        }
+        Some(VirtualScrollFetchMut { scroll: this })
     }
 
     /// Returns a mutable handle if the index contains a registered child widget.
@@ -490,49 +527,148 @@ impl VirtualScroll {
     /// That is, the children which the virtual scrolling area will request within.
     /// Runtime equivalent of [`with_len`](Self::with_len).
     pub fn set_len(this: &mut WidgetMut<'_, Self>, len: usize) {
-        this.widget.virtual_list.set_len(len);
+        if this.widget.virtual_list.len() == len {
+            return;
+        }
+        let state = &mut *this.widget;
+        let (anchor, _) = state.current_anchor();
+        state.virtual_list.set_len(len);
+        state.extent_cache.truncate(len);
+        if len == 0 || anchor >= len {
+            state.anchor_index = len.saturating_sub(1);
+            state
+                .virtual_list
+                .scroll_to_index(state.anchor_index, ScrollAlign::Start);
+        }
+        if this
+            .widget
+            .pending_fetch
+            .as_ref()
+            .is_some_and(|pending| pending.target.end > len)
+        {
+            this.widget.pending_fetch = None;
+        }
         this.ctx.request_layout();
     }
 
-    /// Sets the point (as ratio of the main-axis length) where the first item starts in the viewport.
-    pub fn set_start(this: &mut WidgetMut<'_, Self>, start_at: f64) {
-        this.widget.start_at = start_at;
+    /// Discards remembered estimates for unmaterialized content.
+    ///
+    /// Use this when the underlying item collection changes without changing
+    /// its length, such as after reordering or replacing all items.
+    pub fn invalidate_extents(this: &mut WidgetMut<'_, Self>) {
+        this.widget.extent_cache.invalidate();
         this.ctx.request_layout();
     }
 
-    /// Sets the point (as ratio of the main-axis length) where the last item ends in the viewport.
-    pub fn set_end(this: &mut WidgetMut<'_, Self>, end_at: f64) {
-        this.widget.end_at = end_at;
-        this.ctx.request_layout();
+    /// Changes both viewport endpoints atomically.
+    pub fn set_viewport(this: &mut WidgetMut<'_, Self>, viewport: ViewportRange) {
+        if this.widget.viewport != viewport {
+            this.widget.viewport = viewport;
+            this.ctx.request_layout();
+        }
     }
 
     /// Sets the direction in which children are laid out.
     pub fn set_direction(this: &mut WidgetMut<'_, Self>, direction: ScrollDirection) {
-        this.widget.direction = direction;
-        this.ctx.request_layout();
+        if this.widget.direction != direction {
+            this.widget.direction = direction;
+            this.ctx.request_layout();
+        }
     }
 
     /// Sets scrolling state.
     ///
     /// Adjusts pixel snapping for animations.
     pub fn set_scrolling(this: &mut WidgetMut<'_, Self>, scrolling: bool) {
-        this.widget.scrolling = scrolling;
-        this.ctx.request_render();
+        if this.widget.scrolling != scrolling {
+            this.widget.scrolling = scrolling;
+            this.ctx.request_compose();
+        }
+    }
+
+    /// Move the viewport by logical pixels in visual coordinates.
+    ///
+    /// Positive values move down or right; negative values move up or left.
+    /// Returns whether the clamped scroll position changed.
+    pub fn scroll_by(this: &mut WidgetMut<'_, Self>, delta: f64) -> bool {
+        if !this
+            .widget
+            .advance_offset(this.widget.direction.appropriate(delta))
+        {
+            return false;
+        }
+        if this.widget.needs_layout() {
+            this.ctx.request_layout();
+        }
+        this.ctx.request_compose();
+        true
     }
 
     /// Forcefully aligns the top of the item at `idx` with the top of the
     /// virtual scroll area.
     ///
     /// That is, scroll to the item at `idx`, losing any scroll progress by the user.
+    /// An out-of-range index selects the last item, or offset zero in an empty list.
     ///
     /// This method is mostly useful for tests, but can be used outside of tests
     /// (for example, in certain scrollbar schemes).
     pub fn scroll_to(this: &mut WidgetMut<'_, Self>, idx: usize) {
+        let idx = idx.min(this.widget.virtual_list.len().saturating_sub(1));
         this.widget.anchor_index = idx;
         this.widget
             .virtual_list
             .scroll_to_index(idx, ScrollAlign::Start);
         this.ctx.request_layout();
+    }
+}
+
+impl VirtualScrollFetchMut<'_, '_> {
+    /// Adds a new child in the accepted target range.
+    ///
+    /// Returns false if the index is outside the range or already occupied.
+    /// An existing registered child is never replaced.
+    #[must_use = "Check whether the child was added."]
+    pub fn add_child(&mut self, idx: usize, child: NewWidget<dyn Widget>) -> bool {
+        if !self.scroll.widget.active_range.contains(&idx) {
+            tracing::warn!(idx, "virtual scroll child outside accepted range");
+            return false;
+        }
+        if let std::collections::btree_map::Entry::Vacant(entry) =
+            self.scroll.widget.items.entry(idx)
+        {
+            entry.insert(child.into_pod());
+            self.scroll.ctx.children_changed();
+            true
+        } else {
+            tracing::warn!(idx, "virtual scroll child already exists");
+            false
+        }
+    }
+
+    /// Removes an existing child outside the accepted target range.
+    ///
+    /// Returns false if the child is still active or was never materialized.
+    /// Missing children are normal for an incomplete driver response.
+    #[must_use = "Check whether the child was removed."]
+    pub fn remove_child(&mut self, idx: usize) -> bool {
+        if self.scroll.widget.active_range.contains(&idx) {
+            tracing::warn!(idx, "cannot remove active virtual scroll child");
+            return false;
+        }
+        if let Some(child) = self.scroll.widget.items.remove(&idx) {
+            self.scroll.ctx.remove_child(child);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Returns a mutable handle to an existing child, including one being removed.
+    pub fn child_mut<W: Widget + FromDynWidget + ?Sized>(
+        &mut self,
+        idx: usize,
+    ) -> Option<WidgetMut<'_, W>> {
+        VirtualScroll::child_mut(self.scroll, idx)
     }
 }
 
@@ -561,15 +697,18 @@ impl Widget for VirtualScroll {
             let delta_px = delta
                 .to_pixel_delta(line_px, page_px)
                 .to_logical::<f64>(scale_factor);
-            let delta = -match (self.direction.axis(), delta_px.x == 0., delta_px.y == 0.) {
-                (Axis::Horizontal, false, _) | (Axis::Vertical, _, true) => delta_px.x,
-                (Axis::Horizontal, true, _) | (Axis::Vertical, _, false) => delta_px.y,
+            // Keep pixel gestures on their actual axis. A traditional vertical
+            // line wheel can also operate a horizontal list without a trackpad.
+            let visual_delta = match self.direction.axis() {
+                Axis::Vertical => -delta_px.y,
+                Axis::Horizontal
+                    if delta_px.x == 0.0 && matches!(delta, ScrollDelta::LineDelta(..)) =>
+                {
+                    -delta_px.y
+                }
+                Axis::Horizontal => -delta_px.x,
             };
-
-            if self.scroll_by(-delta) {
-                ctx.request_layout();
-            }
-            ctx.request_compose();
+            self.scroll_event(ctx, self.direction.appropriate(visual_delta));
         }
     }
 
@@ -579,11 +718,8 @@ impl Widget for VirtualScroll {
         _props: &mut PropertiesMut<'_>,
         event: &TextEvent,
     ) {
-        // We use an unreasonably large delta (logical pixels) here to allow testing that the case
-        // where the scrolling "jumps" the area is handled correctly.
-        // In future, this manual testing would be achieved through use of a scrollbar.
-        const DELTA_PAGE: f64 = 2000.;
         const DELTA_LINE: f64 = 20.;
+        let page = self.virtual_list.viewport_extent();
 
         // To get to this state, you currently need to press "tab" to focus this widget in the
         // example.
@@ -602,28 +738,25 @@ impl Widget for VirtualScroll {
         // For BottomToTop and RightToLeft, direction.appropriate() negates the delta so that
         // the arrow key which moves visually "forward" still increases the scroll offset correctly.
         let delta = match (key, self.direction.axis()) {
-            (NamedKey::PageDown, _) => Some((DELTA_PAGE, true)),
-            (NamedKey::PageUp, _) => Some((-DELTA_PAGE, true)),
-            (NamedKey::ArrowDown, Axis::Vertical) | (NamedKey::ArrowLeft, Axis::Horizontal) => {
+            (NamedKey::PageDown, _) => Some((page, true)),
+            (NamedKey::PageUp, _) => Some((-page, true)),
+            (NamedKey::ArrowDown, Axis::Vertical) | (NamedKey::ArrowRight, Axis::Horizontal) => {
                 Some((DELTA_LINE, false))
             }
-            (NamedKey::ArrowUp, Axis::Vertical) | (NamedKey::ArrowRight, Axis::Horizontal) => {
+            (NamedKey::ArrowUp, Axis::Vertical) | (NamedKey::ArrowLeft, Axis::Horizontal) => {
                 Some((-DELTA_LINE, false))
             }
             _ => None,
         };
         if let Some((delta, direct)) = delta {
-            self.virtual_list.scroll_by(if direct {
-                delta
-            } else {
-                self.direction.appropriate(delta)
-            });
-
-            if self.needs_layout() {
-                ctx.request_layout();
-            }
-            ctx.request_compose();
-            ctx.set_handled();
+            self.scroll_event(
+                ctx,
+                if direct {
+                    delta
+                } else {
+                    self.direction.appropriate(delta)
+                },
+            );
         }
     }
 
@@ -633,26 +766,22 @@ impl Widget for VirtualScroll {
         _props: &mut PropertiesMut<'_>,
         event: &AccessEvent,
     ) {
-        // TODO: I don't know if this behavior is correct.
-        // Should we consider `dierction` here?
-        let backscroll = match event.action {
-            accesskit::Action::ScrollLeft | accesskit::Action::ScrollUp => true,
-            accesskit::Action::ScrollRight | accesskit::Action::ScrollDown => false,
-            _ => return,
+        let (backward, forward) = self.direction.access_actions();
+        let sign = if event.action == backward {
+            -1.
+        } else if event.action == forward {
+            1.
+        } else {
+            return;
         };
-
         let delta = match event.data {
             Some(accesskit::ActionData::ScrollUnit(accesskit::ScrollUnit::Page)) => {
-                ctx.content_box().size().get_coord(self.direction.axis())
+                self.virtual_list.viewport_extent()
             }
             _ => self.virtual_list.extent_of(self.anchor_index),
         };
 
-        if self.scroll_by(if backscroll { delta } else { -delta }) {
-            ctx.request_layout();
-        }
-        ctx.request_compose();
-        ctx.set_handled();
+        self.scroll_event(ctx, sign * delta);
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
@@ -662,16 +791,22 @@ impl Widget for VirtualScroll {
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        if let Update::RequestPanToChild(target) = event {
-            let content_box_length = ctx.content_box().size().get_coord(self.direction.axis());
-            let target = target.get_coords(self.direction.axis());
-            let new_pos =
-                super::compute_pan_range(0.0..content_box_length, target.0..target.1).start;
-            self.virtual_list.scroll_by(new_pos);
-            if self.needs_layout() {
-                ctx.request_layout();
+        if let Update::RequestPanToChild { rect, .. } = event {
+            let length = ctx.content_box().size().get_coord(self.direction.axis());
+            let viewport = if self.direction.is_reverse() {
+                (1.0 - self.viewport.end()) * length..(1.0 - self.viewport.start()) * length
+            } else {
+                self.viewport.start() * length..self.viewport.end() * length
+            };
+            let target = rect.get_coords(self.direction.axis());
+            let new_pos = super::compute_pan_range(viewport.clone(), target.0..target.1).start;
+            let delta = self.direction.appropriate(new_pos - viewport.start);
+            if self.advance_offset(delta) {
+                if self.needs_layout() {
+                    ctx.request_layout();
+                }
+                ctx.request_compose();
             }
-            ctx.request_compose();
         }
     }
 
@@ -709,60 +844,80 @@ impl Widget for VirtualScroll {
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         ctx.set_clip_path(size.to_rect());
 
-        let offset_of_anchor_re_viewport = self.scroll_offset_from_anchor();
+        let (anchor, intra_item_offset) = self.current_anchor();
+        let maximum =
+            (self.virtual_list.total_extent() - self.virtual_list.viewport_extent()).max(0.);
+        let at_end = maximum > 0. && self.virtual_list.scroll_offset() >= maximum;
 
-        let mut total_children_length = 0.;
-        let mut total_children_count = 0_usize;
-
-        // Calculate the sizes of all children
-        self.virtual_list.model_mut().clear();
-        for (idx, child) in &mut self.items {
-            let auto_size = SizeDef::fit(size).with(self.direction.axis(), LenDef::MaxContent);
-            let child_size = ctx.compute_size(child, auto_size, size.into());
-            ctx.run_layout(child, child_size);
-            let child_length = child_size.get_coord(self.direction.axis());
-            self.virtual_list.model_mut().set_extent(*idx, child_length);
-            total_children_length += child_length;
-            total_children_count += 1;
-        }
-
-        if total_children_length != 0. && total_children_count != 0 {
-            self.virtual_list.model_mut().set_default_extent(
-                total_children_length / crate::layout_count(total_children_count),
-            );
-        }
+        // Measure registered children under the current constraints. The
+        // core already caches child measurement; only changed main-axis
+        // extents should invalidate the virtual list's prefix/strip caches.
+        let axis = self.direction.axis();
+        let auto_size = SizeDef::fit(size).with(axis, LenDef::MaxContent);
+        let len = self.virtual_list.len();
+        let sizes: Vec<_> = self
+            .items
+            .iter()
+            .map(|(&index, child)| {
+                // Pending driver teardown may leave out-of-range children registered.
+                (index < len).then(|| ctx.compute_size(child, auto_size, size.into()))
+            })
+            .collect();
+        let live = self
+            .items
+            .keys()
+            .copied()
+            .zip(sizes.iter())
+            .filter_map(|(index, size)| size.map(|size| (index, size.get_coord(axis))));
+        self.extent_cache
+            .sync(&mut self.virtual_list, (axis, size), anchor, live);
 
         let main_axis_length = size.get_coord(self.direction.axis());
-        let start_at = self.start_at * main_axis_length;
-        let end_at = self.end_at * main_axis_length;
+        let start_at = self.viewport.start() * main_axis_length;
+        let end_at = self.viewport.end() * main_axis_length;
         self.virtual_list.set_viewport_extent(end_at - start_at);
         self.virtual_list.set_overscan(
             main_axis_length + start_at,
             main_axis_length.mul_add(3., -end_at),
         );
 
-        let offset_of_anchor = self.virtual_list.offset_of(self.anchor_index);
-        self.virtual_list
-            .set_scroll_offset(offset_of_anchor_re_viewport + offset_of_anchor);
+        let offset = if at_end {
+            (self.virtual_list.total_extent() - self.virtual_list.viewport_extent()).max(0.)
+        } else {
+            self.virtual_list.offset_of(anchor)
+                + intra_item_offset.min(self.virtual_list.extent_of(anchor))
+        };
+        self.virtual_list.set_scroll_offset(offset);
         self.virtual_list.clamp_scroll_to_content();
 
-        self.anchor_index = self.virtual_list.viewport_range().start;
+        self.anchor_index = self
+            .virtual_list
+            .viewport_range()
+            .start
+            .min(len.saturating_sub(1));
 
-        // We only send an updated request if the driver has actioned the previous request.
-        if self.action_handled && self.active_range != self.virtual_list.materialized_range() {
+        // Keep one outstanding request until the driver accepts it. Frame count
+        // is not a timeout: delayed drivers may legitimately take many redraws.
+        let materialized = self.virtual_list.materialized_range();
+        self.laid_out_range = materialized.clone();
+        if self.pending_fetch.is_none() && self.active_range != materialized {
+            let request = Arc::new(FetchRequest {
+                old_active: self.active_range.clone(),
+                target: materialized.clone(),
+            });
+            self.pending_fetch = Some(Arc::clone(&request));
             ctx.submit_action::<VirtualScrollAction>(VirtualScrollAction::Fetch(
-                VirtualScrollFetchAction {
-                    old_active: self.active_range.clone(),
-                    target: self.virtual_list.materialized_range(),
-                },
+                VirtualScrollFetchAction { request },
             ));
-            self.action_handled = false;
         }
 
         // place children
         let offset_of_anchor = self.virtual_list.offset_of(self.anchor_index);
-        for (idx, child) in &mut self.items {
-            if self.virtual_list.materialized_range().contains(idx) {
+        for ((idx, child), child_size) in self.items.iter_mut().zip(sizes) {
+            let child_size = child_size.filter(|_| materialized.contains(idx));
+            ctx.set_stashed(child, child_size.is_none());
+            if let Some(child_size) = child_size {
+                ctx.run_layout(child, child_size);
                 let pos = self.virtual_list.offset_of(*idx) - offset_of_anchor;
                 let placed_pos = if self.direction.is_reverse() {
                     -pos - self.virtual_list.extent_of(*idx)
@@ -770,8 +925,6 @@ impl Widget for VirtualScroll {
                     pos
                 };
                 ctx.place_child(child, self.direction.axis().pack_point(placed_pos, 0.));
-            } else {
-                ctx.set_stashed(child, true);
             }
         }
     }
@@ -779,7 +932,8 @@ impl Widget for VirtualScroll {
     fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {
         let content_length = ctx.content_box().size().get_coord(self.direction.axis());
         let offset = self
-            .start_at
+            .viewport
+            .start()
             .mul_add(-content_length, self.scroll_offset_from_anchor());
         let offset = if self.direction.is_reverse() {
             content_length - self.direction.appropriate(offset)
@@ -787,13 +941,11 @@ impl Widget for VirtualScroll {
             -self.direction.appropriate(offset)
         };
         let translation = self.direction.axis().pack_vec2(offset, 0.);
-        for idx in self.active_range.clone() {
-            if let Some(child) = self.items.get_mut(&idx) {
-                if self.scrolling {
-                    ctx.set_animated_child_scroll_translation(child, translation);
-                } else {
-                    ctx.set_child_scroll_translation(child, translation);
-                }
+        for (_, child) in self.items.range_mut(self.laid_out_range.clone()) {
+            if self.scrolling {
+                ctx.set_animated_child_scroll_translation(child, translation);
+            } else {
+                ctx.set_child_scroll_translation(child, translation);
             }
         }
 
@@ -804,33 +956,6 @@ impl Widget for VirtualScroll {
             ctx.submit_action::<VirtualScrollAction>(VirtualScrollAction::Scroll(
                 VirtualScrollScrollAction { range_in_viewport },
             ));
-        }
-    }
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-        // We run these checks in `paint` as they are outside of the pass-based fixedpoint loop
-        if !self.action_handled {
-            if self.missed_actions_count == 0 {
-                tracing::warn!(
-                    "VirtualScroll got to painting without its action (i.e. it's request for items to be loaded) being handled.\n\
-                    This means that there was a delay in handling its action for some reason.\n\
-                    Maybe your driver only handles one action at a time?"
-                );
-            }
-            if self.missed_actions_count > 10 {
-                debug_panic!(
-                    "VirtualScroll's action is being missed repeatedly being handled.\n\
-                    Note that to handle an action, you must call `VirtualScroll::will_handle_action` with the action."
-                );
-                // In release mode, re-send the action, which will hopefully get things unstuck.
-                self.action_handled = true;
-            }
-            self.missed_actions_count += 1;
         }
     }
 
@@ -849,45 +974,36 @@ impl Widget for VirtualScroll {
             Axis::Horizontal => accesskit::Orientation::Horizontal,
             Axis::Vertical => accesskit::Orientation::Vertical,
         });
-        // Even when we support infinite scroll in both directions, we need
-        // to set the scroll position somehow, so the platform adapter can know when
-        // scrolling happened and fire the appropriate platform event;
-        // this is particularly important on Android. Here, we assume that
-        // in practice, the anchor index is in range for an f64.
-        // TBD: Is there a better way to do this?
-        if self.anchor_index != 0 && self.anchor_index != usize::MAX {
-            let pos = crate::layout_count(self.anchor_index).mul_add(
-                self.virtual_list.model().default_extent(),
-                self.scroll_offset_from_anchor(),
-            );
-            match self.direction.axis() {
-                Axis::Horizontal => node.set_scroll_x(pos),
-                Axis::Vertical => node.set_scroll_y(pos),
+        // Use the same bounds as VirtualList::clamp_scroll_to_content. Unlike a
+        // visible index range, these distinguish partial visibility at the end.
+        let maximum =
+            (self.virtual_list.total_extent() - self.virtual_list.viewport_extent()).max(0.);
+        let offset = self.virtual_list.scroll_offset().clamp(0., maximum);
+        let (minimum, maximum_visual, position) = if self.direction.is_reverse() {
+            (-maximum, 0., -offset)
+        } else {
+            (0., maximum, offset)
+        };
+
+        match self.direction.axis() {
+            Axis::Horizontal => {
+                node.set_scroll_x_min(minimum);
+                node.set_scroll_x_max(maximum_visual);
+                node.set_scroll_x(position);
+            }
+            Axis::Vertical => {
+                node.set_scroll_y_min(minimum);
+                node.set_scroll_y_max(maximum_visual);
+                node.set_scroll_y(position);
             }
         }
-        // not at top
-        if self.anchor_index != 0 || self.scroll_offset_from_anchor() > 0. {
-            node.add_action(match self.direction {
-                ScrollDirection::TopToBottom => accesskit::Action::ScrollUp,
-                ScrollDirection::BottomToTop => accesskit::Action::ScrollDown,
-                ScrollDirection::LeftToRight => accesskit::Action::ScrollLeft,
-                ScrollDirection::RightToLeft => accesskit::Action::ScrollRight,
-            });
+
+        let (backward, forward) = self.direction.access_actions();
+        if offset > 0. {
+            node.add_action(backward);
         }
-        let viewport = self.virtual_list.viewport_strip();
-        let at_end = viewport.end == self.virtual_list.len()
-            && viewport.content_extent
-                - viewport.after_extent
-                - self.virtual_list.scroll_offset()
-                - self.virtual_list.viewport_extent()
-                != 0.;
-        if !at_end {
-            node.add_action(match self.direction {
-                ScrollDirection::TopToBottom => accesskit::Action::ScrollDown,
-                ScrollDirection::BottomToTop => accesskit::Action::ScrollUp,
-                ScrollDirection::LeftToRight => accesskit::Action::ScrollRight,
-                ScrollDirection::RightToLeft => accesskit::Action::ScrollLeft,
-            });
+        if offset < maximum {
+            node.add_action(forward);
         }
         node.add_child_action(accesskit::Action::ScrollIntoView);
     }
@@ -930,6 +1046,665 @@ mod tests {
 
     use super::*;
 
+    fn next_fetch(harness: &mut TestHarness<VirtualScroll>) -> VirtualScrollFetchAction {
+        loop {
+            let (action, _) = harness
+                .pop_action::<VirtualScrollAction>()
+                .unwrap()
+                .unwrap();
+            if let VirtualScrollAction::Fetch(action) = action {
+                return action;
+            }
+        }
+    }
+
+    fn fixed_size_driver(
+        action: VirtualScrollFetchAction,
+        mut scroll: WidgetMut<'_, VirtualScroll>,
+    ) {
+        use crate::layout::AsUnit;
+        use crate::widgets::SizedBox;
+
+        let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &action).unwrap();
+        for idx in action.removed() {
+            assert!(fetch.remove_child(idx));
+        }
+        for idx in action.added() {
+            assert!(fetch.add_child(
+                idx,
+                SizedBox::empty().size(50.px(), 50.px()).prepare().erased()
+            ));
+        }
+    }
+
+    #[test]
+    fn viewport_range_is_finite_ordered_and_atomic() {
+        for (start, end) in [
+            (f64::NAN, 1.),
+            (0., f64::INFINITY),
+            (f64::NEG_INFINITY, 0.),
+            (-0.1, 1.),
+            (0., 1.1),
+            (0.75, 0.25),
+        ] {
+            assert!(ViewportRange::new(start, end).is_none());
+        }
+        assert!(ViewportRange::new(0.5, 0.5).is_some());
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            VirtualScroll::new(0, 100)
+                .with_viewport(ViewportRange::new(0.1, 0.2).unwrap())
+                .prepare(),
+            (100, 200),
+        );
+        let id = harness.root_id();
+        drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::set_viewport(&mut scroll, ViewportRange::new(0.75, 1.).unwrap());
+            })
+            .unwrap();
+        drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+        assert_eq!(
+            harness
+                .root_widget()
+                .unwrap()
+                .virtual_list
+                .viewport_extent(),
+            50.
+        );
+        assert_eq!(
+            harness.root_widget().unwrap().viewport,
+            ViewportRange::new(0.75, 1.).unwrap()
+        );
+    }
+
+    #[test]
+    fn keyboard_and_accessibility_scroll_follow_visual_direction() {
+        use accesskit::{Action, ActionData, ActionRequest, ScrollUnit, TreeId};
+
+        let cases = [
+            (
+                ScrollDirection::TopToBottom,
+                NamedKey::ArrowDown,
+                NamedKey::ArrowUp,
+                Action::ScrollDown,
+                Action::ScrollUp,
+                1.,
+            ),
+            (
+                ScrollDirection::BottomToTop,
+                NamedKey::ArrowUp,
+                NamedKey::ArrowDown,
+                Action::ScrollUp,
+                Action::ScrollDown,
+                -1.,
+            ),
+            (
+                ScrollDirection::LeftToRight,
+                NamedKey::ArrowRight,
+                NamedKey::ArrowLeft,
+                Action::ScrollRight,
+                Action::ScrollLeft,
+                1.,
+            ),
+            (
+                ScrollDirection::RightToLeft,
+                NamedKey::ArrowLeft,
+                NamedKey::ArrowRight,
+                Action::ScrollLeft,
+                Action::ScrollRight,
+                -1.,
+            ),
+        ];
+        for (direction, forward_key, back_key, forward, back, sign) in cases {
+            let mut harness = TestHarness::create_with_size(
+                test_property_set(),
+                VirtualScroll::new(0, 10)
+                    .with_direction(direction)
+                    .prepare(),
+                (200, 200),
+            );
+            let id = harness.root_id();
+            drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+            let _ = harness.redraw();
+            let node = harness.access_node(id).unwrap();
+            assert!(node.data().supports_action(forward));
+            assert!(!node.data().supports_action(back));
+
+            harness.focus_on(Some(id));
+            harness.process_text_event(&TextEvent::key_down(Key::Named(forward_key)));
+            assert_eq!(
+                harness.root_widget().unwrap().virtual_list.scroll_offset(),
+                20.
+            );
+            let _ = harness.redraw();
+            let node = harness.access_node(id).unwrap();
+            let (position, minimum, maximum) = match direction.axis() {
+                Axis::Vertical => (
+                    node.data().scroll_y(),
+                    node.data().scroll_y_min(),
+                    node.data().scroll_y_max(),
+                ),
+                Axis::Horizontal => (
+                    node.data().scroll_x(),
+                    node.data().scroll_x_min(),
+                    node.data().scroll_x_max(),
+                ),
+            };
+            assert_eq!(position, Some(sign * 20.));
+            assert_eq!(minimum, Some(if sign < 0. { -300. } else { 0. }));
+            assert_eq!(maximum, Some(if sign < 0. { 0. } else { 300. }));
+            assert!(node.data().supports_action(back));
+            harness.process_text_event(&TextEvent::key_down(Key::Named(back_key)));
+            assert_eq!(
+                harness.root_widget().unwrap().virtual_list.scroll_offset(),
+                0.
+            );
+
+            harness.process_access_event(ActionRequest {
+                action: forward,
+                target_tree: TreeId::ROOT,
+                target_node: id.into(),
+                data: Some(ActionData::ScrollUnit(ScrollUnit::Page)),
+            });
+            drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+            assert_eq!(
+                harness.root_widget().unwrap().virtual_list.scroll_offset(),
+                200.
+            );
+
+            harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::PageDown)));
+            drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+            assert_eq!(
+                harness.root_widget().unwrap().virtual_list.scroll_offset(),
+                300.
+            );
+            let _ = harness.redraw();
+            let node = harness.access_node(id).unwrap();
+            assert!(node.data().supports_action(back));
+            assert!(!node.data().supports_action(forward));
+        }
+    }
+
+    #[test]
+    fn nested_wheel_scrolls_outer_portal_only_at_inner_boundary() {
+        use crate::core::WidgetTag;
+        use crate::layout::AsUnit;
+        use crate::properties::{Dimensions, Gap};
+        use crate::widgets::{Flex, Portal};
+
+        let inner = WidgetTag::named("virtual-scroll-child");
+        let content = Flex::column()
+            .with_fixed(
+                VirtualScroll::new(0, 4)
+                    .prepare()
+                    .with_tag(inner)
+                    .with_props(Dimensions::fixed(100.px(), 100.px())),
+            )
+            .with_fixed_spacer(300.px())
+            .prepare()
+            .with_props(Gap::new(Length::ZERO));
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            Portal::new(content).constrain_horizontal(true).prepare(),
+            (100, 100),
+        );
+        for _ in 0..64 {
+            let Some((action, _)) = harness.pop_action::<VirtualScrollAction>().unwrap() else {
+                break;
+            };
+            if let VirtualScrollAction::Fetch(fetch) = action {
+                harness
+                    .edit_widget(inner, |scroll| fixed_size_driver(fetch, scroll))
+                    .unwrap();
+            }
+        }
+        assert!(
+            harness.pop_action_erased().is_none(),
+            "materialization must converge"
+        );
+        harness.mouse_move((40.0, 40.0));
+        harness.mouse_wheel(Vec2::new(0.0, -50.0));
+        assert_eq!(
+            harness
+                .get_widget(inner)
+                .unwrap()
+                .virtual_list
+                .scroll_offset(),
+            50.0
+        );
+        assert_eq!(harness.root_widget().unwrap().get_viewport_pos().y, 0.0);
+
+        harness.mouse_wheel(Vec2::new(0.0, -100.0));
+        assert_eq!(
+            harness
+                .get_widget(inner)
+                .unwrap()
+                .virtual_list
+                .scroll_offset(),
+            100.0
+        );
+        assert_eq!(harness.root_widget().unwrap().get_viewport_pos().y, 0.0);
+
+        harness.mouse_wheel(Vec2::new(0.0, -50.0));
+        assert_eq!(
+            harness
+                .get_widget(inner)
+                .unwrap()
+                .virtual_list
+                .scroll_offset(),
+            100.0
+        );
+        assert_eq!(harness.root_widget().unwrap().get_viewport_pos().y, 50.0);
+    }
+
+    #[test]
+    fn reveal_materialized_item_uses_current_visual_coordinates_in_all_directions() {
+        for direction in [
+            ScrollDirection::TopToBottom,
+            ScrollDirection::BottomToTop,
+            ScrollDirection::LeftToRight,
+            ScrollDirection::RightToLeft,
+        ] {
+            let mut harness = TestHarness::create_with_size(
+                test_property_set(),
+                VirtualScroll::new(0, 20)
+                    .with_direction(direction)
+                    .prepare(),
+                (200, 200),
+            );
+            let id = harness.root_id();
+            drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+            let child = harness.root_widget().unwrap().items[&5].id();
+            for _ in 0..2 {
+                harness.scroll_into_view(child);
+                drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+                let scroll = harness.root_widget().unwrap().virtual_list.scroll_offset();
+                assert!(
+                    (scroll - 100.0).abs() < 1e-6,
+                    "{direction:?}: reveal offset should be 100, got {scroll}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn intra_item_scroll_fetches_newly_materialized_neighbors() {
+        use crate::layout::AsUnit;
+        use crate::widgets::SizedBox;
+
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            VirtualScroll::new(0, 100).prepare(),
+            (100, 100),
+        );
+        let id = harness.root_id();
+        let driver = |action: VirtualScrollFetchAction,
+                      mut scroll: WidgetMut<'_, VirtualScroll>| {
+            let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &action).unwrap();
+            for idx in action.removed() {
+                assert!(fetch.remove_child(idx));
+            }
+            for idx in action.added() {
+                let height = if idx == 0 { 1000.px() } else { 50.px() };
+                assert!(fetch.add_child(
+                    idx,
+                    SizedBox::empty().size(50.px(), height).prepare().erased()
+                ));
+            }
+        };
+        drive_to_fixpoint(&mut harness, id, driver);
+        assert_eq!(
+            harness.root_widget().unwrap().active_range,
+            0..1,
+            "large first item initially covers the materialized strip"
+        );
+        harness
+            .edit_root_widget(|mut scroll| {
+                assert!(VirtualScroll::scroll_by(&mut scroll, 800.0));
+            })
+            .unwrap();
+        let request = next_fetch(&mut harness);
+        assert!(
+            request.target().contains(&1),
+            "newly materialized neighbor must be requested without crossing the anchor"
+        );
+        assert_eq!(
+            harness.root_widget().unwrap().anchor_index,
+            0,
+            "scroll remains inside the first item"
+        );
+        harness
+            .edit_root_widget(|scroll| driver(request, scroll))
+            .unwrap();
+        drive_to_fixpoint(&mut harness, id, driver);
+        assert!(
+            harness.root_widget().unwrap().items.contains_key(&1),
+            "neighbor is materialized before reaching it"
+        );
+    }
+
+    #[test]
+    fn initial_and_runtime_jumps_clamp_to_valid_items() {
+        let mut initial = VirtualScroll::new(usize::MAX, 20).with_len(10);
+        assert_eq!(
+            initial.anchor_index, 9,
+            "builder anchor must track the last valid item"
+        );
+        assert_eq!(
+            initial.scroll_offset_from_anchor(),
+            0.,
+            "builder anchor and offset agree"
+        );
+        let mut harness =
+            TestHarness::create_with_size(test_property_set(), initial.prepare(), (100, 200));
+        let id = harness.root_id();
+        drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::scroll_to(&mut scroll, usize::MAX);
+                assert_eq!(scroll.widget.anchor_index, 9, "jump anchor is clamped");
+                assert_eq!(
+                    scroll.widget.scroll_offset_from_anchor(),
+                    0.,
+                    "jump offset matches anchor"
+                );
+            })
+            .unwrap();
+        drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+        assert_eq!(
+            harness.root_widget().unwrap().range_in_viewport.end,
+            10,
+            "last item is visible"
+        );
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::set_len(&mut scroll, 0);
+                VirtualScroll::scroll_to(&mut scroll, usize::MAX);
+                assert_eq!(
+                    scroll.widget.anchor_index, 0,
+                    "empty list has no nonzero anchor"
+                );
+                assert_eq!(
+                    scroll.widget.scroll_offset_from_anchor(),
+                    0.,
+                    "empty list offset is zero"
+                );
+            })
+            .unwrap();
+        drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+        assert!(
+            harness.root_widget().unwrap().range_in_viewport.is_empty(),
+            "empty list has no visible items"
+        );
+    }
+
+    #[test]
+    fn changing_extent_estimates_preserves_the_actual_scroll_anchor() {
+        use crate::layout::AsUnit;
+        use crate::widgets::SizedBox;
+
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            VirtualScroll::new(0, 1000).prepare(),
+            (100, 200),
+        );
+        let id = harness.root_id();
+        let driver = |action: VirtualScrollFetchAction,
+                      mut scroll: WidgetMut<'_, VirtualScroll>| {
+            let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &action).unwrap();
+            for index in action.removed() {
+                assert!(fetch.remove_child(index));
+            }
+            for index in action.added() {
+                let height = if index < 15 { 50. } else { 120. };
+                assert!(
+                    fetch.add_child(
+                        index,
+                        SizedBox::empty()
+                            .size(50.px(), height.px())
+                            .prepare()
+                            .erased()
+                    )
+                );
+            }
+        };
+        drive_to_fixpoint(&mut harness, id, driver);
+        harness
+            .edit_root_widget(|mut scroll| {
+                assert!(VirtualScroll::scroll_by(&mut scroll, 1025.));
+            })
+            .unwrap();
+        drive_to_fixpoint(&mut harness, id, driver);
+        harness
+            .edit_root_widget(|mut scroll| {
+                let (index, offset) = scroll.widget.current_anchor();
+                assert_eq!(index, 20);
+                assert!((offset - 25.).abs() < 1e-8);
+                VirtualScroll::invalidate_extents(&mut scroll);
+            })
+            .unwrap();
+        drive_to_fixpoint(&mut harness, id, driver);
+        harness
+            .edit_root_widget(|scroll| {
+                let (index, offset) = scroll.widget.current_anchor();
+                assert_eq!(index, 20);
+                assert!((offset - 25.).abs() < 1e-8);
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn ending_scroll_animation_resnaps_existing_child() {
+        use crate::kurbo::Point;
+
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            VirtualScroll::new(0, 10).prepare(),
+            (200, 200),
+        );
+        let id = harness.root_id();
+        drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+        let child_id = harness.root_widget().unwrap().items[&0].id();
+        let origin = |harness: &TestHarness<VirtualScroll>| {
+            harness
+                .get_widget_with_id(child_id)
+                .unwrap()
+                .ctx()
+                .window_transform()
+                * Point::ORIGIN
+        };
+        let original = origin(&harness);
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::set_scrolling(&mut scroll, true);
+                assert!(VirtualScroll::scroll_by(&mut scroll, 0.25));
+            })
+            .unwrap();
+        assert_eq!(origin(&harness), original - Vec2::new(0., 0.25));
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::set_scrolling(&mut scroll, false);
+            })
+            .unwrap();
+        assert_eq!(origin(&harness), original);
+    }
+
+    #[test]
+    fn range_differences_match_set_membership() {
+        for a_start in 0..8 {
+            for a_end in a_start..8 {
+                for b_start in 0..8 {
+                    for b_end in b_start..8 {
+                        let a = a_start..a_end;
+                        let b = b_start..b_end;
+                        let expected = a.clone().filter(|idx| !b.contains(idx)).collect::<Vec<_>>();
+                        assert_eq!(range_difference(&a, &b).collect::<Vec<_>>(), expected);
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            range_difference(
+                &(usize::MAX - 3..usize::MAX),
+                &(usize::MAX - 2..usize::MAX - 1)
+            )
+            .collect::<Vec<_>>(),
+            vec![usize::MAX - 3, usize::MAX - 1],
+        );
+    }
+
+    #[test]
+    fn fetch_identity_rejects_wrong_widget_and_replay() {
+        let make_harness = || {
+            TestHarness::create_with_size(
+                test_property_set(),
+                VirtualScroll::new(0, 100).prepare(),
+                (100, 200),
+            )
+        };
+        let mut first = make_harness();
+        let mut second = make_harness();
+        let action = next_fetch(&mut first);
+        let other = next_fetch(&mut second);
+        assert_eq!(action.old_active(), other.old_active());
+        assert_eq!(action.target(), other.target());
+
+        second
+            .edit_root_widget(|mut scroll| {
+                assert!(VirtualScroll::begin_fetch(&mut scroll, &action).is_none());
+                assert!(scroll.widget.is_pending_fetch(&other));
+            })
+            .unwrap();
+
+        first
+            .edit_root_widget(|mut scroll| {
+                assert!(VirtualScroll::begin_fetch(&mut scroll, &other).is_none());
+                let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &action).unwrap();
+                for idx in action.added() {
+                    assert!(fetch.add_child(idx, Label::new(idx.to_string()).prepare().erased()));
+                }
+                assert!(VirtualScroll::begin_fetch(&mut scroll, &action).is_none());
+            })
+            .unwrap();
+
+        // A distinct widget may have the exact same ranges, but its own request
+        // must still be usable after rejection of the foreign one.
+        second
+            .edit_root_widget(|mut scroll| {
+                let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &other).unwrap();
+                for idx in other.added() {
+                    assert!(fetch.add_child(idx, Label::new(idx.to_string()).prepare().erased()));
+                }
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn pending_fetch_survives_redraws_and_is_invalidated_by_shrink() {
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            VirtualScroll::new(0, 100).prepare(),
+            (100, 200),
+        );
+        let old = next_fetch(&mut harness);
+        assert!(old.target().end > 1);
+        for _ in 0..20 {
+            harness
+                .edit_root_widget(|mut scroll| scroll.ctx.request_render())
+                .unwrap();
+            let _ = harness.redraw();
+            assert!(harness.root_widget().unwrap().is_pending_fetch(&old));
+        }
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::set_len(&mut scroll, 1);
+                assert!(!scroll.widget.is_pending_fetch(&old));
+                assert!(VirtualScroll::begin_fetch(&mut scroll, &old).is_none());
+            })
+            .unwrap();
+        let new = next_fetch(&mut harness);
+        assert_eq!(new.target(), &(0..1));
+        harness
+            .edit_root_widget(|mut scroll| {
+                let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &new).unwrap();
+                assert!(!fetch.add_child(1, Label::new("invalid").prepare().erased()));
+                assert!(fetch.add_child(0, Label::new("valid").prepare().erased()));
+                assert!(!fetch.remove_child(0));
+            })
+            .unwrap();
+        assert_eq!(harness.root_widget().unwrap().len(), 1);
+
+        harness
+            .edit_root_widget(|mut scroll| {
+                VirtualScroll::set_len(&mut scroll, 100);
+                assert!(VirtualScroll::begin_fetch(&mut scroll, &old).is_none());
+            })
+            .unwrap();
+        let grown = next_fetch(&mut harness);
+        harness
+            .edit_root_widget(|mut scroll| {
+                assert!(VirtualScroll::begin_fetch(&mut scroll, &old).is_none());
+                assert!(scroll.widget.is_pending_fetch(&grown));
+                let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &grown).unwrap();
+                for idx in grown.added() {
+                    assert!(fetch.add_child(idx, Label::new(idx.to_string()).prepare().erased()));
+                }
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn delayed_driver_can_revisit_stashed_items_and_duplicate_add_preserves_identity() {
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            VirtualScroll::new(0, 1000).prepare(),
+            (100, 200),
+        );
+        let id = harness.root_id();
+        drive_to_fixpoint(&mut harness, id, |action, mut scroll| {
+            let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &action).unwrap();
+            for idx in action.removed() {
+                assert!(fetch.remove_child(idx));
+            }
+            for idx in action.added() {
+                assert!(fetch.add_child(idx, Label::new(idx.to_string()).prepare().erased()));
+                if idx == 0 {
+                    let original = fetch.scroll.widget.items[&idx].id();
+                    assert!(!fetch.add_child(idx, Label::new("duplicate").prepare().erased()));
+                    assert_eq!(fetch.scroll.widget.items[&idx].id(), original);
+                    assert!(!fetch.remove_child(idx));
+                }
+            }
+        });
+        let original = harness.root_widget().unwrap().items[&0].id();
+
+        // Leave the fetch request queued while the viewport jumps away and
+        // back. The original item remains registered across both layouts.
+        harness
+            .edit_root_widget(|mut scroll| VirtualScroll::scroll_to(&mut scroll, 500))
+            .unwrap();
+        assert!(
+            harness
+                .get_widget_with_id(original)
+                .unwrap()
+                .ctx()
+                .is_stashed()
+        );
+        harness
+            .edit_root_widget(|mut scroll| VirtualScroll::scroll_to(&mut scroll, 0))
+            .unwrap();
+        assert!(
+            !harness
+                .get_widget_with_id(original)
+                .unwrap()
+                .ctx()
+                .is_stashed()
+        );
+        assert_eq!(harness.root_widget().unwrap().items[&0].id(), original);
+    }
+
     #[test]
     fn sensible_driver() {
         let widget = VirtualScroll::new(0, usize::MAX).prepare();
@@ -937,23 +1712,20 @@ mod tests {
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (100, 200));
         let virtual_scroll_id = harness.root_id();
         fn driver(action: VirtualScrollFetchAction, mut scroll: WidgetMut<'_, VirtualScroll>) {
-            VirtualScroll::will_handle_action(&mut scroll, &action);
-            for idx in action.old_active.clone() {
-                if !action.target.contains(&idx) {
-                    VirtualScroll::remove_child(&mut scroll, idx);
-                }
+            let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &action).unwrap();
+            for idx in action.removed() {
+                let _ = fetch.remove_child(idx);
             }
-            for idx in action.target {
-                if !action.old_active.contains(&idx) {
-                    VirtualScroll::add_child(
-                        &mut scroll,
+            for idx in action.added() {
+                assert!(
+                    fetch.add_child(
                         idx,
                         NewWidget::new(
                             Label::new(format!("{idx}")).with_style(StyleProperty::FontSize(30.)),
                         )
                         .erased(),
-                    );
-                }
+                    )
+                );
             }
         }
 
@@ -980,21 +1752,21 @@ mod tests {
         let virtual_scroll_id = harness.root_id();
         let driver = |action: VirtualScrollFetchAction,
                       mut scroll: WidgetMut<'_, VirtualScroll>| {
-            VirtualScroll::will_handle_action(&mut scroll, &action);
-            for idx in action.old_active.clone() {
-                if !action.target.contains(&idx) {
-                    VirtualScroll::remove_child(&mut scroll, idx);
-                }
+            let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &action).unwrap();
+            for idx in action.removed() {
+                let _ = fetch.remove_child(idx);
             }
-            for idx in action.target {
-                if !action.old_active.contains(&idx) && idx % step == remainder {
-                    VirtualScroll::add_child(
-                        &mut scroll,
-                        idx,
-                        NewWidget::new(
-                            Label::new(format!("{idx}")).with_style(StyleProperty::FontSize(30.)),
+            for idx in action.added() {
+                if idx % step == remainder {
+                    assert!(
+                        fetch.add_child(
+                            idx,
+                            NewWidget::new(
+                                Label::new(format!("{idx}"))
+                                    .with_style(StyleProperty::FontSize(30.)),
+                            )
+                            .erased(),
                         )
-                        .erased(),
                     );
                 }
             }
@@ -1028,21 +1800,21 @@ mod tests {
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (100, 200));
         let virtual_scroll_id = harness.root_id();
         fn driver(action: VirtualScrollFetchAction, mut scroll: WidgetMut<'_, VirtualScroll>) {
-            VirtualScroll::will_handle_action(&mut scroll, &action);
-            for idx in action.old_active.clone() {
-                if !action.target.contains(&idx) {
-                    VirtualScroll::remove_child(&mut scroll, idx);
-                }
+            let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &action).unwrap();
+            for idx in action.removed() {
+                let _ = fetch.remove_child(idx);
             }
-            for idx in action.target {
-                if !action.old_active.contains(&idx) && idx < 5 {
-                    VirtualScroll::add_child(
-                        &mut scroll,
-                        idx,
-                        NewWidget::new(
-                            Label::new(format!("{idx}")).with_style(StyleProperty::FontSize(30.)),
+            for idx in action.added() {
+                if idx < 5 {
+                    assert!(
+                        fetch.add_child(
+                            idx,
+                            NewWidget::new(
+                                Label::new(format!("{idx}"))
+                                    .with_style(StyleProperty::FontSize(30.)),
+                            )
+                            .erased(),
                         )
-                        .erased(),
                     );
                 }
             }
@@ -1069,27 +1841,24 @@ mod tests {
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (100, 200));
         let virtual_scroll_id = harness.root_id();
         fn driver(action: VirtualScrollFetchAction, mut scroll: WidgetMut<'_, VirtualScroll>) {
-            VirtualScroll::will_handle_action(&mut scroll, &action);
-            for idx in action.old_active.clone() {
-                if !action.target.contains(&idx) {
-                    VirtualScroll::remove_child(&mut scroll, idx);
-                }
+            let mut fetch = VirtualScroll::begin_fetch(&mut scroll, &action).unwrap();
+            for idx in action.removed() {
+                let _ = fetch.remove_child(idx);
             }
-            for idx in action.target {
-                if !action.old_active.contains(&idx) {
-                    assert!(
-                        idx < MAX,
-                        "Virtual Scroll controller should never request an invalid id. Requested {idx}"
-                    );
-                    VirtualScroll::add_child(
-                        &mut scroll,
+            for idx in action.added() {
+                assert!(
+                    idx < MAX,
+                    "Virtual Scroll controller should never request an invalid id. Requested {idx}"
+                );
+                assert!(
+                    fetch.add_child(
                         idx,
                         NewWidget::new(
                             Label::new(idx.to_string()).with_style(StyleProperty::FontSize(30.)),
                         )
                         .erased(),
-                    );
-                }
+                    )
+                );
             }
         }
 
@@ -1157,11 +1926,12 @@ mod tests {
                 "Only widget in tree should give action"
             );
             if let Some(old_active) = old_active.take() {
-                assert_eq!(action.old_active, old_active);
+                assert_eq!(action.old_active(), &old_active);
             }
-            old_active = Some(action.target.clone());
+            old_active = Some(action.target().clone());
             assert_ne!(
-                action.target, action.old_active,
+                action.target(),
+                action.old_active(),
                 "Shouldn't have sent an update if the target hasn't changed"
             );
 

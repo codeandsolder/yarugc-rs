@@ -106,7 +106,7 @@ where
         if prev.label != self.label {
             widgets::RadioButton::set_text(&mut element, self.label.clone());
         }
-        if prev.checked != self.checked {
+        if element.widget.is_checked() != self.checked {
             widgets::RadioButton::set_checked(&mut element, self.checked);
         }
     }
@@ -124,13 +124,16 @@ where
         &self,
         (): &mut Self::ViewState,
         message: &mut MessageCtx,
-        _element: Mut<'_, Self::Element>,
+        element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
         debug_assert!(
             message.remaining_path().is_empty(),
             "id path should be empty in RadioButton::message"
         );
+        if element.ctx.is_disabled() || element.ctx.is_stashed() {
+            return MessageResult::Stale;
+        }
         if message.take_message::<RadioButtonSelected>().is_some() {
             MessageResult::Action((self.callback)(app_state))
         } else {

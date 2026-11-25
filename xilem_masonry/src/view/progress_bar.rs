@@ -24,34 +24,22 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for ProgressBar {
     type Element = Pod<widgets::ProgressBar>;
     type ViewState = ();
 
-    fn build(&self, ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
-        (
-            ctx.with_action_widget(Pod::new(widgets::ProgressBar::new(self.progress))),
-            (),
-        )
+    fn build(&self, _ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
+        (Pod::new(widgets::ProgressBar::new(self.progress)), ())
     }
 
     fn rebuild(
         &self,
-        prev: &Self,
+        _: &Self,
         (): &mut Self::ViewState,
         _ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
         _: &mut State,
     ) {
-        if prev.progress != self.progress {
-            widgets::ProgressBar::set_progress(&mut element, self.progress);
-        }
+        widgets::ProgressBar::set_progress(&mut element, self.progress);
     }
 
-    fn teardown(
-        &self,
-        (): &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
-    ) {
-        ctx.teardown_action_source(element.ctx.widget_id());
-    }
+    fn teardown(&self, (): &mut Self::ViewState, _: &mut ViewCtx, _: Mut<'_, Self::Element>) {}
 
     fn message(
         &self,

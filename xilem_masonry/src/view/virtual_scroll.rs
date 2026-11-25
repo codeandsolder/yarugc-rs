@@ -10,7 +10,7 @@ use masonry::widgets;
 use crate::core::{MessageCtx, MessageResult, Mut, View, ViewId, ViewMarker, ViewPathTracker};
 use crate::{Pod, ViewCtx, WidgetView};
 
-pub use widgets::ScrollDirection;
+pub use widgets::{ScrollDirection, ViewportRange};
 
 /// Default function-pointer handler for a virtual scroll without a custom scroll callback.
 pub type ScrollHandler<State, Action> = fn(&mut State, Range<usize>) -> MessageResult<Action>;
@@ -23,8 +23,8 @@ pub struct VirtualScroll<State, Action, ChildrenViews, F, G> {
     func: F,
     anchor_index: Option<usize>,
     len: usize,
-    start_at: f64,
-    end_at: f64,
+    viewport: ViewportRange,
+    extent_revision: u64,
     direction: ScrollDirection,
     scrolling: bool,
     on_scroll: G,
@@ -49,11 +49,8 @@ pub struct VirtualScroll<State, Action, ChildrenViews, F, G> {
 /// - `func` is the component for this element's children.
 ///   It is provided with the app's state and the index of the child.
 ///
-/// In rare circumstances, the index of the child could be outside of the requested valid range (this is
-/// most likely to happen if the valid range changes due to something in `app_logic` updating it - e.g.
-/// if a counter which decrements every time a parent component is called is used for the valid range).
-/// As such, you should avoid panicking if the index is outside of a range you expect, and you are
-/// changing the valid range. We expect this limitation to be lifted in the future.
+/// Requests invalidated by a change in length are discarded; the child component is
+/// called only for indices within the current length.
 ///
 /// For full details, see the documentation on the [view type](VirtualScroll).
 pub fn virtual_scroll<State, Action, ChildrenViews, F>(
@@ -71,8 +68,8 @@ where
         func,
         anchor_index: None,
         len,
-        start_at: 0.,
-        end_at: 1.,
+        viewport: ViewportRange::FULL,
+        extent_revision: 0,
         direction: ScrollDirection::TopToBottom,
         scrolling: false,
         on_scroll: private::do_nothing::<State, Action>,
@@ -100,8 +97,8 @@ where
         func,
         anchor_index: None,
         len: usize::MAX,
-        start_at: 0.,
-        end_at: 1.,
+        viewport: ViewportRange::FULL,
+        extent_revision: 0,
         direction: ScrollDirection::TopToBottom,
         scrolling: false,
         on_scroll: private::do_nothing::<State, Action>,
@@ -118,12 +115,20 @@ impl<State, Action, ChildrenViews, F, G> VirtualScroll<State, Action, ChildrenVi
         self
     }
 
-    /// Sets the points (as ratios of width) where the first item starts and
-    /// the last item ends in the viewport.
+    /// Sets the viewport interval in scroll-direction coordinates.
     #[must_use = "Use the configured view."]
-    pub const fn start_end(mut self, start_at: f64, end_at: f64) -> Self {
-        self.start_at = start_at;
-        self.end_at = end_at;
+    pub const fn viewport(mut self, viewport: ViewportRange) -> Self {
+        self.viewport = viewport;
+        self
+    }
+
+    /// Changes the revision of the underlying item collection.
+    ///
+    /// Change this value when replacing or reordering data to discard remembered
+    /// size estimates for unmaterialized items. Retained items are remeasured.
+    #[must_use = "Use the configured view."]
+    pub const fn extent_revision(mut self, revision: u64) -> Self {
+        self.extent_revision = revision;
         self
     }
 
@@ -152,8 +157,8 @@ impl<State, Action, ChildrenViews, F, G> VirtualScroll<State, Action, ChildrenVi
             func: self.func,
             anchor_index: self.anchor_index,
             len: self.len,
-            start_at: self.start_at,
-            end_at: self.end_at,
+            viewport: self.viewport,
+            extent_revision: self.extent_revision,
             direction: self.direction,
             scrolling: self.scrolling,
             on_scroll,
@@ -221,7 +226,11 @@ where
         app_state: &mut State,
     ) {
         for (&idx, child) in &mut state.children {
-            self.rebuild_child(idx, child, ctx, element, app_state);
+            if idx < self.len
+                && let Some(widget) = widgets::VirtualScroll::child_mut(element, idx)
+            {
+                self.rebuild_child(idx, child, ctx, widget, app_state);
+            }
         }
     }
 
@@ -230,15 +239,13 @@ where
         idx: usize,
         child: &mut private::ChildState<ChildrenViews, ChildrenViews::ViewState>,
         ctx: &mut ViewCtx,
-        element: &mut masonry::core::WidgetMut<'_, widgets::VirtualScroll>,
+        widget: masonry::core::WidgetMut<'_, ChildrenViews::Widget>,
         app_state: &mut State,
     ) {
         let next = (self.func)(app_state, idx);
         with_child_path(ctx, idx, child.generation, |ctx| {
-            if let Some(widget) = widgets::VirtualScroll::child_mut(element, idx) {
-                next.rebuild(&child.view, &mut child.state, ctx, widget, app_state);
-                child.view = next;
-            }
+            next.rebuild(&child.view, &mut child.state, ctx, widget, app_state);
+            child.view = next;
         });
     }
 }
@@ -265,7 +272,7 @@ where
         // Setting that seems like an imperative action?
         let pod = Pod::new(
             widgets::VirtualScroll::new(self.anchor_index.unwrap_or(0), self.len)
-                .with_start_end(self.start_at, self.end_at)
+                .with_viewport(self.viewport)
                 .with_direction(self.direction)
                 .with_scrolling(self.scrolling),
         );
@@ -288,25 +295,23 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) {
+        let len_changed = self.len != prev.len;
+        if len_changed {
+            widgets::VirtualScroll::set_len(&mut element, self.len);
+        }
+
         if self.anchor_index != prev.anchor_index
             && let Some(idx) = self.anchor_index
         {
             widgets::VirtualScroll::scroll_to(&mut element, idx);
         }
 
-        let len_changed = self.len != prev.len;
-        if len_changed {
-            widgets::VirtualScroll::set_len(&mut element, self.len);
+        if self.extent_revision != prev.extent_revision {
+            widgets::VirtualScroll::invalidate_extents(&mut element);
         }
 
-        let start_at = self.start_at.to_bits() != prev.start_at.to_bits();
-        if start_at {
-            widgets::VirtualScroll::set_start(&mut element, self.start_at);
-        }
-
-        let end_at = self.end_at.to_bits() != prev.end_at.to_bits();
-        if end_at {
-            widgets::VirtualScroll::set_end(&mut element, self.end_at);
+        if self.viewport != prev.viewport {
+            widgets::VirtualScroll::set_viewport(&mut element, self.viewport);
         }
 
         let direction_changed = self.direction != prev.direction;
@@ -319,28 +324,27 @@ where
             widgets::VirtualScroll::set_scrolling(&mut element, self.scrolling);
         }
 
-        if let Some(action) = view_state.pending_action.take() {
-            widgets::VirtualScroll::will_handle_action(&mut element, &action);
-            for idx in action.old_active().clone() {
-                if !action.target().contains(&idx) {
-                    if let Some(mut child) = view_state.children.remove(&idx) {
-                        with_child_path(ctx, idx, child.generation, |ctx| {
-                            if let Some(child_element) =
-                                widgets::VirtualScroll::child_mut(&mut element, idx)
-                            {
-                                child.view.teardown(&mut child.state, ctx, child_element);
-                            } else {
-                                ctx.remove_action_sources_under_current_path();
-                            }
-                        });
-                    }
-                    widgets::VirtualScroll::remove_child(&mut element, idx);
+        if let Some(action) = view_state.pending_action.take()
+            && let Some(mut fetch) = widgets::VirtualScroll::begin_fetch(&mut element, &action)
+        {
+            for idx in action.removed() {
+                if let Some(mut child) = view_state.children.remove(&idx) {
+                    with_child_path(ctx, idx, child.generation, |ctx| {
+                        if let Some(child_element) = fetch.child_mut(idx) {
+                            child.view.teardown(&mut child.state, ctx, child_element);
+                        } else {
+                            ctx.remove_action_sources_under_current_path();
+                        }
+                    });
                 }
+                let _ = fetch.remove_child(idx);
             }
             // Preserve index order for both new and retained child callbacks.
             for idx in action.target().clone() {
                 if let Some(child) = view_state.children.get_mut(&idx) {
-                    self.rebuild_child(idx, child, ctx, &mut element, app_state);
+                    if let Some(widget) = fetch.child_mut(idx) {
+                        self.rebuild_child(idx, child, ctx, widget, app_state);
+                    }
                     continue;
                 }
                 let view = (self.func)(app_state, idx);
@@ -348,7 +352,12 @@ where
                 view_state.next_generation = generation.wrapping_add(1);
                 let (child, state) =
                     with_child_path(ctx, idx, generation, |ctx| view.build(ctx, app_state));
-                widgets::VirtualScroll::add_child(&mut element, idx, child.new_widget.erased());
+                if !fetch.add_child(idx, child.new_widget.erased()) {
+                    with_child_path(ctx, idx, generation, |ctx| {
+                        ctx.remove_action_sources_under_current_path();
+                    });
+                    continue;
+                }
                 view_state.children.insert(
                     idx,
                     private::ChildState {
@@ -397,6 +406,9 @@ where
             let Ok(idx) = usize::try_from(first.routing_id()) else {
                 return MessageResult::Stale;
             };
+            if idx >= self.len {
+                return MessageResult::Stale;
+            }
             let Some(target) = view_state.children.get_mut(&idx) else {
                 return MessageResult::Stale;
             };
@@ -413,6 +425,9 @@ where
         if let Some(action) = message.take_message::<widgets::VirtualScrollAction>() {
             match *action {
                 widgets::VirtualScrollAction::Fetch(action) => {
+                    if !element.widget.is_pending_fetch(&action) {
+                        return MessageResult::Stale;
+                    }
                     // TODO: We should be able to rebuild here (we have the element)
                     // but we currently can't make a `ViewCtx`
                     view_state.pending_action = Some(action);
@@ -427,5 +442,157 @@ where
             tracing::error!(?message, "Wrong message type in VirtualScroll::message");
             MessageResult::Stale
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+
+    use masonry::app::RenderRootSignal;
+
+    use crate::core::{DynMessage, Environment};
+    use crate::test_support::{render_root, view_context};
+    use crate::view::spinner;
+
+    use super::*;
+
+    fn next_fetch(signals: &mpsc::Receiver<RenderRootSignal>) -> widgets::VirtualScrollFetchAction {
+        signals
+            .try_iter()
+            .find_map(|signal| {
+                let RenderRootSignal::Action(action, _) = signal else {
+                    return None;
+                };
+                match *action.downcast::<widgets::VirtualScrollAction>().ok()? {
+                    widgets::VirtualScrollAction::Fetch(action) => Some(action),
+                    widgets::VirtualScrollAction::Scroll(_) => None,
+                }
+            })
+            .unwrap()
+    }
+
+    fn message(action: widgets::VirtualScrollFetchAction) -> MessageCtx {
+        MessageCtx::new(
+            Environment::default(),
+            Vec::new(),
+            DynMessage::new(widgets::VirtualScrollAction::Fetch(action)),
+        )
+    }
+
+    #[test]
+    fn growing_and_jumping_in_one_rebuild_uses_new_length() {
+        let mut ctx = view_context();
+        let component = |_: &mut (), _| spinner();
+        let original = virtual_scroll::<_, (), _, _>(1, component);
+        let grown = virtual_scroll::<_, (), _, _>(100, component).jump_to(Some(80));
+        let (pod, mut state) = original.build(&mut ctx, &mut ());
+        let (mut root, receive) = render_root(pod.new_widget, (100, 200));
+        let first = next_fetch(&receive);
+        assert_eq!(
+            first.target(),
+            &(0..1),
+            "initial request covers the single item"
+        );
+        root.edit_base_layer(
+            |mut element: masonry::core::WidgetMut<'_, widgets::VirtualScroll>| {
+                assert!(
+                    matches!(
+                        original.message(
+                            &mut state,
+                            &mut message(first),
+                            element.reborrow_mut(),
+                            &mut ()
+                        ),
+                        MessageResult::RequestRebuild
+                    ),
+                    "initial request is accepted"
+                );
+                original.rebuild(&original, &mut state, &mut ctx, element, &mut ());
+            },
+        )
+        .unwrap();
+        root.edit_base_layer(|element| {
+            grown.rebuild(&original, &mut state, &mut ctx, element, &mut ());
+        })
+        .unwrap();
+        let request = next_fetch(&receive);
+        assert!(
+            request.target().contains(&80),
+            "the new target must be materialized: {:?}",
+            request.target()
+        );
+        assert!(
+            request.target().start > 0,
+            "jump must leave the initial range"
+        );
+    }
+
+    #[test]
+    fn shrinking_between_message_and_rebuild_never_calls_out_of_range_component() {
+        let mut ctx = view_context();
+        let mut calls = Vec::new();
+        let component = |calls: &mut Vec<usize>, idx| {
+            calls.push(idx);
+            spinner()
+        };
+        let original = virtual_scroll::<_, (), _, _>(100, component);
+        let smaller = virtual_scroll::<_, (), _, _>(1, component);
+        let (pod, mut state) = original.build(&mut ctx, &mut calls);
+        let (mut root, receive) = render_root(pod.new_widget, (100, 200));
+        let old = next_fetch(&receive);
+        assert!(old.target().end > 1);
+
+        root.edit_base_layer(|element| {
+            assert!(matches!(
+                original.message(&mut state, &mut message(old.clone()), element, &mut calls),
+                MessageResult::RequestRebuild,
+            ));
+        })
+        .unwrap();
+
+        root.edit_base_layer(|element| {
+            smaller.rebuild(&original, &mut state, &mut ctx, element, &mut calls);
+        })
+        .unwrap();
+        assert!(calls.is_empty());
+        assert!(state.children.is_empty());
+        let current = next_fetch(&receive);
+        assert_eq!(current.target(), &(0..1));
+
+        root.edit_base_layer(
+            |mut element: masonry::core::WidgetMut<'_, widgets::VirtualScroll>| {
+                assert!(matches!(
+                    smaller.message(
+                        &mut state,
+                        &mut message(current.clone()),
+                        element.reborrow_mut(),
+                        &mut calls
+                    ),
+                    MessageResult::RequestRebuild,
+                ));
+                assert!(matches!(
+                    smaller.message(
+                        &mut state,
+                        &mut message(old),
+                        element.reborrow_mut(),
+                        &mut calls
+                    ),
+                    MessageResult::Stale,
+                ));
+                smaller.rebuild(&smaller, &mut state, &mut ctx, element, &mut calls);
+            },
+        )
+        .unwrap();
+        assert_eq!(calls, [0]);
+        assert_eq!(state.children.len(), 1);
+
+        root.edit_base_layer(|element| {
+            assert!(matches!(
+                smaller.message(&mut state, &mut message(current), element, &mut calls),
+                MessageResult::Stale,
+            ));
+        })
+        .unwrap();
     }
 }

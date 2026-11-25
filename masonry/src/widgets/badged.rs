@@ -70,12 +70,7 @@ impl Badged {
         content: NewWidget<impl Widget + ?Sized>,
         badge: NewWidget<impl Widget + ?Sized>,
     ) -> Self {
-        Self {
-            content: content.erased().into_pod(),
-            badge: Some(badge.erased().into_pod()),
-            placement: BadgePlacement::TopRight,
-            offset: Vec2::ZERO,
-        }
+        Self::new_optional(content, Some(badge.erased()))
     }
 
     /// Creates a new `Badged` widget that may omit the badge entirely.
@@ -278,6 +273,40 @@ mod tests {
         let mut harness = TestHarness::create_with(test_property_set(), widget, params);
 
         assert_render_snapshot!(harness, "badged_button");
+    }
+
+    #[test]
+    fn decorative_badge_does_not_block_overlapped_button() {
+        use crate::core::PointerButton;
+        use crate::widgets::ButtonPress;
+
+        let button = Button::with_text("Inbox").prepare();
+        let button_id = button.id();
+        let badge = Badge::with_text("3").prepare();
+        let badge_id = badge.id();
+        let widget = Align::centered(Badged::new(button, badge).prepare()).prepare();
+        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (240, 120));
+        let rect = |id| {
+            let widget = harness.get_widget_with_id(id).unwrap();
+            widget
+                .ctx()
+                .window_transform()
+                .transform_rect_bbox(widget.ctx().border_box())
+        };
+        let overlap = rect(button_id).intersect(rect(badge_id));
+        assert!(overlap.width() > 0.0 && overlap.height() > 0.0);
+        harness.mouse_move(overlap.center());
+        harness.mouse_button_press(Some(PointerButton::Primary));
+        harness.mouse_button_release(Some(PointerButton::Primary));
+        assert_eq!(
+            harness.pop_action::<ButtonPress>().unwrap(),
+            Some((
+                ButtonPress {
+                    button: Some(PointerButton::Primary)
+                },
+                button_id
+            ))
+        );
     }
 
     #[test]

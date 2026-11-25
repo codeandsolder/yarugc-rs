@@ -97,7 +97,7 @@ impl<ChildA, ChildB, State, Action> Split<ChildA, ChildB, State, Action> {
     /// The value is clamped to `0.0..=1.0`.
     /// The default split point is `0.5`.
     pub const fn split_point(mut self, split_point: f64) -> Self {
-        self.point = widgets::SplitPoint::Fraction(split_point.clamp(0.0, 1.0));
+        self.point = widgets::SplitPoint::Fraction(split_point).normalized();
         self
     }
 
@@ -119,7 +119,7 @@ impl<ChildA, ChildB, State, Action> Split<ChildA, ChildB, State, Action> {
 
     /// Set the split point.
     pub const fn with_split_point(mut self, split_point: widgets::SplitPoint) -> Self {
-        self.point = split_point;
+        self.point = split_point.normalized();
         self
     }
 
@@ -157,7 +157,7 @@ impl<ChildA, ChildB, State, Action> Split<ChildA, ChildB, State, Action> {
 
     /// Set whether the split point can be changed by dragging.
     ///
-    /// The default is false.
+    /// The default is true.
     pub const fn draggable(mut self, draggable: bool) -> Self {
         self.draggable = draggable;
         self

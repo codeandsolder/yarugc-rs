@@ -6,6 +6,7 @@
 use kurbo::Rect;
 use ui_events::keyboard::{Code, Key, KeyState, KeyboardEvent};
 
+use crate::core::WidgetId;
 use crate::dpi::PhysicalSize;
 use crate::util::Duration;
 
@@ -101,13 +102,19 @@ pub enum Update {
 
     /// Called when a descendant widget requests to be scrolled to.
     ///
-    /// The included [`Rect`] is in the receiving widget's content-box coordinate space.
+    /// The rectangle is in the receiving widget's current content-box coordinate space,
+    /// including the direct child's transform and scroll translation.
     ///
     /// See also [`EventCtx::request_scroll_to_this`] and [`EventCtx::request_scroll_to`].
     ///
     /// [`EventCtx::request_scroll_to_this`]: crate::core::EventCtx::request_scroll_to_this
     /// [`EventCtx::request_scroll_to`]: crate::core::EventCtx::request_scroll_to
-    RequestPanToChild(Rect),
+    RequestPanToChild {
+        /// The direct child containing the requested region.
+        child: WidgetId,
+        /// The region to reveal, in current viewport coordinates.
+        rect: Rect,
+    },
 
     /// Called when the [hovered] status of the current widget changes.
     ///
@@ -285,7 +292,7 @@ impl Update {
             Self::ChildActiveChanged(true) => "ChildActiveChanged(true)",
             Self::FocusChanged(true) => "FocusChanged(true)",
             Self::ChildFocusChanged(true) => "ChildFocusChanged(true)",
-            Self::RequestPanToChild(_) => "RequestPanToChild(_)",
+            Self::RequestPanToChild { .. } => "RequestPanToChild { .. }",
             Self::FontsChanged => "FontsChanged",
         }
     }

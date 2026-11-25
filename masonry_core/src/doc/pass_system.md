@@ -149,7 +149,9 @@ It updates IME status and may send [`Ime::Disabled`] events to a widget and [`St
 
 This pass is requested when something happens that makes a widget want to be "scrolled into view", such as typing into a text input widget.
 
-It iterates other the entire parent chain of this widget, and passes [`RequestPanToChild`] to each parent.
+It iterates over the parent chain of this widget, passing [`RequestPanToChild`] to each parent.
+Each request identifies the direct child and carries a rectangle in the parent's current content-box coordinates, including transforms and scroll translation.
+After a parent scrolls, layout and compose are refreshed as needed and the visible region is propagated to the next parent.
 
 #### "Update pointer" pass
 

@@ -151,19 +151,8 @@ impl<Seq, State, Action> Flex<Seq, State, Action> {
 
 mod hidden {
     use super::FlexItem;
-    use crate::core::{AppendVec, View};
-    use crate::view::FlexElement;
+    use crate::core::View;
     use crate::{AnyWidgetView, ViewCtx};
-
-    #[doc(hidden)]
-    #[expect(
-        unnameable_types,
-        reason = "Implementation detail, public because of trait visibility rules"
-    )]
-    pub struct FlexState<SeqState> {
-        pub(crate) seq_state: SeqState,
-        pub(crate) scratch: AppendVec<FlexElement>,
-    }
 
     #[doc(hidden)]
     #[expect(
@@ -189,7 +178,7 @@ mod hidden {
     }
 }
 
-use hidden::{AnyFlexChildState, FlexState};
+use hidden::AnyFlexChildState;
 
 impl<Seq, State, Action> ViewMarker for Flex<Seq, State, Action> {}
 impl<State, Action, Seq> View<State, Action, ViewCtx> for Flex<Seq, State, Action>
@@ -200,7 +189,7 @@ where
 {
     type Element = Pod<widgets::Flex>;
 
-    type ViewState = FlexState<Seq::SeqState>;
+    type ViewState = super::CollectionState<Seq::SeqState, FlexElement>;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let mut elements = AppendVec::default();
@@ -216,7 +205,7 @@ where
             }
         }
         let pod = Pod::new(widget);
-        let state = FlexState {
+        let state = super::CollectionState {
             seq_state,
             scratch: elements,
         };
@@ -227,7 +216,7 @@ where
     fn rebuild(
         &self,
         prev: &Self,
-        FlexState { seq_state, scratch }: &mut Self::ViewState,
+        view_state: &mut Self::ViewState,
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
@@ -241,37 +230,10 @@ where
         if prev.main_axis_alignment != self.main_axis_alignment {
             widgets::Flex::set_main_axis_alignment(&mut element, self.main_axis_alignment);
         }
-        let mut splice = FlexSplice::new(element, scratch);
-        self.sequence
-            .seq_rebuild(&prev.sequence, seq_state, ctx, &mut splice, app_state);
-        debug_assert!(scratch.is_empty());
+        view_state.rebuild(&self.sequence, &prev.sequence, ctx, element, app_state);
     }
 
-    fn teardown(
-        &self,
-        FlexState { seq_state, scratch }: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
-    ) {
-        let mut splice = FlexSplice::new(element, scratch);
-        self.sequence.seq_teardown(seq_state, ctx, &mut splice);
-        debug_assert!(scratch.is_empty());
-    }
-
-    fn message(
-        &self,
-        FlexState { seq_state, scratch }: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        let mut splice = FlexSplice::new(element, scratch);
-        let result = self
-            .sequence
-            .seq_message(seq_state, message, &mut splice, app_state);
-        debug_assert!(scratch.is_empty());
-        result
-    }
+    collection_lifecycle!();
 }
 
 /// A child element of a [`Flex`] view.
