@@ -441,7 +441,7 @@ impl InheritedStatus {
         }
     }
 
-    fn consume(self, state: &mut WidgetState) {
+    const fn consume(self, state: &mut WidgetState) {
         match self {
             Self::Disabled => state.set_needs_update_disabled(false),
             Self::Stashed => state.set_needs_update_stashed(false),
@@ -476,7 +476,7 @@ impl InheritedStatus {
         }
     }
 
-    fn invalidate_parent(self, parent: &mut WidgetState) {
+    const fn invalidate_parent(self, parent: &mut WidgetState) {
         if matches!(self, Self::Stashed) {
             // The visible child list and union of paint bounds both changed.
             parent.set_request_accessibility(true);
