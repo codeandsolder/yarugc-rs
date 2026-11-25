@@ -58,7 +58,12 @@ fn pointer_event_bubbling() {
     let parent_tag = WidgetTag::named("parent");
     let grandparent_tag = WidgetTag::named("grandparent");
 
-    let button = NewWidget::new(Button::with_text("button").record()).with_tag(button_tag);
+    let button = NewWidget::new(
+        ModularWidget::new(())
+            .measure_fn(|_, _, _, _, _, _| 20.px())
+            .record(),
+    )
+    .with_tag(button_tag);
     let parent = NewWidget::new(ModularWidget::new_parent(button).record()).with_tag(parent_tag);
     let grandparent =
         NewWidget::new(ModularWidget::new_parent(parent).record()).with_tag(grandparent_tag);
@@ -795,7 +800,7 @@ fn accessibility_activation_rejects_hidden_and_disabled_targets_without_bubbling
 
     harness.accessibility_click_on(id);
     assert!(harness.pop_action::<ButtonPress>().unwrap().is_some());
-    assert!(harness.pop_action::<()>().unwrap().is_some());
+    assert!(harness.pop_action::<()>().unwrap().is_none());
 
     harness
         .edit_widget_with_id(id, |mut child| child.ctx.set_disabled(true))

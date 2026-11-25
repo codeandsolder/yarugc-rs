@@ -1,7 +1,7 @@
 // Copyright 2026 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::core::keyboard::Key;
+use crate::core::keyboard::{Key, NamedKey};
 use crate::core::{
     AccessEvent, EventCtx, LayoutCtx, MeasureCtx, PaintCtx, PointerButton, PointerButtonEvent,
     PointerEvent, PrePaintProps, PropertiesRef, TextEvent, Update, WidgetPod, paint_background,
@@ -16,58 +16,99 @@ use crate::widgets::Label;
 // Shared activation policy for selection controls. Keep the keyboard press
 // armed only while the control owns focus, rather than treating any Space
 // release as a click.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ActivationKey {
+    Space,
+    Enter,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum ActivationKeys {
+    Space,
+    SpaceOrEnter,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum ActivationButtons {
+    Primary,
+    Any,
+}
+
 #[derive(Debug)]
 pub(super) struct Activation {
-    space_pressed: bool,
+    pressed: Option<ActivationKey>,
 }
 
 impl Activation {
     pub(super) const fn new() -> Self {
-        Self {
-            space_pressed: false,
-        }
+        Self { pressed: None }
     }
 
     pub(super) fn pointer(ctx: &mut EventCtx<'_>, event: &PointerEvent) -> bool {
+        Self::pointer_event(ctx, event, ActivationButtons::Primary).is_some()
+    }
+
+    pub(super) fn pointer_event<'e>(
+        ctx: &mut EventCtx<'_>,
+        event: &'e PointerEvent,
+        buttons: ActivationButtons,
+    ) -> Option<&'e PointerButtonEvent> {
+        let accepts = |event: &PointerButtonEvent| {
+            matches!(buttons, ActivationButtons::Any)
+                || matches!(event.button, None | Some(PointerButton::Primary))
+        };
         match event {
-            PointerEvent::Down(PointerButtonEvent {
-                button: None | Some(PointerButton::Primary),
-                ..
-            }) => {
+            PointerEvent::Down(event) if accepts(event) => {
                 ctx.request_focus();
                 ctx.capture_pointer();
                 ctx.set_handled();
-                false
+                None
             }
-            PointerEvent::Up(PointerButtonEvent {
-                button: None | Some(PointerButton::Primary),
-                ..
-            }) if ctx.is_pointer_capture_target() => {
+            PointerEvent::Up(event) if accepts(event) && ctx.is_pointer_capture_target() => {
                 ctx.set_handled();
-                ctx.is_hovered()
+                ctx.is_hovered().then_some(event)
             }
-            _ => false,
+            _ => None,
         }
     }
 
     pub(super) fn keyboard(&mut self, ctx: &mut EventCtx<'_>, event: &TextEvent) -> bool {
+        self.keyboard_with_keys(ctx, event, ActivationKeys::Space)
+    }
+
+    pub(super) fn keyboard_with_keys(
+        &mut self,
+        ctx: &mut EventCtx<'_>,
+        event: &TextEvent,
+        keys: ActivationKeys,
+    ) -> bool {
         if matches!(event, TextEvent::WindowFocusChange(false)) {
-            self.space_pressed = false;
+            self.pressed = None;
         }
         let TextEvent::Keyboard(event) = event else {
             return false;
         };
-        if !ctx.is_focus_target() || !matches!(&event.key, Key::Character(c) if c == " ") {
+        if !ctx.is_focus_target() {
             return false;
         }
+        let key = match &event.key {
+            Key::Character(c) if c == " " => ActivationKey::Space,
+            Key::Named(NamedKey::Enter) if matches!(keys, ActivationKeys::SpaceOrEnter) => {
+                ActivationKey::Enter
+            }
+            _ => return false,
+        };
         ctx.set_handled();
         if event.state.is_down() {
             if !event.repeat {
-                self.space_pressed = true;
+                self.pressed = Some(key);
             }
             false
+        } else if self.pressed == Some(key) {
+            self.pressed = None;
+            true
         } else {
-            std::mem::take(&mut self.space_pressed)
+            false
         }
     }
 
@@ -87,7 +128,7 @@ impl Activation {
                 | Update::DisabledChanged(true)
                 | Update::StashedChanged(true)
         ) {
-            self.space_pressed = false;
+            self.pressed = None;
         }
     }
 }
