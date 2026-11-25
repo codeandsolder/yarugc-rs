@@ -195,7 +195,8 @@ where
 
     fn run_logic(&mut self, driver_ctx: &mut DriverCtx<'_>) {
         let mut returned_ids = HashSet::new();
-        for next_view in (self.logic)(&mut self.state) {
+        for mut next_view in (self.logic)(&mut self.state) {
+            next_view.base_color.get_or_insert(self.default_base_color);
             if !returned_ids.insert(next_view.id) {
                 tracing::error!(
                     window_id = next_view.id.trace(),
@@ -375,28 +376,32 @@ where
         self.handle_message_result(window_id, masonry_ctx, &message_result);
     }
 
-    fn on_start(&mut self, state: &mut MasonryState) {
-        // self.fonts is never used again, so we may as well deallocate it.
-        let fonts = std::mem::take(&mut self.fonts);
-
-        for root in state.roots() {
-            if let Some(root_widget) = root
-                .get_layer_root(0)
-                .and_then(|root| root.downcast::<masonry::widgets::Passthrough>())
-            {
-                let fallback = root_widget.inner().inner_id();
-                root.set_focus_fallback(Some(fallback));
-            }
-
-            // Register all provided fonts
-            for font in &fonts {
-                // We currently don't do anything with the resulting family information,
-                // because we don't have an easy way to return this to the application.
-                drop(root.register_fonts(font.clone()));
-            }
+    fn on_window_created(&mut self, _id: WindowId, window: &mut masonry_winit::app::Window) {
+        let root = window.render_root();
+        if let Some(root_widget) = root
+            .get_layer_root(0)
+            .and_then(|root| root.downcast::<masonry::widgets::Passthrough>())
+        {
+            let fallback = root_widget.inner().inner_id();
+            root.set_focus_fallback(Some(fallback));
         }
 
-        // Calls callback functions after windows creation.
+        // Each RenderRoot owns its own font collection, including windows
+        // created after the initial application startup.
+        for font in &self.fonts {
+            drop(root.register_fonts(font.clone()));
+        }
+    }
+
+    fn on_window_creation_failed(
+        &mut self,
+        id: WindowId,
+        _error: &masonry_winit::app::WindowCreationError,
+    ) {
+        self.windows.remove(&id);
+    }
+
+    fn on_start(&mut self, state: &mut MasonryState) {
         if let Some(cb) = self.start_callback.take() {
             cb(state);
         }

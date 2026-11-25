@@ -18,8 +18,7 @@ use crate::event_loop_runner::{NewWindow, Window, WindowCreationError};
 ///
 /// [`MasonryState`] internally maps these to winit window ids ([`winit::window::WindowId`]).
 /// Applications should only use this struct and not be concerned with the winit window ids.
-/// When the application is suspended and resumed this id will stay the same, while the
-/// winit window id will change.
+/// The identifier remains stable while the window is suspended and resumed.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct WindowId(pub(crate) NonZeroU64);
 
@@ -109,16 +108,19 @@ pub trait AppDriver {
     ) {
     }
 
-    /// A hook which will be executed when the application starts, to allow initial configuration of the `MasonryState`.
+    /// Called exactly once, after the first resume and initial window setup.
     ///
-    /// Use cases include loading fonts.
-    ///
-    /// There are circumstances under which this will be called multiple times during the lifecycle of your app.
-    /// This is not intended to be the behaviour of Masonry Winit long-term, but this method should currently
-    /// not assume it will only be called once (but should feel free to waste work if it is called multiple times,
-    /// for example, as the mentioned circumstances are very rare).
-    // TODO: Turn into something like on window created, or split into two.
+    /// This is also called if the application starts without any windows.
     fn on_start(&mut self, state: &mut MasonryState) {}
+
+    /// Called once for every successfully created window, before its first
+    /// frame or any queued actions are delivered to the driver.
+    fn on_window_created(&mut self, window_id: WindowId, window: &mut Window) {}
+
+    /// Called when a queued window could not be created after resuming.
+    ///
+    /// Immediate creation failures are returned directly by the creation method.
+    fn on_window_creation_failed(&mut self, window_id: WindowId, error: &WindowCreationError) {}
 
     /// A hook called when a user has requested to close a window.
     fn on_close_requested(&mut self, window_id: WindowId, ctx: &mut DriverCtx<'_>) {

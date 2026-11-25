@@ -1,7 +1,7 @@
 // Copyright 2024 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, mpsc};
@@ -109,6 +109,8 @@ pub struct NewWindow {
     pub root_widget: NewWidget<dyn Widget>,
     /// The base color of the window.
     pub base_color: Color,
+    /// Optional per-window override of the application default properties.
+    pub default_properties: Option<Arc<DefaultProperties>>,
 }
 
 impl NewWindow {
@@ -136,6 +138,7 @@ impl NewWindow {
             attributes,
             root_widget,
             base_color: Color::BLACK,
+            default_properties: None,
         }
     }
 
@@ -145,10 +148,15 @@ impl NewWindow {
     /// Masonry's current default theme assumes that this will be a very dark color for sufficient contrast.
     /// This is most useful for apps which want to for example support light mode.
     ///
-    /// Please note that it is not currently supported to modify this once the app is running.
-    /// This is not a fundamental limitation, and is only due to missing api design.
+    /// To change it at runtime, use [`Window::set_base_color`].
     pub const fn with_base_color(mut self, base_color: Color) -> Self {
         self.base_color = base_color;
+        self
+    }
+
+    /// Sets a window-specific default property set.
+    pub fn with_default_properties(mut self, default_properties: Arc<DefaultProperties>) -> Self {
+        self.default_properties = Some(default_properties);
         self
     }
 }
@@ -161,27 +169,31 @@ pub struct Window {
     event_reducer: WindowEventReducer,
     pub(crate) render_root: RenderRoot,
     pub(crate) base_color: Color,
+    application_properties: Arc<DefaultProperties>,
     last_anim: Option<Instant>,
     present_mode: wgpu::PresentMode,
 }
 
 impl Window {
     pub(crate) fn new(
-        window_id: WindowId,
+        new_window: NewWindow,
         handle: Arc<WindowHandle>,
         accesskit_adapter: Adapter,
-        root_widget: NewWidget<dyn Widget>,
         signal_sender: Sender<(WindowId, RenderRootSignal)>,
-        base_color: Color,
-        options: RenderRootOptions,
+        mut options: RenderRootOptions,
     ) -> Self {
+        let window_id = new_window.id;
+        let application_properties = options.default_properties.clone();
+        if let Some(properties) = new_window.default_properties {
+            options.default_properties = properties;
+        }
         Self {
             id: window_id,
             handle,
             accesskit_adapter,
             event_reducer: WindowEventReducer::default(),
             render_root: RenderRoot::new(
-                root_widget,
+                new_window.root_widget,
                 move |signal| {
                     if signal_sender.send((window_id, signal)).is_err() {
                         trace!("Dropping signal after the event loop closed");
@@ -189,7 +201,8 @@ impl Window {
                 },
                 options,
             ),
-            base_color,
+            base_color: new_window.base_color,
+            application_properties,
             last_anim: None,
             present_mode: wgpu::PresentMode::AutoVsync,
         }
@@ -205,9 +218,25 @@ impl Window {
         &mut self.render_root
     }
 
-    /// Access base color of this window.
-    pub const fn base_color(&mut self) -> &mut Color {
-        &mut self.base_color
+    /// Returns the current base color.
+    #[must_use = "Inspect the window background."]
+    pub const fn base_color(&self) -> Color {
+        self.base_color
+    }
+
+    /// Changes the window background and schedules a redraw if it changed.
+    pub fn set_base_color(&mut self, color: Color) {
+        if self.base_color != color {
+            self.base_color = color;
+            self.handle.request_redraw();
+        }
+    }
+
+    /// Sets a window-specific property set, or restores the application defaults.
+    pub fn set_default_properties(&mut self, properties: Option<Arc<DefaultProperties>>) {
+        self.render_root.set_default_properties(
+            properties.unwrap_or_else(|| self.application_properties.clone()),
+        );
     }
 }
 
@@ -233,6 +262,7 @@ pub struct MasonryState {
     /// We aren't allowed to have any `Surface`s, and we also don't expect to receive any events.
     /// See [`ApplicationHandler::suspended()`] for details.
     is_suspended: bool,
+    started: bool,
     render_cx: RenderContext,
     renderer: ImagingRenderer,
     // TODO: Winit doesn't seem to let us create these proxies from within the loop
@@ -259,6 +289,8 @@ pub struct MasonryState {
     /// Windows that are scheduled to be created in the next resumed event.
     new_windows: Vec<NewWindow>,
     need_first_frame: Vec<HandleId>,
+    uninitialized_windows: VecDeque<WindowId>,
+    suspended_actions: VecDeque<(WindowId, ErasedAction)>,
 }
 
 // TODO - Merge into MasonryState?
@@ -361,6 +393,7 @@ impl Debug for MasonryState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MasonryState")
             .field("is_suspended", &self.is_suspended)
+            .field("started", &self.started)
             .field("renderer", &self.renderer)
             .field("event_loop_proxy", &self.event_loop_proxy)
             .field("window_id_to_handle_id", &self.window_id_to_handle_id)
@@ -372,6 +405,8 @@ impl Debug for MasonryState {
             .field("exit", &self.exit)
             .field("new_windows", &self.new_windows)
             .field("need_first_frame", &self.need_first_frame)
+            .field("uninitialized_windows", &self.uninitialized_windows)
+            .field("suspended_action_count", &self.suspended_actions.len())
             .finish_non_exhaustive()
     }
 }
@@ -407,6 +442,7 @@ impl MasonryState {
 
         Self {
             is_suspended: true,
+            started: false,
             render_cx,
             renderer: ImagingRenderer::new(),
             event_loop_proxy,
@@ -427,6 +463,8 @@ impl MasonryState {
             exit: false,
             new_windows,
             need_first_frame: Vec::new(),
+            uninitialized_windows: VecDeque::new(),
+            suspended_actions: VecDeque::new(),
         }
     }
 
@@ -481,21 +519,46 @@ impl MasonryState {
 
         self.is_suspended = false;
 
-        // Surfaces for existing windows will be recreated on-demand in the redraw method
-
-        // Create new windows.
-        if !self.new_windows.is_empty() {
-            for new_window in std::mem::take(&mut self.new_windows) {
-                if let Err(err) = self.create_window(event_loop, new_window) {
-                    tracing::error!(%err, "Unable to create requested window");
+        for new_window in std::mem::take(&mut self.new_windows) {
+            let id = new_window.id;
+            if let Err(err) = self.create_window(event_loop, new_window) {
+                tracing::error!(%err, "Unable to create requested window");
+                // A duplicate request is not a failure of the already live window.
+                if !self.window_id_to_handle_id.contains_key(&id) {
+                    app_driver.on_window_creation_failed(id, &err);
                 }
             }
-            // TODO: This is wrong in the case where the driver tries to create a window whilst suspended
-            // The on_start would be called twice.
+        }
+
+        self.initialize_windows(app_driver);
+        if !std::mem::replace(&mut self.started, true) {
             app_driver.on_start(self);
         }
 
+        // Resume is not guaranteed to be followed by a platform redraw.
+        for window in self.windows.values() {
+            window.handle.request_redraw();
+        }
+
         self.handle_signals(event_loop, app_driver);
+        while !self.exit {
+            let Some((id, action)) = self.suspended_actions.pop_front() else {
+                break;
+            };
+            self.handle_user_event(
+                event_loop,
+                MasonryUserEvent::AsyncAction(id, action),
+                app_driver,
+            );
+        }
+    }
+
+    fn initialize_windows(&mut self, app_driver: &mut dyn AppDriver) {
+        while let Some(id) = self.uninitialized_windows.pop_front() {
+            if let Some(window) = self.window_mut(id) {
+                app_driver.on_window_created(id, window);
+            }
+        }
     }
 
     // --- MARK: SUSPENDED
@@ -512,15 +575,23 @@ impl MasonryState {
         // All surfaces needs to be cleared when suspended.
         // They will be recreated when resumed.
         self.surfaces.clear();
+        #[cfg(target_os = "macos")]
+        {
+            self.resized_window = None;
+        }
         for window in self.windows.values_mut() {
             window.last_anim = None;
+            window.event_reducer = WindowEventReducer::default();
+            window
+                .render_root
+                .handle_text_event(&TextEvent::WindowFocusChange(false));
         }
     }
 
     pub(crate) fn create_window(
         &mut self,
         event_loop: &ActiveEventLoop,
-        new_window: NewWindow,
+        mut new_window: NewWindow,
     ) -> Result<(), WindowCreationError> {
         if self.window_id_to_handle_id.contains_key(&new_window.id)
             || self
@@ -551,7 +622,7 @@ impl MasonryState {
         // We always create the window as invisible so that we can
         // render the first frame before showing it to avoid flashing.
         let handle = event_loop
-            .create_window(new_window.attributes.with_visible(false))
+            .create_window(std::mem::take(&mut new_window.attributes).with_visible(false))
             .map_err(WindowCreationError::Platform)?;
         if visible {
             // We defer the rendering of the first frame to the handle_signals method because
@@ -573,12 +644,10 @@ impl MasonryState {
         let size = handle.inner_size();
 
         let window = Window::new(
-            new_window.id,
+            new_window,
             handle,
             adapter,
-            new_window.root_widget,
             self.signal_sender.clone(),
-            new_window.base_color,
             RenderRootOptions {
                 default_properties: self.default_properties.clone(),
                 use_system_fonts: true,
@@ -590,6 +659,7 @@ impl MasonryState {
         );
 
         tracing::debug!(window_id = window.id.trace(), handle=?handle_id, "creating window");
+        self.uninitialized_windows.push_back(window.id);
         self.window_id_to_handle_id.insert(window.id, handle_id);
         self.windows.insert(handle_id, window);
         Ok(())
@@ -597,12 +667,18 @@ impl MasonryState {
 
     pub(crate) fn close_window(&mut self, window_id: WindowId) -> bool {
         tracing::debug!(window_id = window_id.trace(), "closing window");
+        self.uninitialized_windows.retain(|id| *id != window_id);
+        self.suspended_actions.retain(|(id, _)| *id != window_id);
         let Some(handle_id) = self.window_id_to_handle_id.remove(&window_id) else {
             let count = self.new_windows.len();
             self.new_windows.retain(|window| window.id != window_id);
             return self.new_windows.len() != count;
         };
         self.surfaces.remove(&handle_id);
+        #[cfg(target_os = "macos")]
+        if self.resized_window == Some(handle_id) {
+            self.resized_window = None;
+        }
         self.need_first_frame.retain(|id| *id != handle_id);
         let Some(window) = self.windows.remove(&handle_id) else {
             return false;
@@ -944,9 +1020,6 @@ impl MasonryState {
         }
 
         self.handle_signals(event_loop, app_driver);
-        if self.exit {
-            event_loop.exit();
-        }
     }
 
     fn translate_input(
@@ -1008,6 +1081,16 @@ impl MasonryState {
         event: MasonryUserEvent,
         app_driver: &mut dyn AppDriver,
     ) {
+        if self.is_suspended
+            && let MasonryUserEvent::AsyncAction(id, action) = event
+        {
+            if self.window_id_to_handle_id.contains_key(&id)
+                || self.new_windows.iter().any(|window| window.id == id)
+            {
+                self.suspended_actions.push_back((id, action));
+            }
+            return;
+        }
         let window = match &event {
             MasonryUserEvent::AccessKit(handle_id, ..) => {
                 let Some(state) = self.windows.get_mut(handle_id) else {
@@ -1061,14 +1144,18 @@ impl MasonryState {
 
     // --- MARK: SIGNALS
     fn handle_signals(&mut self, event_loop: &ActiveEventLoop, app_driver: &mut dyn AppDriver) {
+        if self.exit {
+            event_loop.exit();
+            return;
+        }
         if self.is_suspended {
-            tracing::warn!("Tried to handle a signal whilst suspended");
             return;
         }
 
         let mut need_redraw = HashSet::<HandleId>::new();
 
-        loop {
+        while !self.exit {
+            self.initialize_windows(app_driver);
             let Some((window_id, signal)) = self.signal_receiver.try_iter().next() else {
                 break;
             };
@@ -1144,7 +1231,7 @@ impl MasonryState {
                     handle.set_minimized(true);
                 }
                 RenderRootSignal::Exit => {
-                    event_loop.exit();
+                    self.exit = true;
                 }
                 RenderRootSignal::ShowWindowMenu(position) => {
                     handle.show_window_menu(position);
@@ -1162,7 +1249,11 @@ impl MasonryState {
             }
         }
 
-        self.schedule_redraws(need_redraw, app_driver);
+        if self.exit {
+            event_loop.exit();
+        } else {
+            self.schedule_redraws(need_redraw, app_driver);
+        }
     }
 
     fn report_inspector_selection(window: &Window, widget_id: masonry_core::core::WidgetId) {
@@ -1259,3 +1350,6 @@ fn create_surface(
 ) -> Result<RenderSurface<'static>, RenderSurfaceError> {
     render_cx.create_surface(handle, size.width, size.height, present_mode)
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod lifecycle_tests;

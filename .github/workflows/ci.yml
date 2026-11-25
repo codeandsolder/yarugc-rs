@@ -321,6 +321,10 @@ jobs:
           # Check that doc file paths are correct
           CHECK_DOC_PATHS: "true"
 
+      - name: Run native window lifecycle regression
+        if: runner.os == 'Linux'
+        run: xvfb-run -a cargo test -p masonry_winit --locked --profile ci --all-features --lib native_window_lifecycle_and_suspended_actions -- --ignored
+
       - name: Run retained GPU integration tests
         if: runner.os == 'Linux'
         run: cargo test --workspace --locked --profile ci --all-features --test host_gpu -- --ignored --test-threads=1
