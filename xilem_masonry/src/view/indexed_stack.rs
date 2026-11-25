@@ -75,10 +75,9 @@ pub struct IndexedStack<Seq, State, Action = ()> {
 
 impl<Seq, State, Action> IndexedStack<Seq, State, Action> {
     /// Set the active item for this stack.
+    /// Out-of-range indices select the last child, or zero for an empty stack.
     #[track_caller]
     pub const fn active(mut self, active: usize) -> Self {
-        // TODO: validate this against the sequence. Currently,
-        // the sequence has no way to get the length.
         self.active_child = active;
         self
     }
@@ -134,10 +133,13 @@ where
 
         // set the active child after updating the sequence to
         // ensure the index remains consistent with the children list
-        if self.active_child != element.widget.active_child() {
+        let active = self
+            .active_child
+            .min(element.widget.len().saturating_sub(1));
+        if active != element.widget.active_child() {
             super::collection_succeeded(widgets::IndexedStack::set_active_child(
                 &mut element,
-                self.active_child,
+                active,
             ));
         }
     }
@@ -199,3 +201,53 @@ pub struct IndexedStackElementMut<'w> {
 // Used for manipulating the ViewSequence.
 type IndexedStackSplice<'w, 's> =
     super::CollectionSplice<'w, 's, widgets::IndexedStack, IndexedStackElement>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{render_root, view_context};
+    use crate::view::label;
+
+    #[test]
+    fn selection_clamps_identically_on_build_and_rebuild() {
+        let make = |count| {
+            indexed_stack::<(), (), _>(
+                (0..count)
+                    .map(|n: usize| label(n.to_string()))
+                    .collect::<Vec<_>>(),
+            )
+            .active(usize::MAX)
+        };
+        let mut ctx = view_context();
+        let original = make(4);
+        let (pod, mut state) = original.build(&mut ctx, &mut ());
+        let id = pod.new_widget.id();
+        let (mut root, _) = render_root(pod.new_widget, (100, 100));
+        let current = |root: &masonry::app::RenderRoot| {
+            root.get_widget(id)
+                .unwrap()
+                .downcast::<widgets::IndexedStack>()
+                .unwrap()
+                .active_child()
+        };
+        assert_eq!(current(&root), 3);
+        let smaller = make(2);
+        root.edit_base_layer(|element| {
+            smaller.rebuild(&original, &mut state, &mut ctx, element, &mut ())
+        })
+        .unwrap();
+        assert_eq!(current(&root), 1);
+        let empty = make(0);
+        root.edit_base_layer(|element| {
+            empty.rebuild(&smaller, &mut state, &mut ctx, element, &mut ())
+        })
+        .unwrap();
+        assert_eq!(current(&root), 0);
+        let grown = make(3);
+        root.edit_base_layer(|element| {
+            grown.rebuild(&empty, &mut state, &mut ctx, element, &mut ())
+        })
+        .unwrap();
+        assert_eq!(current(&root), 2);
+    }
+}

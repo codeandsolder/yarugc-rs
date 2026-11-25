@@ -1,15 +1,13 @@
 // Copyright 2025 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use std::any::TypeId;
-
 use accesskit::Role;
 use include_doc_path::include_doc_path;
 use tracing::{Span, trace_span};
 
 use crate::core::{
     ChildrenIds, CollectionWidget, LayoutCtx, MeasureCtx, NewWidget, NoAction, PropertiesRef,
-    RegisterCtx, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    RegisterCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use crate::kurbo::{Axis, Point, Size};
 use crate::layout::{LayoutSize, LenReq, Length, SizeDef};
@@ -34,6 +32,8 @@ pub struct IndexedStack {
     children: Vec<WidgetPod<dyn Widget>>,
     // Note: active_child must be 0 if there are no children
     active_child: usize,
+    // None means the structure changed and all child visibility needs synchronization.
+    laid_out_active: Option<usize>,
 }
 
 // --- MARK: BUILDERS
@@ -84,8 +84,10 @@ impl IndexedStack {
         if idx != 0 || !this.widget.children.is_empty() {
             crate::check_slot(idx, this.widget.children.len())?;
         }
-        this.widget.active_child = idx;
-        this.ctx.request_layout();
+        if this.widget.active_child != idx {
+            this.widget.active_child = idx;
+            this.ctx.request_layout();
+        }
         Ok(())
     }
 }
@@ -101,6 +103,7 @@ impl CollectionWidget<()> for IndexedStack {
         _params: impl Into<()>,
     ) {
         this.widget.children.push(child.erased().into_pod());
+        this.widget.laid_out_active = None;
         this.ctx.children_changed();
     }
 
@@ -118,6 +121,7 @@ impl CollectionWidget<()> for IndexedStack {
         crate::check_insert_slot(idx, this.widget.children.len())?;
         let had_children = !this.widget.children.is_empty();
         this.widget.children.insert(idx, child.erased().into_pod());
+        this.widget.laid_out_active = None;
         if had_children && this.widget.active_child >= idx {
             // adjust index to keep the same widget active
             this.widget.active_child += 1;
@@ -140,6 +144,7 @@ impl CollectionWidget<()> for IndexedStack {
         crate::check_slot(idx, this.widget.children.len())?;
         let old_child =
             std::mem::replace(&mut this.widget.children[idx], child.erased().into_pod());
+        this.widget.laid_out_active = None;
         this.ctx.remove_child(old_child);
         Ok(())
     }
@@ -164,6 +169,10 @@ impl CollectionWidget<()> for IndexedStack {
         b: usize,
     ) -> Result<(), crate::core::CollectionError> {
         crate::swap_slots(&mut this.widget.children, a, b)?;
+        if a == b {
+            return Ok(());
+        }
+        this.widget.laid_out_active = None;
         if this.widget.active_child == a {
             this.widget.active_child = b;
         } else if this.widget.active_child == b {
@@ -186,6 +195,7 @@ impl CollectionWidget<()> for IndexedStack {
     ) -> Result<(), crate::core::CollectionError> {
         crate::check_slot(idx, this.widget.children.len())?;
         let child = this.widget.children.remove(idx);
+        this.widget.laid_out_active = None;
         if idx == this.widget.active_child {
             // This is valid even if we are removing the last child,
             // since `active_child` must be 0 in that case
@@ -204,6 +214,7 @@ impl CollectionWidget<()> for IndexedStack {
             this.ctx.remove_child(child);
         }
         this.widget.active_child = 0; // 0 is valid for the childrenless case
+        this.widget.laid_out_active = None;
     }
 }
 
@@ -216,8 +227,6 @@ impl Widget for IndexedStack {
             ctx.register_child(child);
         }
     }
-
-    fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: TypeId) {}
 
     fn measure(
         &mut self,
@@ -244,14 +253,24 @@ impl Widget for IndexedStack {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        // There's nothing to lay out if we don't have any children
         if self.children.is_empty() {
+            ctx.clear_baselines();
             return;
         }
 
-        // TODO: move set_stashed to a different layout pass when possible
-        for (idx, child) in self.children.iter_mut().enumerate() {
-            ctx.set_stashed(child, idx != self.active_child);
+        // Ordinary layout needs no visibility writes. Switching tabs with an
+        // unchanged child list only touches the old and new active children.
+        match self.laid_out_active.replace(self.active_child) {
+            Some(previous) if previous != self.active_child => {
+                ctx.set_stashed(&self.children[previous], true);
+                ctx.set_stashed(&self.children[self.active_child], false);
+            }
+            None => {
+                for (idx, child) in self.children.iter().enumerate() {
+                    ctx.set_stashed(child, idx != self.active_child);
+                }
+            }
+            Some(_) => {}
         }
 
         let child_size = ctx.compute_size(
@@ -288,6 +307,52 @@ mod tests {
     use crate::testing::{TestHarness, assert_render_snapshot};
     use crate::theme::test_property_set;
     use crate::widgets::Button;
+
+    #[test]
+    fn switching_and_structural_edits_keep_only_the_selected_child_visible() {
+        use crate::layout::AsUnit;
+        use crate::widgets::Label;
+
+        let children = ["A", "B", "C"].map(|text| Label::new(text).prepare());
+        let ids = children.each_ref().map(NewWidget::id);
+        let [a, b, c] = children;
+        let stack = IndexedStack::new()
+            .with(a)
+            .with(b)
+            .with(c)
+            .with_active_child(1)
+            .prepare()
+            .with_props(Dimensions::fixed(100.px(), 80.px()));
+        let mut harness = TestHarness::create(test_property_set(), stack);
+        let check = |harness: &TestHarness<IndexedStack>, active, visible: &[WidgetId]| {
+            assert_eq!(harness.root_widget().unwrap().active_child(), active);
+            let children = harness.root_widget().unwrap().children();
+            let actual: Vec<_> = children
+                .iter()
+                .filter(|child| !child.ctx().is_stashed())
+                .map(|child| child.id())
+                .collect();
+            assert_eq!(actual, visible);
+        };
+        check(&harness, 1, &[ids[1]]);
+        harness
+            .edit_root_widget(|mut stack| IndexedStack::set_active_child(&mut stack, 2).unwrap())
+            .unwrap();
+        check(&harness, 2, &[ids[2]]);
+        harness
+            .edit_root_widget(|mut stack| {
+                IndexedStack::swap(&mut stack, 0, 2).unwrap();
+                IndexedStack::insert(&mut stack, 0, Label::new("D").prepare(), ()).unwrap();
+            })
+            .unwrap();
+        check(&harness, 1, &[ids[2]]);
+        harness
+            .edit_root_widget(|mut stack| IndexedStack::clear(&mut stack))
+            .unwrap();
+        check(&harness, 0, &[]);
+        assert_eq!(harness.root_widget().unwrap().ctx().first_baseline(), 80.);
+        assert_eq!(harness.root_widget().unwrap().ctx().last_baseline(), 80.);
+    }
 
     #[test]
     fn test_indexed_stack_basics() {
