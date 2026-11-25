@@ -133,15 +133,19 @@ pub struct Styles {
 }
 
 fn style_declaration(element: &web_sys::Element) -> Option<web_sys::CssStyleDeclaration> {
-    if let Some(el) = element.dyn_ref::<web_sys::HtmlElement>() {
-        Some(el.style())
-    } else if let Some(el) = element.dyn_ref::<web_sys::SvgElement>() {
-        Some(el.style())
-    } else {
-        element
-            .dyn_ref::<web_sys::MathMlElement>()
-            .map(web_sys::MathMlElement::style)
-    }
+    element
+        .dyn_ref::<web_sys::HtmlElement>()
+        .map(web_sys::HtmlElement::style)
+        .or_else(|| {
+            element
+                .dyn_ref::<web_sys::SvgElement>()
+                .map(web_sys::SvgElement::style)
+        })
+        .or_else(|| {
+            element
+                .dyn_ref::<web_sys::MathMlElement>()
+                .map(web_sys::MathMlElement::style)
+        })
 }
 
 impl Styles {
