@@ -19,7 +19,7 @@ use crate::layout::{LenReq, Length};
 use crate::peniko::{ImageAlphaType, ImageBrush, ImageData, ImageFormat};
 use crate::properties::ObjectFit;
 
-use super::image_common::image_widget_methods;
+use super::image_common::{image_metadata_methods, image_widget_methods};
 
 // TODO: Make this a configurable option of the widget
 /// The scale that the SVG is native to.
@@ -108,27 +108,20 @@ impl Svg {
 impl Svg {
     /// Sets a new inner SVG.
     pub fn set_tree(this: &mut WidgetMut<'_, Self>, tree: Arc<Tree>) {
+        if Arc::ptr_eq(&this.widget.tree, &tree) {
+            return;
+        }
+        let dimensions_changed = this.widget.tree.size() != tree.size();
         this.widget.tree = tree;
         this.widget.rasterized = None;
-        this.ctx.request_layout();
+        if dimensions_changed {
+            this.ctx.request_layout();
+        } else {
+            this.ctx.request_paint_only();
+        }
     }
 
-    /// Sets whether the SVG is decorative, meaning it doesn't have meaningful content
-    /// and is only for visual presentation.
-    ///
-    /// See [`Svg::decorative`] for details.
-    pub fn set_decorative(this: &mut WidgetMut<'_, Self>, is_decorative: bool) {
-        this.widget.decorative = is_decorative;
-        this.ctx.request_accessibility_update();
-    }
-
-    /// Sets the text that will describe the SVG to screen readers.
-    ///
-    /// See [`Svg::with_alt_text`] for details.
-    pub fn set_alt_text(this: &mut WidgetMut<'_, Self>, alt_text: Option<impl Into<ArcStr>>) {
-        this.widget.alt_text = alt_text.map(Into::into);
-        this.ctx.request_accessibility_update();
-    }
+    image_metadata_methods!();
 }
 
 impl Svg {
@@ -197,9 +190,7 @@ impl Widget for Svg {
 
     image_widget_methods!();
 
-    fn layout(&mut self, _ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, _size: Size) {
-        self.rasterized = None;
-    }
+    fn layout(&mut self, _ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, _size: Size) {}
 
     fn paint(
         &mut self,
@@ -291,6 +282,48 @@ mod tests {
         assert_eq!(pixel(10, 10), [255, 0, 0, 255]);
         assert_eq!(pixel(29, 10), [255, 0, 0, 255]);
         assert_eq!(pixel(30, 10), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn unchanged_layout_reuses_raster_and_new_content_invalidates_it() {
+        let tree = |fill: &str| {
+            let xml = format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="{fill}"/></svg>"#
+            );
+            Arc::new(Tree::from_str(&xml, &usvg::Options::default()).unwrap())
+        };
+        let original = tree("red");
+        let mut harness =
+            TestHarness::create(test_property_set(), Svg::new(original.clone()).prepare());
+        let raster_id = |harness: &TestHarness<Svg>| {
+            harness
+                .root_widget()
+                .unwrap()
+                .rasterized
+                .as_ref()
+                .unwrap()
+                .brush
+                .image
+                .data
+                .id()
+        };
+        let _ = harness.redraw();
+        let initial = raster_id(&harness);
+        harness
+            .edit_root_widget(|mut svg| svg.ctx.request_layout())
+            .unwrap();
+        let _ = harness.redraw();
+        assert_eq!(raster_id(&harness), initial);
+        harness
+            .edit_root_widget(|mut svg| Svg::set_tree(&mut svg, original))
+            .unwrap();
+        let _ = harness.redraw();
+        assert_eq!(raster_id(&harness), initial);
+        harness
+            .edit_root_widget(|mut svg| Svg::set_tree(&mut svg, tree("blue")))
+            .unwrap();
+        let _ = harness.redraw();
+        assert_ne!(raster_id(&harness), initial);
     }
 
     #[test]

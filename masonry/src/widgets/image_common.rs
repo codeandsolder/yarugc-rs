@@ -53,3 +53,27 @@ macro_rules! image_widget_methods {
 }
 
 pub(super) use image_widget_methods;
+
+// Share accessibility metadata mutations between the image widget types.
+macro_rules! image_metadata_methods {
+    () => {
+        /// Sets whether this image is purely decorative and ignored by screen readers.
+        pub fn set_decorative(this: &mut WidgetMut<'_, Self>, is_decorative: bool) {
+            if this.widget.decorative != is_decorative {
+                this.widget.decorative = is_decorative;
+                this.ctx.request_accessibility_update();
+            }
+        }
+
+        /// Sets the alternative text, or removes it with `None`.
+        pub fn set_alt_text(this: &mut WidgetMut<'_, Self>, alt_text: Option<impl Into<ArcStr>>) {
+            let alt_text = alt_text.map(Into::into);
+            if this.widget.alt_text != alt_text {
+                this.widget.alt_text = alt_text;
+                this.ctx.request_accessibility_update();
+            }
+        }
+    };
+}
+
+pub(super) use image_metadata_methods;
