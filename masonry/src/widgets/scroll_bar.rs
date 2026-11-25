@@ -603,11 +603,20 @@ mod tests {
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, size);
         let scrollbar_id = harness.root_id();
         assert_render_snapshot!(harness, before);
-        assert!(harness.pop_action_erased().is_none());
+        assert!(
+            harness.pop_action_erased().is_none(),
+            "initial scrollbar state must not emit movement"
+        );
         harness.mouse_click_on(scrollbar_id, None).unwrap();
         let (action, source) = harness.pop_action::<ScrollBarMoved>().unwrap().unwrap();
-        assert_eq!(source, scrollbar_id);
-        assert!((action.0 - 0.5).abs() < 1e-9);
+        assert_eq!(
+            source, scrollbar_id,
+            "movement must identify the scrollbar that emitted it"
+        );
+        assert!(
+            (action.0 - 0.5).abs() < 1e-9,
+            "center click must move to half progress, got {action:?}"
+        );
         assert_render_snapshot!(harness, after);
         harness
     }
