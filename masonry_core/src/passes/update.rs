@@ -3,6 +3,7 @@
 
 use std::collections::HashSet;
 
+use kurbo::Rect;
 use tracing::{info_span, trace};
 use tree_arena::{ArenaMut, ArenaMutList, ArenaRef};
 use ui_events::pointer::PointerType;
@@ -13,7 +14,9 @@ use crate::core::{
     PropertyArena, PropertyCache, PseudoClass, RegisterCtx, Update, UpdateCtx, Widget,
     WidgetArenaNode, WidgetId, WidgetState,
 };
+use crate::passes::compose::run_compose_pass;
 use crate::passes::event::{end_ime_session, run_on_pointer_event_pass};
+use crate::passes::layout::run_layout_pass;
 use crate::passes::{enter_span, enter_span_if, merge_state_up, recurse_on_children};
 use crate::properties::core_property_changed;
 use crate::util::ParentLinkedList;
@@ -766,38 +769,79 @@ pub(crate) fn run_update_focus_pass(root: &mut RenderRoot) {
 // ----------------
 
 // --- MARK: SCROLL
-// This pass will update scroll positions in cases where a widget has requested to be
-// scrolled into view (usually a text input getting text events).
-// Each parent that implements scrolling will update its scroll position to ensure the
-// child is visible. (If the target area is larger than the parent, the parent will try
-// to show the top left of that area.)
+// The request is carried in each widget's border-box coordinates.
+// Every ancestor sees the region at its actual composed position, and outer
+// ancestors see the portion left visible after the inner ancestor scrolls.
+fn child_rect_in_parent(root: &RenderRoot, child: WidgetId, rect: Rect) -> Option<Rect> {
+    let state = root.widget_arena.get_state(child)?;
+    if state.is_stashed() {
+        return None;
+    }
+    let rect = state.compose_local_transform().transform_rect_bbox(rect);
+    rect.is_finite().then_some(rect)
+}
+
+fn reveal_scroll_target(root: &mut RenderRoot, target: WidgetId, mut rect: Rect) {
+    if !rect.is_finite() {
+        return;
+    }
+    let mut child = target;
+    while let Some(parent) = root.widget_arena.parent_of(child) {
+        let Some(parent_rect) = child_rect_in_parent(root, child, rect) else {
+            return;
+        };
+        let Some(state) = root.widget_arena.get_state(parent) else {
+            return;
+        };
+        if state.is_stashed() {
+            return;
+        }
+        let event = Update::RequestPanToChild {
+            child,
+            rect: parent_rect - state.border_box_translation(),
+        };
+        run_single_update_pass(root, Some(parent), |widget, ctx, props| {
+            widget.update(ctx, props, &event);
+        });
+
+        // A scroll can change both the layout (virtualized children) and the
+        // composed translations. Reproject using the updated geometry before
+        // asking an outer scroller to reveal this region.
+        run_layout_pass(root);
+        run_compose_pass(root);
+        let Some(mut visible) = child_rect_in_parent(root, child, rect) else {
+            return;
+        };
+        let Some(state) = root.widget_arena.get_state(parent) else {
+            return;
+        };
+        if let Some(clip) = state.clip_path {
+            // Include zero-width caret rectangles on the clip boundary.
+            if visible.x1 < clip.x0
+                || visible.x0 > clip.x1
+                || visible.y1 < clip.y0
+                || visible.y0 > clip.y1
+            {
+                return;
+            }
+            visible = visible.intersect(clip);
+        }
+        rect = visible;
+        child = parent;
+    }
+}
+
 /// See the [passes documentation](crate::doc::pass_system#update-passes).
 pub(crate) fn run_update_scroll_pass(root: &mut RenderRoot) {
+    if root.global_state.scroll_request_targets.is_empty() {
+        return;
+    }
     let _span = info_span!("update_scroll").entered();
 
     let scroll_request_targets = std::mem::take(&mut root.global_state.scroll_request_targets);
+    run_compose_pass(root);
     for (target, rect) in scroll_request_targets {
-        // We start with target_rect being in the target's border-box coordinate space.
-        let mut target_rect = rect;
-
-        // We run the update pass on the target itself and then its ancestors.
-        run_targeted_update_pass(root, Some(target), |widget, ctx, props| {
-            // Convert the target_rect from border-box space to content-box space.
-            let local_rect = target_rect - ctx.widget_state.border_box_translation();
-
-            let event = Update::RequestPanToChild(local_rect);
-            widget.update(ctx, props, &event);
-
-            // TODO - We should run the compose method after this, so
-            // translations are updated and the rect passed to parents
-            // is more accurate. Until then we don't add scroll_translation
-            // at all and only support a single scrolling parent.
-
-            // Before continuing to the parent, we need to convert the target_rect from this
-            // widget's border-box coordinate space to the parent's border-box coordinate space.
-            let state = &ctx.widget_state;
-            target_rect = target_rect + state.origin.to_vec2();
-        });
+        reveal_scroll_target(root, target, rect);
     }
 }
 

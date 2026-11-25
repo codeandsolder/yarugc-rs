@@ -669,16 +669,23 @@ impl Widget for VirtualScroll {
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        if let Update::RequestPanToChild(target) = event {
-            let content_box_length = ctx.content_box().size().get_coord(self.direction.axis());
-            let target = target.get_coords(self.direction.axis());
-            let new_pos =
-                super::compute_pan_range(0.0..content_box_length, target.0..target.1).start;
-            self.virtual_list.scroll_by(new_pos);
-            if self.needs_layout() {
-                ctx.request_layout();
+        if let Update::RequestPanToChild { rect, .. } = event {
+            let length = ctx.content_box().size().get_coord(self.direction.axis());
+            let viewport = if self.direction.is_reverse() {
+                (1.0 - self.end_at) * length..(1.0 - self.start_at) * length
+            } else {
+                self.start_at * length..self.end_at * length
+            };
+            let target = rect.get_coords(self.direction.axis());
+            let new_pos = super::compute_pan_range(viewport.clone(), target.0..target.1).start;
+            let delta = self.direction.appropriate(new_pos - viewport.start);
+            if delta != 0.0 {
+                self.virtual_list.scroll_by(delta);
+                if self.needs_layout() {
+                    ctx.request_layout();
+                }
+                ctx.request_compose();
             }
-            ctx.request_compose();
         }
     }
 
@@ -1040,6 +1047,36 @@ mod tests {
             let node = harness.access_node(id).unwrap();
             assert!(node.data().supports_action(back));
             assert!(!node.data().supports_action(forward));
+        }
+    }
+
+    #[test]
+    fn reveal_materialized_item_uses_current_visual_coordinates_in_all_directions() {
+        for direction in [
+            ScrollDirection::TopToBottom,
+            ScrollDirection::BottomToTop,
+            ScrollDirection::LeftToRight,
+            ScrollDirection::RightToLeft,
+        ] {
+            let mut harness = TestHarness::create_with_size(
+                test_property_set(),
+                VirtualScroll::new(0, 20)
+                    .with_direction(direction)
+                    .prepare(),
+                (200, 200),
+            );
+            let id = harness.root_id();
+            drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+            let child = harness.root_widget().unwrap().items[&5].id();
+            for _ in 0..2 {
+                harness.scroll_into_view(child);
+                drive_to_fixpoint(&mut harness, id, fixed_size_driver);
+                let scroll = harness.root_widget().unwrap().virtual_list.scroll_offset();
+                assert!(
+                    (scroll - 100.0).abs() < 1e-6,
+                    "{direction:?}: reveal offset should be 100, got {scroll}"
+                );
+            }
         }
     }
 

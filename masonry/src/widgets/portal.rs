@@ -660,11 +660,15 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
-            Update::RequestPanToChild(target) => {
+            Update::RequestPanToChild { child, rect } if *child == self.child.id() => {
                 let portal_size = ctx.content_box().size();
                 let content_size = self.content_size;
 
-                self.pan_viewport_to_raw(portal_size, content_size, *target);
+                self.pan_viewport_to_raw(
+                    portal_size,
+                    content_size,
+                    *rect + self.viewport_pos.to_vec2().round(),
+                );
                 ctx.request_compose();
 
                 for (bar, viewport, content, progress) in
@@ -1034,6 +1038,83 @@ mod tests {
 
         let node = harness.access_node(portal_id).unwrap();
         assert!(node.data().scroll_y().unwrap_or(0.0) > 0.0);
+    }
+
+    #[test]
+    fn nested_portals_reveal_transformed_descendant_from_current_scroll_positions() {
+        use crate::kurbo::Affine;
+
+        let target = WidgetTag::named("nested-scroll-target");
+        let inner = WidgetTag::named("inner-portal");
+        let inner_content = Flex::column()
+            .with_fixed_spacer(300.px())
+            .with_fixed(
+                SizedBox::empty()
+                    .size(40.px(), 30.px())
+                    .prepare()
+                    .with_transform(Affine::translate((0.0, 20.0)))
+                    .with_tag(target),
+            )
+            .with_fixed_spacer(300.px())
+            .prepare();
+        let outer_content = Flex::column()
+            .with_fixed_spacer(260.px())
+            .with_fixed(
+                Portal::new(inner_content)
+                    .constrain_horizontal(true)
+                    .prepare()
+                    .with_props(Dimensions::fixed(80.px(), 120.px()))
+                    .with_tag(inner),
+            )
+            .with_fixed_spacer(400.px())
+            .prepare();
+        let root = Portal::new(outer_content)
+            .constrain_horizontal(true)
+            .prepare();
+        let mut harness = TestHarness::create_with_size(test_property_set(), root, (120, 100));
+        harness
+            .edit_root_widget(|mut portal| {
+                Portal::set_viewport_pos(&mut portal, Point::new(0.0, 80.0));
+            })
+            .unwrap();
+        harness
+            .edit_widget(inner, |mut portal| {
+                Portal::set_viewport_pos(&mut portal, Point::new(0.0, 50.0));
+            })
+            .unwrap();
+
+        let target_id = harness.get_widget(target).unwrap().id();
+        for _ in 0..2 {
+            harness.scroll_into_view(target_id);
+            let inner_position = harness.get_widget(inner).unwrap().get_viewport_pos();
+            let outer_position = harness.root_widget().unwrap().get_viewport_pos();
+            assert!(
+                (inner_position.y - 230.0).abs() < 1e-6,
+                "inner viewport must account for target transform: {inner_position:?}"
+            );
+            assert!(
+                (outer_position.y - 280.0).abs() < 1e-6,
+                "outer viewport must reveal the region after inner scrolling: {outer_position:?}"
+            );
+            let widget = harness.get_widget(target).unwrap();
+            let rect = widget
+                .ctx()
+                .window_transform()
+                .transform_rect_bbox(widget.ctx().border_box());
+            assert!(
+                rect.y0 >= 0.0 && rect.y1 <= 100.0,
+                "target must be visible through both portals: {rect:?}"
+            );
+        }
+
+        // The outer scrollbar is already visible; it is not part of the scrollable content.
+        let bar = harness.root_widget().unwrap().children()[1].id();
+        harness.scroll_into_view(bar);
+        let position = harness.root_widget().unwrap().get_viewport_pos();
+        assert!(
+            (position.y - 280.0).abs() < 1e-6,
+            "scrollbar reveal must not scroll its owner's content"
+        );
     }
 
     #[test]

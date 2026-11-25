@@ -415,9 +415,11 @@ impl Widget for SelectorMenu {
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        if let Update::RequestPanToChild(rect) = event {
-            // The scroll pass supplies unscrolled content coordinates.
-            if self.reveal(*rect) {
+        if let Update::RequestPanToChild { child, rect } = event
+            && *child != self.scrollbar.id()
+        {
+            // Compose rounds the row translation, so undo that exact translation.
+            if self.reveal(*rect + Vec2::new(0.0, self.scroll.round())) {
                 ctx.request_compose();
                 ctx.request_accessibility_update();
             }
