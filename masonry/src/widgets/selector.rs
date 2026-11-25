@@ -521,6 +521,36 @@ mod tests {
             .iter()
             .map(|item| item.id())
             .collect::<Vec<_>>();
+        // A different contact cannot finish the menu's captured press.
+        use crate::core::{PointerId, PointerInfo, PointerState, PointerType};
+        use crate::dpi::PhysicalPosition;
+        harness.mouse_move_to(items[0]).unwrap();
+        harness.mouse_button_press(None);
+        assert_eq!(harness.pointer_capture_target_id(), Some(menu));
+        let position = harness
+            .get_widget_with_id(items[0])
+            .unwrap()
+            .ctx()
+            .bounding_box()
+            .center();
+        harness.process_pointer_event(&PointerEvent::Up(PointerButtonEvent {
+            pointer: PointerInfo {
+                pointer_id: PointerId::new(77),
+                persistent_device_id: None,
+                pointer_type: PointerType::Touch,
+            },
+            button: None,
+            state: PointerState {
+                position: PhysicalPosition::new(position.x, position.y),
+                ..Default::default()
+            },
+        }));
+        assert_eq!(harness.pointer_capture_target_id(), Some(menu));
+        assert!(harness.pop_action_erased().is_none());
+        harness.mouse_move_to(items[1]).unwrap();
+        harness.mouse_button_release(None);
+        assert!(harness.pop_action_erased().is_none());
+
         harness.mouse_move_to(items[0]).unwrap();
         harness.mouse_button_press(None);
         harness.mouse_move_to(items[1]).unwrap();

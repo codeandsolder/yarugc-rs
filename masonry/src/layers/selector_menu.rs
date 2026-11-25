@@ -117,15 +117,24 @@ impl Widget for SelectorMenu {
                 ..
             }) => {
                 self.pressed = self.target_index(ctx);
+                if self.pressed.is_some() {
+                    ctx.capture_pointer();
+                }
                 ctx.set_focus(self.creator);
                 ctx.set_handled();
             }
             PointerEvent::Up(PointerButtonEvent {
                 button: None | Some(PointerButton::Primary),
+                state,
                 ..
             }) => {
                 if let Some(index) = self.pressed.take()
-                    && self.target_index(ctx) == Some(index)
+                    && ctx.is_pointer_capture_target()
+                    && ctx.is_hovered()
+                    && self
+                        .children
+                        .get(index)
+                        .is_some_and(|child| ctx.hit_test_child(child, state.position))
                 {
                     self.pick(ctx, index);
                 }

@@ -483,6 +483,26 @@ impl EventCtx<'_> {
         })
     }
 
+    /// Hit-tests a direct child's subtree at a physical pointer position,
+    /// independently of pointer capture. Honors the child's transform,
+    /// clipping, and pointer-interaction policy.
+    #[must_use = "Inspect whether the child is hit."]
+    pub fn hit_test_child(
+        &self,
+        child: &WidgetPod<impl Widget + ?Sized>,
+        position: PhysicalPosition<f64>,
+    ) -> bool {
+        let Some(node) = self.children.item(child.id()) else {
+            return false;
+        };
+        let logical = position.to_logical(self.global_state.scale_factor);
+        let child = WidgetRef::from_node(node, self.global_state, self.property_arena);
+        !child.ctx().is_disabled()
+            && child
+                .find_widget_under_pointer(Point::new(logical.x, logical.y))
+                .is_some()
+    }
+
     /// Converts the given position from the window's coordinate space
     /// to this widget's content-box coordinate space.
     #[must_use = "Use the transformed event position."]
