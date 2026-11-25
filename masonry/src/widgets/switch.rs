@@ -98,6 +98,51 @@ impl Switch {
     }
 }
 
+// Resolve the track in the allocated content box. The stroke may occupy
+// the surrounding border insets, but the thumb stays inside the track.
+#[derive(Debug)]
+struct SwitchGeometry {
+    track: Rect,
+    thumb_radius: f64,
+    border_width: f64,
+}
+
+impl SwitchGeometry {
+    fn fit(size: Size, thickness: Length, radius: Length, border: Length) -> Option<Self> {
+        let (width, height) = Switch::track_dimensions(thickness, radius);
+        if width == Length::ZERO
+            || height == Length::ZERO
+            || size.width <= 0.0
+            || size.height <= 0.0
+        {
+            return None;
+        }
+        let scale = (size.width / width.get())
+            .min(size.height / height.get())
+            .min(1.0);
+        let width = width.get() * scale;
+        let height = height.get() * scale;
+        let border_width = border.get().min(width.min(height) / 3.0);
+        let thumb_radius = (radius.get() * scale).min((width.min(height) - border_width) / 2.0);
+        let origin = Point::new((size.width - width) / 2.0, (size.height - height) / 2.0);
+        Some(Self {
+            track: Rect::from_origin_size(origin, Size::new(width, height)),
+            thumb_radius,
+            border_width,
+        })
+    }
+
+    fn thumb(&self, on: bool) -> Circle {
+        let inset = self.thumb_radius + self.border_width / 2.0;
+        let x = if on {
+            self.track.x1 - inset
+        } else {
+            self.track.x0 + inset
+        };
+        Circle::new(Point::new(x, self.track.center().y), self.thumb_radius)
+    }
+}
+
 impl UsesProperty<ThumbRadius> for Switch {}
 impl UsesProperty<ThumbColor> for Switch {}
 impl UsesProperty<TrackThickness> for Switch {}
@@ -186,69 +231,43 @@ impl Widget for Switch {
         painter: &mut Painter<'_>,
     ) {
         let is_disabled = ctx.is_disabled();
-
-        let size = ctx.border_box().size();
-
-        let border_box_translation = ctx.border_box_translation();
+        let size = ctx.content_box().size();
         let cache = ctx.property_cache();
-        let track_thickness_val = props.get::<TrackThickness>(cache).0;
-        let thumb_radius_val = props.get::<ThumbRadius>(cache).0;
-        let (track_width, track_height) =
-            Self::track_dimensions(track_thickness_val, thumb_radius_val);
-        let track_width = track_width.get();
-        let track_height = track_height.get();
-        let thumb_radius = thumb_radius_val.get();
-        let border_width = props.get::<BorderWidth>(cache).width.get();
+        let thickness = props.get::<TrackThickness>(cache).0;
+        let radius = props.get::<ThumbRadius>(cache).0;
+        let border = props.get::<BorderWidth>(cache).width;
+        let Some(geometry) = SwitchGeometry::fit(size, thickness, radius, border) else {
+            return;
+        };
+
         let corner_radius = props.get::<CornerRadius>(cache).radius.get();
         let thumb_color = props.get::<ThumbColor>(cache).0;
-
-        // Center the track within the available space
-        let track_x = (size.width - track_width) / 2.0;
-        let track_y = (size.height - track_height) / 2.0;
-        let track_rect = Rect::new(
-            track_x,
-            track_y,
-            track_x + track_width,
-            track_y + track_height,
-        ) - border_box_translation;
-
         let track_bg = props.get::<Background>(cache);
 
-        // Paint track background
-        let track_corner_radius = corner_radius.min(track_height / 2.0);
+        let track_rect = geometry.track;
+        let track_corner_radius = corner_radius
+            .min(track_rect.height() / 2.0)
+            .min(track_rect.width() / 2.0);
         let track_rounded = track_rect.to_rounded_rect(track_corner_radius);
         let brush = track_bg.get_peniko_brush_for_rect(track_rect);
         painter.fill(track_rounded, &brush).draw();
 
-        let border_color = props.get::<BorderColor>(cache);
-
-        // Paint track border
-        if border_width > 0.0 {
-            // Use miter joins so a zero-radius track keeps square corners.
-            let stroke = Stroke::new(border_width).with_join(Join::Miter);
+        if geometry.border_width > 0.0 {
+            let border_color = props.get::<BorderColor>(cache);
+            let stroke = Stroke::new(geometry.border_width).with_join(Join::Miter);
             painter
                 .stroke(track_rounded, &stroke, border_color.color)
                 .draw();
         }
 
-        // Calculate thumb position (centered vertically, left/right based on state)
-        let thumb_y = size.height / 2.0 - border_box_translation.y;
-        let thumb_x = if self.on {
-            // Thumb on the right
-            track_rect.x1 - thumb_radius - border_width / 2.0
-        } else {
-            // Thumb on the left
-            track_rect.x0 + thumb_radius + border_width / 2.0
-        };
-
-        // Paint thumb
-        let thumb_circle = Circle::new(Point::new(thumb_x, thumb_y), thumb_radius);
-        let thumb_brush = if is_disabled {
-            thumb_color.with_alpha(0.5)
-        } else {
-            thumb_color
-        };
-        painter.fill(thumb_circle, thumb_brush).draw();
+        if geometry.thumb_radius > 0.0 {
+            let thumb_brush = if is_disabled {
+                thumb_color.with_alpha(0.5)
+            } else {
+                thumb_color
+            };
+            painter.fill(geometry.thumb(self.on), thumb_brush).draw();
+        }
     }
 
     fn accessibility_role(&self) -> Role {
@@ -297,6 +316,44 @@ mod tests {
     use crate::widgets::Flex;
 
     // --- MARK: NON-RENDERING BEHAVIOR TESTS
+
+    #[test]
+    fn switch_track_and_thumb_fit_constrained_content() {
+        for size in [
+            Size::new(40.0, 20.0),
+            Size::new(4.0, 40.0),
+            Size::new(40.0, 3.0),
+            Size::new(1.0, 1.0),
+        ] {
+            let geometry =
+                SwitchGeometry::fit(size, Length::px(20.0), Length::px(10.0), Length::px(50.0))
+                    .unwrap();
+            let track = geometry.track;
+            assert!(track.x0 >= -1e-9 && track.y0 >= -1e-9);
+            assert!(track.x1 <= size.width + 1e-9 && track.y1 <= size.height + 1e-9);
+            for on in [false, true] {
+                let thumb = geometry.thumb(on);
+                let margin = thumb.radius + geometry.border_width / 2.0;
+                assert!(thumb.center.x - margin >= track.x0 - 1e-9);
+                assert!(thumb.center.x + margin <= track.x1 + 1e-9);
+                assert!(thumb.center.y - margin >= track.y0 - 1e-9);
+                assert!(thumb.center.y + margin <= track.y1 + 1e-9);
+            }
+        }
+        assert!(
+            SwitchGeometry::fit(Size::ZERO, Length::px(20.0), Length::px(10.0), Length::ZERO)
+                .is_none()
+        );
+        assert!(
+            SwitchGeometry::fit(
+                Size::new(40.0, 20.0),
+                Length::ZERO,
+                Length::ZERO,
+                Length::ZERO
+            )
+            .is_none()
+        );
+    }
 
     #[test]
     fn click_emits_action_and_focuses() {
