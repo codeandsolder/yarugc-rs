@@ -177,7 +177,7 @@ impl Selector {
     fn activate_keyboard(&self, ctx: &mut EventCtx<'_>) {
         if let Some(menu) = ctx.get_attached_layer::<SelectorMenu>() {
             ctx.mutate_later::<SelectorMenu>(menu, |mut menu| {
-                SelectorMenu::commit_highlight(&mut menu)
+                SelectorMenu::commit_highlight(&mut menu);
             });
         } else {
             self.toggle_selector_layer(ctx);
@@ -266,7 +266,7 @@ impl Widget for Selector {
                 ) if self.selected_option.is_some() => {
                     if let Some(menu) = ctx.get_attached_layer::<SelectorMenu>() {
                         ctx.mutate_later::<SelectorMenu>(menu, move |mut menu| {
-                            SelectorMenu::navigate(&mut menu, key)
+                            SelectorMenu::navigate(&mut menu, key);
                         });
                     } else if matches!(key, NamedKey::ArrowUp | NamedKey::ArrowDown) {
                         self.toggle_selector_layer(ctx);
