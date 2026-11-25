@@ -11,7 +11,8 @@ use crate::core::keyboard::{Key, KeyState, NamedKey};
 use crate::core::{
     AccessCtx, AccessEvent, ChildrenIds, ComposeCtx, EventCtx, FromDynWidget, KeyboardEvent,
     LayoutCtx, MeasureCtx, NewWidget, PointerEvent, PointerScrollEvent, PropertiesMut,
-    PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    PropertiesRef, RegisterCtx, ScrollDelta, TextEvent, Update, UpdateCtx, Widget, WidgetMut,
+    WidgetPod,
 };
 use crate::dpi::PhysicalPosition;
 use crate::kurbo::{Axis, Size};
@@ -297,13 +298,26 @@ impl VirtualScroll {
         self.items.len()
     }
 
-    /// Scroll by the specified amount of pixels.
-    ///
-    /// Returns `true` if the children needs to be laid out again as a result of the scroll.
-    pub fn scroll_by(&mut self, delta: f64) -> bool {
-        self.virtual_list
-            .scroll_by(-self.direction.appropriate(delta));
-        self.needs_layout()
+    // Deltas here are in index-order coordinates. Return whether the clamped
+    // offset changed, not merely whether the requested delta was nonzero.
+    fn advance_offset(&mut self, delta: f64) -> bool {
+        if !delta.is_finite() || delta == 0.0 {
+            return false;
+        }
+        let old = self.virtual_list.scroll_offset();
+        self.virtual_list.scroll_by(delta);
+        self.virtual_list.clamp_scroll_to_content();
+        self.virtual_list.scroll_offset().to_bits() != old.to_bits()
+    }
+
+    fn scroll_event(&mut self, ctx: &mut EventCtx<'_>, delta: f64) {
+        if self.advance_offset(delta) {
+            if self.needs_layout() {
+                ctx.request_layout();
+            }
+            ctx.request_compose();
+            ctx.set_handled();
+        }
     }
 
     /// Ensures that the correct follow-up passes are requested after the scroll position changes.
@@ -479,6 +493,24 @@ impl VirtualScroll {
         }
     }
 
+    /// Move the viewport by logical pixels in visual coordinates.
+    ///
+    /// Positive values move down or right; negative values move up or left.
+    /// Returns whether the clamped scroll position changed.
+    pub fn scroll_by(this: &mut WidgetMut<'_, Self>, delta: f64) -> bool {
+        if !this
+            .widget
+            .advance_offset(this.widget.direction.appropriate(delta))
+        {
+            return false;
+        }
+        if this.widget.needs_layout() {
+            this.ctx.request_layout();
+        }
+        this.ctx.request_compose();
+        true
+    }
+
     /// Forcefully aligns the top of the item at `idx` with the top of the
     /// virtual scroll area.
     ///
@@ -570,15 +602,18 @@ impl Widget for VirtualScroll {
             let delta_px = delta
                 .to_pixel_delta(line_px, page_px)
                 .to_logical::<f64>(scale_factor);
-            let delta = -match (self.direction.axis(), delta_px.x == 0., delta_px.y == 0.) {
-                (Axis::Horizontal, false, _) | (Axis::Vertical, _, true) => delta_px.x,
-                (Axis::Horizontal, true, _) | (Axis::Vertical, _, false) => delta_px.y,
+            // Keep pixel gestures on their actual axis. A traditional vertical
+            // line wheel can also operate a horizontal list without a trackpad.
+            let visual_delta = match self.direction.axis() {
+                Axis::Vertical => -delta_px.y,
+                Axis::Horizontal
+                    if delta_px.x == 0.0 && matches!(delta, ScrollDelta::LineDelta(..)) =>
+                {
+                    -delta_px.y
+                }
+                Axis::Horizontal => -delta_px.x,
             };
-
-            if self.scroll_by(-delta) {
-                ctx.request_layout();
-            }
-            ctx.request_compose();
+            self.scroll_event(ctx, self.direction.appropriate(visual_delta));
         }
     }
 
@@ -619,17 +654,14 @@ impl Widget for VirtualScroll {
             _ => None,
         };
         if let Some((delta, direct)) = delta {
-            self.virtual_list.scroll_by(if direct {
-                delta
-            } else {
-                self.direction.appropriate(delta)
-            });
-
-            if self.needs_layout() {
-                ctx.request_layout();
-            }
-            ctx.request_compose();
-            ctx.set_handled();
+            self.scroll_event(
+                ctx,
+                if direct {
+                    delta
+                } else {
+                    self.direction.appropriate(delta)
+                },
+            );
         }
     }
 
@@ -654,12 +686,7 @@ impl Widget for VirtualScroll {
             _ => self.virtual_list.extent_of(self.anchor_index),
         };
 
-        self.virtual_list.scroll_by(sign * delta);
-        if self.needs_layout() {
-            ctx.request_layout();
-        }
-        ctx.request_compose();
-        ctx.set_handled();
+        self.scroll_event(ctx, sign * delta);
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
@@ -679,8 +706,7 @@ impl Widget for VirtualScroll {
             let target = rect.get_coords(self.direction.axis());
             let new_pos = super::compute_pan_range(viewport.clone(), target.0..target.1).start;
             let delta = self.direction.appropriate(new_pos - viewport.start);
-            if delta != 0.0 {
-                self.virtual_list.scroll_by(delta);
+            if self.advance_offset(delta) {
                 if self.needs_layout() {
                     ctx.request_layout();
                 }
@@ -1051,6 +1077,78 @@ mod tests {
     }
 
     #[test]
+    fn nested_wheel_scrolls_outer_portal_only_at_inner_boundary() {
+        use crate::core::WidgetTag;
+        use crate::layout::AsUnit;
+        use crate::properties::{Dimensions, Gap};
+        use crate::widgets::{Flex, Portal};
+
+        let inner = WidgetTag::named("virtual-scroll-child");
+        let content = Flex::column()
+            .with_fixed(
+                VirtualScroll::new(0, 4)
+                    .prepare()
+                    .with_tag(inner)
+                    .with_props(Dimensions::fixed(100.px(), 100.px())),
+            )
+            .with_fixed_spacer(300.px())
+            .prepare()
+            .with_props(Gap::new(Length::ZERO));
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            Portal::new(content).constrain_horizontal(true).prepare(),
+            (100, 100),
+        );
+        for _ in 0..64 {
+            let Some((action, _)) = harness.pop_action::<VirtualScrollAction>().unwrap() else {
+                break;
+            };
+            if let VirtualScrollAction::Fetch(fetch) = action {
+                harness
+                    .edit_widget(inner, |scroll| fixed_size_driver(fetch, scroll))
+                    .unwrap();
+            }
+        }
+        assert!(
+            harness.pop_action_erased().is_none(),
+            "materialization must converge"
+        );
+        harness.mouse_move((40.0, 40.0));
+        harness.mouse_wheel(Vec2::new(0.0, -50.0));
+        assert_eq!(
+            harness
+                .get_widget(inner)
+                .unwrap()
+                .virtual_list
+                .scroll_offset(),
+            50.0
+        );
+        assert_eq!(harness.root_widget().unwrap().get_viewport_pos().y, 0.0);
+
+        harness.mouse_wheel(Vec2::new(0.0, -100.0));
+        assert_eq!(
+            harness
+                .get_widget(inner)
+                .unwrap()
+                .virtual_list
+                .scroll_offset(),
+            100.0
+        );
+        assert_eq!(harness.root_widget().unwrap().get_viewport_pos().y, 0.0);
+
+        harness.mouse_wheel(Vec2::new(0.0, -50.0));
+        assert_eq!(
+            harness
+                .get_widget(inner)
+                .unwrap()
+                .virtual_list
+                .scroll_offset(),
+            100.0
+        );
+        assert_eq!(harness.root_widget().unwrap().get_viewport_pos().y, 50.0);
+    }
+
+    #[test]
     fn reveal_materialized_item_uses_current_visual_coordinates_in_all_directions() {
         for direction in [
             ScrollDirection::TopToBottom,
@@ -1104,8 +1202,7 @@ mod tests {
         harness
             .edit_root_widget(|mut scroll| {
                 VirtualScroll::set_scrolling(&mut scroll, true);
-                assert!(!scroll.widget.scroll_by(-0.25));
-                scroll.ctx.request_compose();
+                assert!(VirtualScroll::scroll_by(&mut scroll, 0.25));
             })
             .unwrap();
         assert_eq!(origin(&harness), original - Vec2::new(0., 0.25));
