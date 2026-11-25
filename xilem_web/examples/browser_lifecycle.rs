@@ -18,6 +18,18 @@ struct State {
     output: String,
 }
 
+struct RequestGuard(usize);
+
+impl Drop for RequestGuard {
+    fn drop(&mut self) {
+        let _ = web_sys::js_sys::Reflect::set(
+            &web_sys::js_sys::global(),
+            &format!("droppedRequest{}", self.0).into(),
+            &true.into(),
+        );
+    }
+}
+
 fn view(state: &mut State) -> impl DomFragment<State> + use<> {
     let tag = if state.phase == 0 { "button" } else { "span" };
     let event = if state.phase == 2 {
@@ -74,7 +86,9 @@ fn view(state: &mut State) -> impl DomFragment<State> + use<> {
                     )
                     .unwrap_throw();
                 });
+                let guard = RequestGuard(*request);
                 async move {
+                    let _guard = guard;
                     wasm_bindgen_futures::JsFuture::from(promise)
                         .await
                         .unwrap_throw()

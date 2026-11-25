@@ -45,6 +45,7 @@ const test = [
     '  node("reentrant").click();',
     '  await until(() => node("count").textContent === "14");',
     '  node("request").click();',
+    '  await until(() => globalThis.droppedRequest0 === true);',
     '  globalThis.resolveRequest0("obsolete");',
     '  await wait(20);',
     '  check(node("output").textContent === "", "obsolete future rejected during debounce");',
