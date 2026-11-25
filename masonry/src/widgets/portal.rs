@@ -1043,6 +1043,7 @@ mod tests {
     #[test]
     fn nested_portals_reveal_transformed_descendant_from_current_scroll_positions() {
         use crate::kurbo::Affine;
+        use crate::properties::Gap;
 
         let target = WidgetTag::named("nested-scroll-target");
         let inner = WidgetTag::named("inner-portal");
@@ -1056,7 +1057,8 @@ mod tests {
                     .with_tag(target),
             )
             .with_fixed_spacer(300.px())
-            .prepare();
+            .prepare()
+            .with_props(Gap::new(Length::ZERO));
         let outer_content = Flex::column()
             .with_fixed_spacer(260.px())
             .with_fixed(
@@ -1067,7 +1069,8 @@ mod tests {
                     .with_tag(inner),
             )
             .with_fixed_spacer(400.px())
-            .prepare();
+            .prepare()
+            .with_props(Gap::new(Length::ZERO));
         let root = Portal::new(outer_content)
             .constrain_horizontal(true)
             .prepare();
