@@ -450,6 +450,9 @@ impl<W: Widget> TestHarness<W> {
     ///
     /// This will run [rewrite passes](masonry_core::doc::pass_system#rewrite-passes) after the event is processed.
     pub fn process_window_event(&mut self, event: WindowEvent) -> Handled {
+        if let WindowEvent::Resize(size) = event {
+            self.window_size = size;
+        }
         let handled = self.render_root.handle_window_event(event);
         self.process_signals();
         handled

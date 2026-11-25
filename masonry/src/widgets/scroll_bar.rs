@@ -9,9 +9,10 @@ use tracing::{Span, trace_span};
 
 use crate::core::keyboard::{Key, KeyState, NamedKey};
 use crate::core::{
-    AccessCtx, AccessEvent, AllowRawMut, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NoAction,
-    PaintCtx, PointerButtonEvent, PointerEvent, PointerUpdate, PropertiesMut, PropertiesRef,
-    Property, RegisterCtx, TextEvent, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut,
+    AccessCtx, AccessEvent, AllowRawMut, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, PaintCtx,
+    PointerButton, PointerButtonEvent, PointerEvent, PointerUpdate, PropertiesMut, PropertiesRef,
+    Property, RawCtx, RegisterCtx, TextEvent, Update, UpdateCtx, UsesProperty, Widget, WidgetId,
+    WidgetMut,
 };
 use crate::imaging::{Composite, GroupRef, Painter};
 use crate::kurbo::{Axis, Point, Rect, Size, Stroke};
@@ -34,9 +35,8 @@ use crate::widgets::AnimatedF32;
     ")",
 )]
 /// This widget does not directly scroll any content. Instead, it exposes its position via
-/// [`cursor_progress`](Self::cursor_progress) and sets `moved` to `true` whenever user input changes
-/// that position. A parent scroll container (such as [`Portal`](crate::widgets::Portal)) is expected
-/// to observe `moved` and update its viewport accordingly.
+/// [`cursor_progress`](Self::cursor_progress) and emits [`ScrollBarMoved`] whenever user input
+/// changes that position. Parent scroll containers consume the action and synchronize their viewport.
 ///
 /// ## Keyboard and accessibility
 ///
@@ -44,10 +44,10 @@ use crate::widgets::AnimatedF32;
 /// Home/End depending on axis), and expose scroll state in the accessibility tree.
 pub struct ScrollBar {
     axis: Axis,
-    pub(crate) cursor_progress: f64,
-    pub(crate) moved: bool,
-    pub(crate) portal_size: f64,
-    pub(crate) content_size: f64,
+    cursor_progress: f64,
+    portal_size: Length,
+    content_size: Length,
+    focus_owner: Option<WidgetId>,
     pub(crate) opacity: AnimatedF32,
     grab_anchor: Option<f64>,
 }
@@ -59,16 +59,24 @@ impl ScrollBar {
     /// - `portal_size`: Size of the scrolling container in the relevant axis.
     /// - `content_size`: Size of the child in the relevant axis. Usually exceeds `portal_size` in cases where the scrollbar is visible.
     #[must_use = "Use the returned value."]
-    pub const fn new(axis: Axis, portal_size: f64, content_size: f64) -> Self {
+    pub const fn new(axis: Axis, portal_size: Length, content_size: Length) -> Self {
         Self {
             axis,
             cursor_progress: 0.0,
-            moved: false,
+            focus_owner: None,
             portal_size,
             content_size,
             opacity: AnimatedF32::stable(1.),
             grab_anchor: None,
         }
+    }
+
+    /// Keeps keyboard focus on the specified owner instead of this scrollbar.
+    /// Useful in focus-managed popups whose keyboard navigation belongs to the owner.
+    #[must_use = "Use the configured scrollbar."]
+    pub const fn with_focus_owner(mut self, owner: WidgetId) -> Self {
+        self.focus_owner = Some(owner);
+        self
     }
 }
 
@@ -87,10 +95,10 @@ impl ScrollBar {
     /// `cursor_Length` is guaranteed to be at least `min_length`
     /// and the remainder of the layout length is `empty_space_length`.
     fn lengths(&self, layout_size: Size, min_length: f64) -> (f64, f64) {
-        let size_ratio = if self.content_size == 0. {
+        let size_ratio = if self.content_size == Length::ZERO {
             1.
         } else {
-            self.portal_size / self.content_size
+            self.portal_size.get() / self.content_size.get()
         };
         let size_ratio = size_ratio.clamp(0.0, 1.0);
 
@@ -132,18 +140,20 @@ impl ScrollBar {
         new_cursor_progress.clamp(0.0, 1.0)
     }
 
-    fn scroll_range(&self) -> f64 {
-        (self.content_size - self.portal_size).max(0.0)
+    const fn scroll_range(&self) -> f64 {
+        self.content_size.saturating_sub(self.portal_size).get()
     }
 
     fn set_cursor_progress(&mut self, new_progress: f64) -> bool {
-        if !new_progress.is_finite() {
+        let new_progress = if self.scroll_range() <= 0.0 {
+            0.0
+        } else if new_progress.is_finite() {
+            new_progress.clamp(0.0, 1.0)
+        } else {
             return false;
-        }
-        let new_progress = new_progress.clamp(0.0, 1.0);
-        if (new_progress - self.cursor_progress).abs() > 1e-12 {
+        };
+        if new_progress.to_bits() != self.cursor_progress.to_bits() {
             self.cursor_progress = new_progress;
-            self.moved = true;
             true
         } else {
             false
@@ -158,34 +168,67 @@ impl ScrollBar {
         // Translate from a pixel delta in content space to a normalized cursor progress delta.
         self.set_cursor_progress(self.cursor_progress + delta_pixels / scroll_range)
     }
+
+    /// Synchronizes model state without generating a user action. The parent
+    /// may use this during layout, or after consuming an input action.
+    pub(crate) fn synchronize(&mut self, portal: Length, content: Length, progress: f64) -> bool {
+        let sizes_changed = self.portal_size != portal || self.content_size != content;
+        self.portal_size = portal;
+        self.content_size = content;
+        let progress_changed = self.set_cursor_progress(progress);
+        sizes_changed || progress_changed
+    }
+
+    pub(crate) fn synchronize_raw(
+        child: Option<(&mut Self, RawCtx<'_>)>,
+        portal: f64,
+        content: f64,
+        progress: f64,
+    ) {
+        if let Some((bar, mut ctx)) = child
+            && bar.synchronize(Length::px(portal), Length::px(content), progress)
+        {
+            ctx.request_render();
+        }
+    }
+
+    fn emit_movement(&self, ctx: &mut EventCtx<'_>) {
+        ctx.request_render();
+        ctx.submit_action::<ScrollBarMoved>(ScrollBarMoved(self.cursor_progress));
+        ctx.set_handled();
+    }
 }
 
 // --- MARK: WIDGETMUT
 impl ScrollBar {
-    /// Updates the sizes of the widgets being represented by the scrollbar.
-    /// - `portal_size`: Size of the scrolling container in the relevant axis.
-    /// - `content_size`: Size of the child in the relevant axis. Usually exceeds `portal_size` in cases where the scrollbar is visible.
-    // TODO - Remove?
-    pub fn set_sizes(this: &mut WidgetMut<'_, Self>, portal_size: f64, content_size: f64) {
-        this.widget.portal_size = portal_size;
-        this.widget.content_size = content_size;
-        this.ctx.request_render();
-    }
-
-    /// Updates the size of the child widget being represented by the scrollbar.
-    // TODO - Remove?
-    pub fn set_content_size(this: &mut WidgetMut<'_, Self>, content_size: f64) {
-        // TODO - cursor_progress
-        this.widget.content_size = content_size;
-        this.ctx.request_render();
+    /// Sets the viewport size, content size and normalized scroll position.
+    /// This is a model update and does not emit an action.
+    pub fn set_state(
+        this: &mut WidgetMut<'_, Self>,
+        portal: Length,
+        content: Length,
+        progress: f64,
+    ) {
+        let size_changed = this.widget.portal_size != portal || this.widget.content_size != content;
+        if this.widget.synchronize(portal, content, progress) {
+            if size_changed {
+                this.ctx.request_layout();
+            } else {
+                this.ctx.request_render();
+            }
+        }
     }
 }
+
+/// User-requested scrollbar movement, expressed as normalized progress in 0..=1.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScrollBarMoved(pub f64);
 
 impl UsesProperty<Collapsible> for ScrollBar {}
 
 // --- MARK: IMPL WIDGET
 impl Widget for ScrollBar {
-    type Action = NoAction;
+    type Action = ScrollBarMoved;
 
     fn on_pointer_event(
         &mut self,
@@ -194,8 +237,18 @@ impl Widget for ScrollBar {
         event: &PointerEvent,
     ) {
         match event {
-            PointerEvent::Down(PointerButtonEvent { state, .. }) => {
+            PointerEvent::Down(PointerButtonEvent {
+                button: None | Some(PointerButton::Primary),
+                state,
+                ..
+            }) => {
+                if let Some(owner) = self.focus_owner {
+                    ctx.set_focus(owner);
+                } else {
+                    ctx.request_focus();
+                }
                 ctx.capture_pointer();
+                ctx.set_handled();
 
                 let size = ctx.content_box().size();
                 let cursor_min_length = theme::SCROLLBAR_MIN_SIZE;
@@ -217,11 +270,13 @@ impl Widget for ScrollBar {
                     self.grab_anchor = Some(0.5);
                 }
                 if changed {
-                    ctx.request_render();
+                    self.emit_movement(ctx);
+                } else {
+                    ctx.request_paint_only();
                 }
             }
             PointerEvent::Move(PointerUpdate { current, .. }) => {
-                if ctx.is_active()
+                if ctx.is_pointer_capture_target()
                     && let Some(grab_anchor) = self.grab_anchor
                 {
                     let size = ctx.content_box().size();
@@ -233,12 +288,31 @@ impl Widget for ScrollBar {
                         ctx.local_position(current.position),
                     );
                     if self.set_cursor_progress(progress) {
-                        ctx.request_render();
+                        self.emit_movement(ctx);
                     }
+                    ctx.set_handled();
                 }
             }
-            PointerEvent::Up(..) | PointerEvent::Cancel(..) => {
+            PointerEvent::Up(PointerButtonEvent { state, .. })
+                if ctx.is_pointer_capture_target() =>
+            {
+                if let Some(anchor) = self.grab_anchor.take() {
+                    let progress = self.progress_from_mouse_pos(
+                        ctx.content_box().size(),
+                        theme::SCROLLBAR_MIN_SIZE,
+                        anchor,
+                        ctx.local_position(state.position),
+                    );
+                    if self.set_cursor_progress(progress) {
+                        self.emit_movement(ctx);
+                    }
+                }
+                ctx.request_paint_only();
+                ctx.set_handled();
+            }
+            PointerEvent::Cancel(..) => {
                 self.grab_anchor = None;
+                ctx.request_paint_only();
             }
             _ => {}
         }
@@ -253,11 +327,11 @@ impl Widget for ScrollBar {
         let TextEvent::Keyboard(event) = event else {
             return;
         };
-        if event.state != KeyState::Down {
+        if event.state != KeyState::Down || !ctx.is_focus_target() {
             return;
         }
         let line = 120.0;
-        let page = self.portal_size;
+        let page = self.portal_size.get();
 
         let changed = match (&event.key, self.axis) {
             (Key::Named(NamedKey::ArrowUp), Axis::Vertical)
@@ -271,7 +345,7 @@ impl Widget for ScrollBar {
             _ => false,
         };
         if changed {
-            ctx.request_render();
+            self.emit_movement(ctx);
         }
     }
 
@@ -310,7 +384,7 @@ impl Widget for ScrollBar {
             accesskit::ScrollUnit::Item
         };
         let line = 120.0;
-        let page = self.portal_size;
+        let page = self.portal_size.get();
         let amount = match unit {
             accesskit::ScrollUnit::Item => line,
             accesskit::ScrollUnit::Page => page,
@@ -322,7 +396,7 @@ impl Widget for ScrollBar {
         };
 
         if self.adjust_by_pixels(signed) {
-            ctx.request_render();
+            self.emit_movement(ctx);
         }
     }
 
@@ -368,7 +442,7 @@ impl Widget for ScrollBar {
         if axis == self.axis {
             // TODO: Consider .max(theme::SCROLLBAR_MIN_SIZE)
             match len_req {
-                LenReq::Min | LenReq::Max => self.portal_size.px(),
+                LenReq::Min | LenReq::Max => self.portal_size,
                 LenReq::Fit(space) => space,
             }
         } else {
@@ -390,12 +464,17 @@ impl Widget for ScrollBar {
         let cache = ctx.property_cache();
         let collapsible = props.get::<Collapsible>(cache).0;
 
-        if self.opacity.value() < 1. {
+        let opacity = if ctx.is_active() || ctx.is_hovered() {
+            1.0
+        } else {
+            self.opacity.value()
+        };
+        if opacity < 1. {
             painter.push_fill_clip(ctx.border_box());
-            painter.push_group(GroupRef::new().with_composite(Composite::new(
-                crate::peniko::BlendMode::default(),
-                self.opacity.value(),
-            )));
+            painter.push_group(
+                GroupRef::new()
+                    .with_composite(Composite::new(crate::peniko::BlendMode::default(), opacity)),
+            );
         }
 
         let radius = theme::SCROLLBAR_RADIUS;
@@ -426,7 +505,7 @@ impl Widget for ScrollBar {
             )
             .draw();
 
-        if self.opacity.value() < 1. {
+        if opacity < 1. {
             painter.pop_group();
             painter.pop_clip();
         }
@@ -458,7 +537,7 @@ impl Widget for ScrollBar {
                 if self.cursor_progress > 1e-12 {
                     node.add_action(accesskit::Action::ScrollLeft);
                 }
-                if self.cursor_progress + 1e-12 < 1.0 {
+                if scroll_range > 0.0 && self.cursor_progress + 1e-12 < 1.0 {
                     node.add_action(accesskit::Action::ScrollRight);
                 }
             }
@@ -469,7 +548,7 @@ impl Widget for ScrollBar {
                 if self.cursor_progress > 1e-12 {
                     node.add_action(accesskit::Action::ScrollUp);
                 }
-                if self.cursor_progress + 1e-12 < 1.0 {
+                if scroll_range > 0.0 && self.cursor_progress + 1e-12 < 1.0 {
                     node.add_action(accesskit::Action::ScrollDown);
                 }
             }
@@ -485,7 +564,19 @@ impl Widget for ScrollBar {
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.focus_owner.is_none()
+    }
+
+    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        if matches!(
+            event,
+            Update::DisabledChanged(true) | Update::StashedChanged(true)
+        ) {
+            self.grab_anchor = None;
+        }
+        if matches!(event, Update::HoveredChanged(_) | Update::ActiveChanged(_)) {
+            ctx.request_paint_only();
+        }
     }
 }
 
@@ -503,7 +594,7 @@ mod tests {
 
     #[test]
     fn simple_scrollbar() {
-        let widget = NewWidget::new(ScrollBar::new(Axis::Vertical, 200.0, 600.0))
+        let widget = NewWidget::new(ScrollBar::new(Axis::Vertical, 200.px(), 600.px()))
             .with_props(Dimensions::FIT);
 
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (50, 200));
@@ -514,8 +605,9 @@ mod tests {
         assert!(harness.pop_action_erased().is_none());
 
         harness.mouse_click_on(scrollbar_id, None).unwrap();
-        // TODO - Scroll action?
-        assert!(harness.pop_action_erased().is_none());
+        let (action, source) = harness.pop_action::<ScrollBarMoved>().unwrap().unwrap();
+        assert_eq!(source, scrollbar_id);
+        assert!((action.0 - 0.5).abs() < 1e-9);
 
         assert_render_snapshot!(harness, "scrollbar_middle");
 
@@ -530,7 +622,7 @@ mod tests {
 
     #[test]
     fn collapsible_scrollbar() {
-        let widget = NewWidget::new(ScrollBar::new(Axis::Vertical, 200.0, 600.0))
+        let widget = NewWidget::new(ScrollBar::new(Axis::Vertical, 200.px(), 600.px()))
             .with_props(Collapsible(true))
             .with_props(Dimensions::FIT);
 
@@ -541,7 +633,7 @@ mod tests {
 
     #[test]
     fn horizontal_scrollbar() {
-        let widget = NewWidget::new(ScrollBar::new(Axis::Horizontal, 200.0, 600.0))
+        let widget = NewWidget::new(ScrollBar::new(Axis::Horizontal, 200.px(), 600.px()))
             .with_props(Dimensions::FIT);
 
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (200, 50));
@@ -559,8 +651,48 @@ mod tests {
     }
 
     #[test]
+    fn model_updates_do_not_emit_actions_and_empty_range_clears_progress() {
+        let widget = ScrollBar::new(Axis::Vertical, 100.px(), 300.px())
+            .prepare()
+            .with_props(Dimensions::FIT);
+        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (20, 100));
+        let id = harness.root_id();
+        harness
+            .edit_root_widget(|mut bar| {
+                ScrollBar::set_state(&mut bar, 100.px(), 300.px(), 0.75);
+            })
+            .unwrap();
+        assert!(harness.pop_action_erased().is_none());
+        harness.focus_on(Some(id));
+        harness.process_text_event(&TextEvent::key_down(Key::Named(NamedKey::End)));
+        assert_eq!(
+            harness.pop_action::<ScrollBarMoved>().unwrap(),
+            Some((ScrollBarMoved(1.0), id))
+        );
+        harness
+            .edit_root_widget(|mut bar| {
+                ScrollBar::set_state(&mut bar, 300.px(), 300.px(), f64::NAN);
+            })
+            .unwrap();
+        assert!(harness.pop_action_erased().is_none());
+        assert!(harness.root_widget().unwrap().cursor_progress().abs() < 1e-12);
+        let _ = harness.redraw();
+        assert!(
+            !harness
+                .access_node(id)
+                .unwrap()
+                .data()
+                .supports_action(accesskit::Action::ScrollDown)
+        );
+        harness
+            .mouse_click_on(id, Some(PointerButton::Secondary))
+            .unwrap();
+        assert!(harness.pop_action_erased().is_none());
+    }
+
+    #[test]
     fn keyboard_scroll_updates_access_tree() {
-        let widget = NewWidget::new(ScrollBar::new(Axis::Vertical, 200.0, 600.0))
+        let widget = NewWidget::new(ScrollBar::new(Axis::Vertical, 200.px(), 600.px()))
             .with_props(Dimensions::FIT);
         let mut harness = TestHarness::create_with_size(test_property_set(), widget, (50, 200));
         let _ = harness.render().unwrap();
