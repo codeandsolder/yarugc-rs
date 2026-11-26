@@ -98,8 +98,8 @@ impl TextLayout {
             if self.max_advance != Some(alignment_width) {
                 let mut breaker = self.layout.break_lines();
                 let wrapping_width = self.max_advance.unwrap_or(f32::MAX);
-                breaker.set_layout_max_advance(wrapping_width);
-                breaker.set_line_max_advance(wrapping_width);
+                breaker.state_mut().set_layout_max_advance(wrapping_width);
+                breaker.state_mut().set_line_max_advance(wrapping_width);
                 while breaker.break_next().is_some() {
                     breaker.set_prior_line_width(alignment_width);
                 }
