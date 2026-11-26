@@ -67,7 +67,7 @@ imaging_vello_hybrid = { git = "https://github.com/forest-rs/imaging.git", rev =
 imaging_vello_cpu = { git = "https://github.com/forest-rs/imaging.git", rev = "f3f932a8a0e233f5ab52863041b8a3d6cff9255b" }
 wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl"] }
 kurbo = "0.13.1"
-parley = { version = "0.8.0", features = ["accesskit"] }
+parley = { version = "0.11.1", features = ["accesskit"] }
 # TODO: Use no_std correctly in Xilem Web.
 peniko = "0.6.1"
 winit = "0.30.13"
