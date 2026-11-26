@@ -17,7 +17,8 @@ default-target = "x86_64-unknown-linux-gnu"
 targets = []
 
 [features]
-default = ["masonry_core/default", "imaging_vello"]
+default = ["masonry_core/default", "imaging_vello", "svg"]
+svg = ["dep:resvg"]
 imaging_vello = ["masonry_winit/imaging_vello"]
 imaging_vello_hybrid = ["masonry_winit/imaging_vello_hybrid"]
 imaging_skia = ["masonry_winit/imaging_skia"]
@@ -31,7 +32,7 @@ masonry_testing = { workspace = true, optional = true, default-features = false 
 smallvec.workspace = true
 tracing = { workspace = true, features = ["default"] }
 include_doc_path.workspace = true
-resvg.workspace = true
+resvg = { workspace = true, optional = true }
 understory_virtual_list = "0.1.2"
 
 [dev-dependencies]

@@ -23,7 +23,7 @@ imaging_skia = ["masonry/imaging_skia"]
 
 [dependencies]
 xilem_core.workspace = true
-masonry.workspace = true
+masonry = { workspace = true, features = ["svg"] }
 smallvec.workspace = true
 tracing.workspace = true
 tokio = { version = "1.50.0", features = ["rt", "rt-multi-thread", "time", "sync"] }

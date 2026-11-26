@@ -89,6 +89,7 @@ mod step_input;
     clippy::redundant_pub_crate,
     reason = "Gallery internals are deliberately not public API under unreachable_pub."
 )]
+#[cfg(feature = "svg")]
 mod svg;
 #[expect(
     clippy::redundant_pub_crate,
@@ -281,6 +282,7 @@ fn build_demos() -> Vec<Box<dyn DemoPage>> {
         Box::new(spinner::SpinnerDemo::new(new_demo_shell_tags())),
         Box::new(split::SplitDemo::new(new_demo_shell_tags())),
         Box::new(step_input::StepInputDemo::new(new_demo_shell_tags())),
+        #[cfg(feature = "svg")]
         Box::new(svg::SvgDemo::new(new_demo_shell_tags())),
         Box::new(SwitchDemo::new(new_demo_shell_tags())),
         Box::new(text_input::TextInputDemo::new(new_demo_shell_tags())),

@@ -41,6 +41,7 @@ mod slider;
 mod spinner;
 mod split;
 mod step_input;
+#[cfg(feature = "svg")]
 mod svg;
 mod switch;
 mod text_area;
@@ -83,6 +84,7 @@ pub use self::slider::*;
 pub use self::spinner::*;
 pub use self::split::*;
 pub use self::step_input::*;
+#[cfg(feature = "svg")]
 pub use self::svg::*;
 pub use self::switch::*;
 pub use self::text_area::*;
