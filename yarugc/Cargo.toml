@@ -11,7 +11,8 @@ categories = ["gui", "rendering"]
 readme = "README.md"
 
 [dependencies]
-ab_glyph = "0.2.32"
+ab_glyph_rasterizer = "0.1.10"
+skrifa = "0.44.0"
 bytemuck = "1.25.0"
 masonry_core.workspace = true
 masonry_imaging = { workspace = true, features = ["imaging_vello"] }

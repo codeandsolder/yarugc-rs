@@ -5,8 +5,16 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::Arc;
 
-use ab_glyph::{Font, FontRef, ScaleFont, point};
+use ab_glyph_rasterizer::{Rasterizer, point};
 use masonry_core::kurbo::Rect;
+use skrifa::{
+    FontRef, MetadataProvider,
+    instance::{LocationRef, Size},
+    outline::{
+        DrawSettings,
+        pen::{ControlBoundsPen, PathElement},
+    },
+};
 use wgpu::util::DeviceExt;
 
 use crate::{AlphaMode, Compositor, SlotGeometry, Surface};
@@ -578,34 +586,68 @@ fn rasterize(
     {
         return Err(ReadoutError::InvalidExtent);
     }
-    let font = FontRef::try_from_slice(font).map_err(|_| ReadoutError::InvalidFont)?;
-    let scaled = font.as_scaled(pixel_height);
+    let font = FontRef::from_index(font, 0).map_err(|_| ReadoutError::InvalidFont)?;
+    let location = LocationRef::default();
+    let unscaled = font.metrics(Size::unscaled(), location);
+    let height = unscaled.ascent - unscaled.descent;
+    if !height.is_finite() || height <= 0.0 || unscaled.units_per_em == 0 {
+        return Err(ReadoutError::InvalidFont);
+    }
+    // Preserve the public pixel-height convention (ascent minus descent),
+    // whereas Skrifa uses pixels per em.
+    let size = Size::new(pixel_height * f32::from(unscaled.units_per_em) / height);
+    let metrics = font.metrics(size, location);
+    let glyph_metrics = font.glyph_metrics(size, location);
+    let charmap = font.charmap();
+    let glyph_outlines = font.outline_glyphs();
     let mut glyphs = BTreeMap::from([(' ', 0)]);
     let mut outlines = Vec::new();
     let mut width = 1.0_f32;
-    let mut top = -scaled.ascent().ceil();
-    let mut bottom = -scaled.descent().floor();
+    let mut top = -metrics.ascent.ceil();
+    let mut bottom = -metrics.descent.floor();
     for ch in alphabet {
         if glyphs.contains_key(&ch) {
             continue;
         }
-        let id = scaled.glyph_id(ch);
-        if id.0 == 0 {
-            return Err(ReadoutError::MissingGlyph(ch));
-        }
+        let id = charmap.map(ch).ok_or(ReadoutError::MissingGlyph(ch))?;
         let layer = u32::try_from(outlines.len() + 1).map_err(|_| ReadoutError::InvalidExtent)?;
         if layer >= limits.max_texture_array_layers {
             return Err(ReadoutError::InvalidExtent);
         }
-        let outline =
-            scaled.outline_glyph(id.with_scale_and_position(pixel_height, point(0.0, 0.0)));
-        width = width.max(scaled.h_advance(id).ceil());
-        if let Some(outline) = &outline {
-            let bounds = outline.px_bounds();
-            width = width.max(bounds.width());
-            top = top.min(bounds.min.y);
-            bottom = bottom.max(bounds.max.y);
-        }
+        let advance = glyph_metrics
+            .advance_width(id)
+            .ok_or(ReadoutError::InvalidFont)?;
+        width = width.max(advance.ceil());
+        let outline = if let Some(glyph) = glyph_outlines.get(id) {
+            let settings = DrawSettings::unhinted(size, location);
+            let mut bounds = ControlBoundsPen::new();
+            glyph
+                .draw(settings, &mut bounds)
+                .map_err(|_| ReadoutError::InvalidFont)?;
+            if let Some(bounds) = bounds.bounding_box() {
+                let bounds = [
+                    bounds.x_min.floor(),
+                    -bounds.y_max.ceil(),
+                    bounds.x_max.ceil(),
+                    -bounds.y_min.floor(),
+                ];
+                if !bounds.iter().all(|value| value.is_finite()) {
+                    return Err(ReadoutError::InvalidFont);
+                }
+                width = width.max(bounds[2] - bounds[0]);
+                top = top.min(bounds[1]);
+                bottom = bottom.max(bounds[3]);
+                let mut path = Vec::new();
+                glyph
+                    .draw(DrawSettings::unhinted(size, location), &mut path)
+                    .map_err(|_| ReadoutError::InvalidFont)?;
+                Some((bounds, path))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         glyphs.insert(ch, layer);
         outlines.push(outline);
     }
@@ -633,24 +675,55 @@ fn rasterize(
         .map_err(|_| ReadoutError::InvalidExtent)?;
     pixels.resize(total, 0);
     for (index, outline) in outlines.into_iter().enumerate() {
-        if let Some(outline) = outline {
-            let bounds = outline.px_bounds();
-            let x0 = (w - bounds.width()) as u32 / 2;
-            let y0 = (1.0 + bounds.min.y - top) as u32;
+        if let Some((bounds, path)) = outline {
+            let x = ((w - (bounds[2] - bounds[0])) * 0.5).floor() - bounds[0];
+            let y = 1.0 - top;
+            let mut rasterizer = Rasterizer::new(cell_size[0] as usize, cell_size[1] as usize);
+            let transform = |px, py: f32| point(px + x, -py + y);
+            let mut current = point(0.0, 0.0);
+            let mut start = current;
+            for element in path {
+                match element {
+                    PathElement::MoveTo { x, y } => {
+                        current = transform(x, y);
+                        start = current;
+                    }
+                    PathElement::LineTo { x, y } => {
+                        let end = transform(x, y);
+                        rasterizer.draw_line(current, end);
+                        current = end;
+                    }
+                    PathElement::QuadTo { cx0, cy0, x, y } => {
+                        let end = transform(x, y);
+                        rasterizer.draw_quad(current, transform(cx0, cy0), end);
+                        current = end;
+                    }
+                    PathElement::CurveTo {
+                        cx0,
+                        cy0,
+                        cx1,
+                        cy1,
+                        x,
+                        y,
+                    } => {
+                        let end = transform(x, y);
+                        rasterizer.draw_cubic(
+                            current,
+                            transform(cx0, cy0),
+                            transform(cx1, cy1),
+                            end,
+                        );
+                        current = end;
+                    }
+                    PathElement::Close => {
+                        rasterizer.draw_line(current, start);
+                        current = start;
+                    }
+                }
+            }
             let layer = (index + 1) * area;
-            outline.draw(|x, y, coverage| {
-                let (Some(x), Some(y)) = (x0.checked_add(x), y0.checked_add(y)) else {
-                    return;
-                };
-                if x >= cell_size[0] || y >= cell_size[1] {
-                    return;
-                }
-                let offset = u64::from(y) * u64::from(cell_size[0]) + u64::from(x);
-                if let Ok(pixel) = usize::try_from(offset)
-                    && let Some(dst) = pixels.get_mut(layer + pixel)
-                {
-                    *dst = (coverage.clamp(0.0, 1.0) * 255.0).round() as u8;
-                }
+            rasterizer.for_each_pixel(|pixel, coverage| {
+                pixels[layer + pixel] = (coverage.clamp(0.0, 1.0) * 255.0).round() as u8;
             });
         }
     }
@@ -665,6 +738,35 @@ fn rasterize(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fontations_readout_rasterizes_distinct_padded_glyphs() {
+        let font =
+            include_bytes!("../../masonry_testing/resources/fonts/roboto/Roboto-Regular.ttf");
+        let atlas = rasterize(font, 24.0, ['0', '1', '−', ' '], &wgpu::Limits::default()).unwrap();
+        let [w, h] = atlas.cell_size.map(|value| usize::try_from(value).unwrap());
+        let area = w * h;
+        assert_eq!(atlas.layers, 4);
+        assert!(atlas.pixels[..area].iter().all(|&pixel| pixel == 0));
+        for layer in atlas.pixels[area..].chunks_exact(area) {
+            assert!(layer.iter().any(|&pixel| pixel > 0));
+            assert!(
+                layer[..w]
+                    .iter()
+                    .chain(&layer[area - w..])
+                    .all(|&pixel| pixel == 0)
+            );
+            assert!(
+                layer
+                    .chunks_exact(w)
+                    .all(|row| row[0] == 0 && row[w - 1] == 0)
+            );
+        }
+        assert_ne!(
+            &atlas.pixels[area..2 * area],
+            &atlas.pixels[2 * area..3 * area]
+        );
+    }
 
     #[test]
     fn glyph_updates_are_transactional_and_report_exact_changed_range() {

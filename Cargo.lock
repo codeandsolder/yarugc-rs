@@ -7066,7 +7066,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 name = "yarugc"
 version = "0.4.0"
 dependencies = [
- "ab_glyph",
+ "ab_glyph_rasterizer",
  "bytemuck",
  "glyphon",
  "masonry",
@@ -7074,6 +7074,7 @@ dependencies = [
  "masonry_imaging",
  "peniko",
  "pollster",
+ "skrifa 0.44.0",
  "sluggrs_skylines",
  "vello",
  "wgpu",
