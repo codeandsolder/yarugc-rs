@@ -91,11 +91,21 @@ impl TextLayout {
     fn align(&mut self, alignment: TextAlign, alignment_width: f32) {
         let parameters = Some((alignment, alignment_width));
         if self.alignment != parameters {
-            self.layout.align(
-                Some(alignment_width),
-                alignment,
-                TextAlignOptions::default(),
-            );
+            // Parley now records the alignment width on individual lines.
+            // Rebreak the existing shaped runs only when the actual container
+            // width differs from the wrapping constraint, preserving unwrapped
+            // Clip/Overflow labels and explicit paragraph boundaries.
+            if self.max_advance != Some(alignment_width) {
+                let mut breaker = self.layout.break_lines();
+                let wrapping_width = self.max_advance.unwrap_or(f32::MAX);
+                breaker.set_layout_max_advance(wrapping_width);
+                breaker.set_line_max_advance(wrapping_width);
+                while breaker.break_next().is_some() {
+                    breaker.set_prior_line_width(alignment_width);
+                }
+                breaker.finish();
+            }
+            self.layout.align(alignment, TextAlignOptions::default());
             self.alignment = parameters;
         }
     }
@@ -626,6 +636,47 @@ mod tests {
             }
             assert_eq!(cached.layouts[initial].max_advance, None);
         }
+    }
+
+    #[test]
+    fn unwrapped_labels_align_without_adding_soft_breaks() {
+        let mut fonts = FontContext::new();
+        fonts.collection.register_fonts(
+            crate::peniko::Blob::new(std::sync::Arc::new(masonry_testing::ROBOTO)),
+            None,
+        );
+        let mut context = LayoutContext::new();
+        let mut label = Label::new("a long label with spaces\nshort")
+            .with_style(FontFamily::Single(FontFamilyName::named("Roboto")));
+        let index = label.build_and_break(&mut fonts, &mut context, None);
+        let entry = &mut label.layouts[index];
+        let ranges: Vec<_> = entry.layout.lines().map(|line| line.text_range()).collect();
+        assert_eq!(ranges.len(), 2);
+        let long_width = entry.layout.width();
+        let narrow = long_width * 0.5;
+        entry.align(TextAlign::Center, narrow);
+        assert_eq!(
+            entry
+                .layout
+                .lines()
+                .map(|line| line.text_range())
+                .collect::<Vec<_>>(),
+            ranges
+        );
+        let short = entry.layout.get(1).unwrap().metrics();
+        let expected = (narrow - short.advance + short.trailing_whitespace) * 0.5;
+        assert!(expected > 0.0);
+        assert!((short.offset - expected).abs() < 0.001);
+        assert_eq!(entry.layout.width(), long_width);
+        entry.align(TextAlign::End, long_width * 2.0);
+        assert_eq!(
+            entry
+                .layout
+                .lines()
+                .map(|line| line.text_range())
+                .collect::<Vec<_>>(),
+            ranges
+        );
     }
 
     #[test]
