@@ -676,55 +676,15 @@ fn rasterize(
     pixels.resize(total, 0);
     for (index, outline) in outlines.into_iter().enumerate() {
         if let Some((bounds, path)) = outline {
-            let x = ((w - (bounds[2] - bounds[0])) * 0.5).floor() - bounds[0];
-            let y = 1.0 - top;
-            let mut rasterizer = Rasterizer::new(cell_size[0] as usize, cell_size[1] as usize);
-            let transform = |px, py: f32| point(px + x, -py + y);
-            let mut current = point(0.0, 0.0);
-            let mut start = current;
-            for element in path {
-                match element {
-                    PathElement::MoveTo { x, y } => {
-                        current = transform(x, y);
-                        start = current;
-                    }
-                    PathElement::LineTo { x, y } => {
-                        let end = transform(x, y);
-                        rasterizer.draw_line(current, end);
-                        current = end;
-                    }
-                    PathElement::QuadTo { cx0, cy0, x, y } => {
-                        let end = transform(x, y);
-                        rasterizer.draw_quad(current, transform(cx0, cy0), end);
-                        current = end;
-                    }
-                    PathElement::CurveTo {
-                        cx0,
-                        cy0,
-                        cx1,
-                        cy1,
-                        x,
-                        y,
-                    } => {
-                        let end = transform(x, y);
-                        rasterizer.draw_cubic(
-                            current,
-                            transform(cx0, cy0),
-                            transform(cx1, cy1),
-                            end,
-                        );
-                        current = end;
-                    }
-                    PathElement::Close => {
-                        rasterizer.draw_line(current, start);
-                        current = start;
-                    }
-                }
-            }
             let layer = (index + 1) * area;
-            rasterizer.for_each_pixel(|pixel, coverage| {
-                pixels[layer + pixel] = (coverage.clamp(0.0, 1.0) * 255.0).round() as u8;
-            });
+            draw_outline(
+                &path,
+                bounds,
+                top,
+                w,
+                cell_size,
+                &mut pixels[layer..layer + area],
+            )?;
         }
     }
     Ok(RasterAtlas {
@@ -733,6 +693,68 @@ fn rasterize(
         layers,
         pixels,
     })
+}
+
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "Coverage is normalized to 8-bit alpha"
+)]
+#[expect(clippy::cast_sign_loss, reason = "Coverage is clamped nonnegative")]
+fn draw_outline(
+    path: &[PathElement],
+    bounds: [f32; 4],
+    top: f32,
+    w: f32,
+    cell_size: [u32; 2],
+    pixels: &mut [u8],
+) -> Result<(), ReadoutError> {
+    let [width, height] =
+        cell_size.map(|v| usize::try_from(v).map_err(|_| ReadoutError::InvalidExtent));
+    let (width, height) = (width?, height?);
+    let x = ((w - (bounds[2] - bounds[0])) * 0.5).floor() - bounds[0];
+    let y = 1.0 - top;
+    let mut rasterizer = Rasterizer::new(width, height);
+    let transform = |px, py: f32| point(px + x, -py + y);
+    let mut current = point(0.0, 0.0);
+    let mut start = current;
+    for &element in path {
+        match element {
+            PathElement::MoveTo { x, y } => {
+                current = transform(x, y);
+                start = current;
+            }
+            PathElement::LineTo { x, y } => {
+                let end = transform(x, y);
+                rasterizer.draw_line(current, end);
+                current = end;
+            }
+            PathElement::QuadTo { cx0, cy0, x, y } => {
+                let end = transform(x, y);
+                rasterizer.draw_quad(current, transform(cx0, cy0), end);
+                current = end;
+            }
+            PathElement::CurveTo {
+                cx0,
+                cy0,
+                cx1,
+                cy1,
+                x,
+                y,
+            } => {
+                let end = transform(x, y);
+                rasterizer.draw_cubic(current, transform(cx0, cy0), transform(cx1, cy1), end);
+                current = end;
+            }
+            PathElement::Close => {
+                rasterizer.draw_line(current, start);
+                current = start;
+            }
+        }
+    }
+    rasterizer.for_each_pixel(|pixel, coverage| {
+        pixels[pixel] = (coverage.clamp(0.0, 1.0) * 255.0).round() as u8;
+    });
+    Ok(())
 }
 
 #[cfg(test)]
