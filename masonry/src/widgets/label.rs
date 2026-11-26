@@ -663,7 +663,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             ranges
         );
-        let short = entry.layout.get(1).unwrap().metrics();
+        let short_line = entry.layout.get(1).unwrap();
+        let short = short_line.metrics();
         let expected = (narrow - short.advance + short.trailing_whitespace) * 0.5;
         assert!(expected > 0.0);
         assert!((short.offset - expected).abs() < 0.001);
