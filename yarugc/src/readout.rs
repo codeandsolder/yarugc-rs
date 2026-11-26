@@ -618,36 +618,16 @@ fn rasterize(
             .advance_width(id)
             .ok_or(ReadoutError::InvalidFont)?;
         width = width.max(advance.ceil());
-        let outline = if let Some(glyph) = glyph_outlines.get(id) {
-            let settings = DrawSettings::unhinted(size, location);
-            let mut bounds = ControlBoundsPen::new();
-            glyph
-                .draw(settings, &mut bounds)
-                .map_err(|_| ReadoutError::InvalidFont)?;
-            if let Some(bounds) = bounds.bounding_box() {
-                let bounds = [
-                    bounds.x_min.floor(),
-                    -bounds.y_max.ceil(),
-                    bounds.x_max.ceil(),
-                    -bounds.y_min.floor(),
-                ];
-                if !bounds.iter().all(|value| value.is_finite()) {
-                    return Err(ReadoutError::InvalidFont);
-                }
-                width = width.max(bounds[2] - bounds[0]);
-                top = top.min(bounds[1]);
-                bottom = bottom.max(bounds[3]);
-                let mut path = Vec::new();
-                glyph
-                    .draw(DrawSettings::unhinted(size, location), &mut path)
-                    .map_err(|_| ReadoutError::InvalidFont)?;
-                Some((bounds, path))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let outline = glyph_outlines
+            .get(id)
+            .map(|glyph| load_outline(&glyph, size, location))
+            .transpose()?
+            .flatten();
+        if let Some((bounds, _)) = &outline {
+            width = width.max(bounds[2] - bounds[0]);
+            top = top.min(bounds[1]);
+            bottom = bottom.max(bounds[3]);
+        }
         glyphs.insert(ch, layer);
         outlines.push(outline);
     }
@@ -693,6 +673,36 @@ fn rasterize(
         layers,
         pixels,
     })
+}
+
+type GlyphOutline = ([f32; 4], Vec<PathElement>);
+
+fn load_outline(
+    glyph: &skrifa::outline::OutlineGlyph<'_>,
+    size: Size,
+    location: LocationRef<'_>,
+) -> Result<Option<GlyphOutline>, ReadoutError> {
+    let mut bounds = ControlBoundsPen::new();
+    glyph
+        .draw(DrawSettings::unhinted(size, location), &mut bounds)
+        .map_err(|_| ReadoutError::InvalidFont)?;
+    let Some(bounds) = bounds.bounding_box() else {
+        return Ok(None);
+    };
+    let bounds = [
+        bounds.x_min.floor(),
+        -bounds.y_max.ceil(),
+        bounds.x_max.ceil(),
+        -bounds.y_min.floor(),
+    ];
+    if !bounds.iter().all(|value| value.is_finite()) {
+        return Err(ReadoutError::InvalidFont);
+    }
+    let mut path = Vec::new();
+    glyph
+        .draw(DrawSettings::unhinted(size, location), &mut path)
+        .map_err(|_| ReadoutError::InvalidFont)?;
+    Ok(Some((bounds, path)))
 }
 
 #[expect(
