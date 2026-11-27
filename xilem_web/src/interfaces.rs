@@ -993,7 +993,7 @@ dom_interface!(SvgElement: Element => SvgElement {
     fn stroke(
         self,
         color: impl Into<peniko::Color>,
-        style: peniko::kurbo::Stroke,
+        style: crate::svg::StrokeStyle,
     ) -> crate::svg::Stroke<Self, State, Action> {
         crate::svg::stroke(self, color, style)
     }

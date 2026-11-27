@@ -1,6 +1,7 @@
 // Copyright 2023 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
+use std::borrow::Borrow;
 use std::fmt::Write as _;
 use std::marker::PhantomData;
 
@@ -17,11 +18,58 @@ pub struct Fill<V, State, Action> {
     phantom: PhantomData<fn() -> (State, Action)>,
 }
 
+/// Stroke geometry expressible by SVG, which uses a single cap for both ends.
+#[derive(Clone, Debug, PartialEq)]
+#[must_use = "use the configured stroke style in a view"]
+pub struct StrokeStyle(kurbo::Stroke);
+
+impl Default for StrokeStyle {
+    fn default() -> Self {
+        Self::new(1.0)
+    }
+}
+
+impl StrokeStyle {
+    /// Create a stroke with round caps and joins, and the specified width.
+    pub const fn new(width: f64) -> Self {
+        Self(kurbo::Stroke::new(width))
+    }
+
+    /// Set the cap used for both ends of each subpath and dash.
+    pub const fn with_cap(mut self, cap: kurbo::Cap) -> Self {
+        self.0.start_cap = cap;
+        self.0.end_cap = cap;
+        self
+    }
+
+    /// Set the shape of joins between segments.
+    pub const fn with_join(mut self, join: kurbo::Join) -> Self {
+        self.0.join = join;
+        self
+    }
+
+    /// Set the maximum miter length relative to stroke width.
+    pub const fn with_miter_limit(mut self, limit: f64) -> Self {
+        self.0.miter_limit = limit;
+        self
+    }
+
+    /// Set the dash offset and alternating painted and unpainted lengths.
+    pub fn with_dashes<P>(mut self, offset: f64, pattern: P) -> Self
+    where
+        P: IntoIterator,
+        P::Item: Borrow<f64>,
+    {
+        self.0 = self.0.with_dashes(offset, pattern);
+        self
+    }
+}
+
 pub struct Stroke<V, State, Action> {
     child: V,
     // This could reasonably be static Cow also, but keep things simple
     color: Color,
-    style: kurbo::Stroke,
+    style: StrokeStyle,
     phantom: PhantomData<fn() -> (State, Action)>,
 }
 
@@ -36,7 +84,7 @@ pub fn fill<State, Action, V>(child: V, color: impl Into<Color>) -> Fill<V, Stat
 pub fn stroke<State, Action, V>(
     child: V,
     color: impl Into<Color>,
-    style: kurbo::Stroke,
+    style: StrokeStyle,
 ) -> Stroke<V, State, Action> {
     Stroke {
         child,
@@ -158,6 +206,28 @@ where
     }
 }
 
+const STROKE_MODIFIER_COUNT: usize = 8;
+
+fn stroke_geometry(stroke: &kurbo::Stroke) -> [AttributeModifier; 5] {
+    let cap = match stroke.start_cap {
+        kurbo::Cap::Butt => "butt",
+        kurbo::Cap::Square => "square",
+        kurbo::Cap::Round => "round",
+    };
+    let join = match stroke.join {
+        kurbo::Join::Bevel => "bevel",
+        kurbo::Join::Miter => "miter",
+        kurbo::Join::Round => "round",
+    };
+    [
+        ("stroke-dashoffset", stroke.dash_offset).into(),
+        ("stroke-width", stroke.width).into(),
+        ("stroke-linecap", cap).into(),
+        ("stroke-linejoin", join).into(),
+        ("stroke-miterlimit", stroke.miter_limit).into(),
+    ]
+}
+
 fn push_stroke_modifiers(
     mut attrs: Modifier<'_, Attributes>,
     stroke: &kurbo::Stroke,
@@ -169,9 +239,9 @@ fn push_stroke_modifiers(
     Attributes::push(&mut attrs, opacity_attr_modifier("stroke-opacity", color));
     Attributes::push(&mut attrs, ("stroke-dasharray", dash_pattern));
 
-    let dash_offset = (stroke.dash_offset != 0.0).then_some(stroke.dash_offset);
-    Attributes::push(&mut attrs, ("stroke-dashoffset", dash_offset));
-    Attributes::push(&mut attrs, ("stroke-width", stroke.width));
+    for modifier in stroke_geometry(stroke) {
+        Attributes::push(&mut attrs, modifier);
+    }
 }
 
 // This function is not inlined to avoid unnecessary monomorphization, which may result in a bigger binary.
@@ -204,20 +274,11 @@ fn update_stroke_modifiers(
                 *m = ("stroke-dasharray", dash_pattern).into();
             });
         }
-        if next_stroke.dash_offset.to_bits() == prev_stroke.dash_offset.to_bits() {
-            Attributes::skip(&mut attrs, 1);
-        } else {
-            let dash_offset = (next_stroke.dash_offset != 0.0).then_some(next_stroke.dash_offset);
-            Attributes::mutate(&mut attrs, |m| {
-                *m = ("stroke-dashoffset", dash_offset).into();
-            });
-        }
-        if next_stroke.width.to_bits() == prev_stroke.width.to_bits() {
-            Attributes::skip(&mut attrs, 1);
-        } else {
-            Attributes::mutate(&mut attrs, |m| {
-                *m = ("stroke-width", next_stroke.width).into();
-            });
+        for (prev, next) in stroke_geometry(prev_stroke)
+            .iter()
+            .zip(stroke_geometry(next_stroke).iter())
+        {
+            Attributes::update(&mut attrs, prev, next);
         }
     }
 }
@@ -234,9 +295,11 @@ where
     type Element = V::Element;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        let (mut element, state) =
-            ctx.with_size_hint::<Attributes, _>(5, |ctx| self.child.build(ctx, app_state));
-        push_stroke_modifiers(element.modifier(), &self.style, &self.color);
+        let (mut element, state) = ctx
+            .with_size_hint::<Attributes, _>(STROKE_MODIFIER_COUNT, |ctx| {
+                self.child.build(ctx, app_state)
+            });
+        push_stroke_modifiers(element.modifier(), &self.style.0, &self.color);
         (element, state)
     }
 
@@ -248,7 +311,7 @@ where
         element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) {
-        Attributes::rebuild(element, 5, |mut element| {
+        Attributes::rebuild(element, STROKE_MODIFIER_COUNT, |mut element| {
             self.child.rebuild(
                 &prev.child,
                 view_state,
@@ -258,8 +321,8 @@ where
             );
             update_stroke_modifiers(
                 element.modifier(),
-                &prev.style,
-                &self.style,
+                &prev.style.0,
+                &self.style.0,
                 &prev.color,
                 &self.color,
             );
