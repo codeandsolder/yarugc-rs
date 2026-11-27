@@ -163,11 +163,13 @@ impl ScrollBar {
 
     fn adjust_by_pixels(&mut self, delta_pixels: f64) -> bool {
         let scroll_range = self.scroll_range();
-        if scroll_range <= 1e-12 {
+        if scroll_range <= 0.0 || !delta_pixels.is_finite() {
             return false;
         }
         // Translate from a pixel delta in content space to a normalized cursor progress delta.
-        self.set_cursor_progress(self.cursor_progress + delta_pixels / scroll_range)
+        self.set_cursor_progress(
+            (self.cursor_progress + delta_pixels / scroll_range).clamp(0.0, 1.0),
+        )
     }
 
     /// Synchronizes model state without generating a user action. The parent
@@ -559,10 +561,10 @@ impl Widget for ScrollBar {
                 node.set_scroll_x_min(0.0);
                 node.set_scroll_x_max(scroll_range);
                 node.set_scroll_x(value);
-                if self.cursor_progress > 1e-12 {
+                if self.cursor_progress > 0.0 {
                     node.add_action(accesskit::Action::ScrollLeft);
                 }
-                if scroll_range > 0.0 && self.cursor_progress + 1e-12 < 1.0 {
+                if scroll_range > 0.0 && self.cursor_progress < 1.0 {
                     node.add_action(accesskit::Action::ScrollRight);
                 }
             }
@@ -570,10 +572,10 @@ impl Widget for ScrollBar {
                 node.set_scroll_y_min(0.0);
                 node.set_scroll_y_max(scroll_range);
                 node.set_scroll_y(value);
-                if self.cursor_progress > 1e-12 {
+                if self.cursor_progress > 0.0 {
                     node.add_action(accesskit::Action::ScrollUp);
                 }
-                if scroll_range > 0.0 && self.cursor_progress + 1e-12 < 1.0 {
+                if scroll_range > 0.0 && self.cursor_progress < 1.0 {
                     node.add_action(accesskit::Action::ScrollDown);
                 }
             }
@@ -758,6 +760,18 @@ mod tests {
             .mouse_click_on(id, Some(PointerButton::Secondary))
             .unwrap();
         assert!(harness.pop_action_erased().is_none());
+    }
+
+    #[test]
+    fn keyboard_scroll_can_reach_end_of_any_positive_range() {
+        for range in [f64::from_bits(1), 1e-300, 1e-13, 1.0, f64::MAX] {
+            let mut bar = ScrollBar::new(Axis::Vertical, Length::ZERO, range.px());
+            assert!(bar.adjust_by_pixels(f64::MAX));
+            assert_eq!(bar.cursor_progress(), 1.0);
+            assert!(bar.adjust_by_pixels(-f64::MAX));
+            assert_eq!(bar.cursor_progress(), 0.0);
+            assert!(!bar.adjust_by_pixels(f64::NAN));
+        }
     }
 
     #[test]
