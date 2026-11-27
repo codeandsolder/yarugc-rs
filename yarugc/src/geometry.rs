@@ -123,7 +123,7 @@ impl Placement {
 
 // Reuse the clipped slot and working buffers for a series of glyph subrectangles.
 // Clip in slot-local space so the cell bounds and culling use the same coordinates.
-pub struct SubrectMesh {
+pub(super) struct SubrectMesh {
     transform: Affine,
     extent: [f64; 2],
     clip: Vec<Point>,
