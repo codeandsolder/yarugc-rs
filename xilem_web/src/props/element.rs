@@ -3,7 +3,7 @@
 
 use wasm_bindgen::{JsCast, UnwrapThrowExt};
 
-use crate::modifiers::{Attributes, Children, Classes, Modifier, Styles};
+use crate::modifiers::{Attributes, Children, Classes, FormValueState, Modifier, Styles};
 use crate::{AnyPod, Pod, PodFlags, ViewCtx};
 
 // Lazy access to attributes etc. to avoid allocating unnecessary memory when it isn't needed
@@ -13,6 +13,7 @@ pub struct Element {
     pub(crate) attributes: Option<Box<Attributes>>,
     pub(crate) classes: Option<Box<Classes>>,
     pub(crate) styles: Option<Box<Styles>>,
+    form_value: Option<Box<FormValueState>>,
     pub(crate) children: Vec<AnyPod>,
 }
 
@@ -28,6 +29,7 @@ impl Element {
             attributes: (attr_size_hint > 0).then(|| Attributes::new(attr_size_hint).into()),
             classes: (class_size_hint > 0).then(|| Classes::new(class_size_hint).into()),
             styles: (style_size_hint > 0).then(|| Styles::new(style_size_hint).into()),
+            form_value: None,
             children,
         }
     }
@@ -43,6 +45,13 @@ impl Element {
         }
         if let Some(styles) = &mut self.styles {
             Styles::apply_changes(Modifier::new(styles, flags), element);
+        }
+        // Set the live value after attributes (notably input type/min/max)
+        // and child options are reconciled. Preserve pre-hydration edits.
+        if !flags.in_hydration()
+            && let Some(value) = &self.form_value
+        {
+            value.apply(element);
         }
     }
 }
@@ -111,12 +120,19 @@ impl AsMut<Styles> for Element {
     }
 }
 
+impl AsMut<FormValueState> for Element {
+    fn as_mut(&mut self) -> &mut FormValueState {
+        self.form_value.get_or_insert_with(Default::default)
+    }
+}
+
 /// An alias trait to sum up all modifiers that a DOM `Element` can have. It's used to avoid a lot of boilerplate in public APIs.
 pub trait WithElementProps:
-    AsMut<Attributes> + AsMut<Children> + AsMut<Classes> + AsMut<Styles>
+    AsMut<Attributes> + AsMut<Children> + AsMut<Classes> + AsMut<Styles> + AsMut<FormValueState>
 {
 }
-impl<T: AsMut<Attributes> + AsMut<Children> + AsMut<Classes> + AsMut<Styles>> WithElementProps
-    for T
+impl<
+    T: AsMut<Attributes> + AsMut<Children> + AsMut<Classes> + AsMut<Styles> + AsMut<FormValueState>,
+> WithElementProps for T
 {
 }

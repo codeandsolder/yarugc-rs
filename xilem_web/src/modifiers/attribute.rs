@@ -231,19 +231,7 @@ fn element_attr_assertions(element: &web_sys::Element, name: &str) {
 fn set_attribute(element: &web_sys::Element, name: &str, value: &str) {
     element_attr_assertions(element, name);
 
-    // we have to special-case `value` because setting the value using `set_attribute`
-    // doesn't work after the value has been changed.
-    // TODO not sure, whether this is always a good idea, in case custom or other interfaces such as HtmlOptionElement elements are used that have "value" as an attribute name.
-    // We likely want to use the DOM attributes instead.
-    if name == "value" {
-        if let Some(input_element) = element.dyn_ref::<web_sys::HtmlInputElement>() {
-            input_element.set_value(value);
-        } else {
-            element.set_attribute("value", value).unwrap_throw();
-        }
-    } else {
-        element.set_attribute(name, value).unwrap_throw();
-    }
+    element.set_attribute(name, value).unwrap_throw();
 }
 
 fn remove_attribute(element: &web_sys::Element, name: &str) {

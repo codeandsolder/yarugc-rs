@@ -57,6 +57,9 @@
 mod attribute;
 pub use attribute::*;
 
+mod form_value;
+pub use form_value::{FormValue, FormValueState};
+
 mod class;
 pub use class::*;
 

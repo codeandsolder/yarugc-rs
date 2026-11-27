@@ -43,7 +43,7 @@ fn slider(
         .type_("range")
         .attr("min", 1)
         .attr("max", max)
-        .attr("value", value)
+        .value(value)
         .on_input(cb)
 }
 
