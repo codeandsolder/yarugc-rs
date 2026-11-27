@@ -48,7 +48,7 @@ pub struct ScrollBar {
     portal_size: Length,
     content_size: Length,
     focus_owner: Option<WidgetId>,
-    pub(crate) opacity: AnimatedF32,
+    opacity: AnimatedF32,
     grab_anchor: Option<f64>,
 }
 
@@ -191,6 +191,28 @@ impl ScrollBar {
         {
             ctx.request_render();
         }
+    }
+
+    // The parent owns visibility policy; Collapsible only controls thumb width.
+    pub(super) fn set_visibility(this: &mut WidgetMut<'_, Self>, visible: bool, millis: f32) {
+        let target = f32::from(u8::from(visible));
+        let opacity = &mut this.widget.opacity;
+        if millis > 0.0 && opacity.target().to_bits() == target.to_bits() {
+            return;
+        }
+        let previous = opacity.value();
+        opacity.move_to(target, millis);
+        if opacity.value().to_bits() != previous.to_bits() {
+            this.ctx.request_paint_only();
+        }
+        if opacity.value().to_bits() != target.to_bits() {
+            this.ctx.request_anim_frame();
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) const fn fade_opacity(&self) -> f32 {
+        self.opacity.value()
     }
 
     fn emit_movement(&self, ctx: &mut EventCtx<'_>) {
@@ -404,20 +426,14 @@ impl Widget for ScrollBar {
     fn on_anim_frame(
         &mut self,
         ctx: &mut UpdateCtx<'_>,
-        props: &mut PropertiesMut<'_>,
+        _props: &mut PropertiesMut<'_>,
         interval: u64,
     ) {
-        let cache = ctx.property_cache();
-        let collapsible = props.get::<Collapsible>(cache).0;
-
-        if !collapsible {
-            self.opacity.move_to(1., 0.);
-            ctx.request_paint_only();
-            return;
-        }
-
+        let previous = self.opacity.value();
         let result = self.opacity.advance_nanos(interval);
-        ctx.request_paint_only();
+        if self.opacity.value().to_bits() != previous.to_bits() {
+            ctx.request_paint_only();
+        }
 
         if !result.is_completed() {
             ctx.request_anim_frame();
@@ -465,7 +481,7 @@ impl Widget for ScrollBar {
         let cache = ctx.property_cache();
         let collapsible = props.get::<Collapsible>(cache).0;
 
-        let opacity = if ctx.is_active() || ctx.is_hovered() {
+        let opacity = if ctx.is_active() || ctx.is_hovered() || ctx.is_focus_target() {
             1.0
         } else {
             self.opacity.value()
@@ -485,7 +501,11 @@ impl Widget for ScrollBar {
         let scrollbar_width = theme::SCROLLBAR_WIDTH;
 
         let size = ctx.content_box().size();
-        let inset_start = if !collapsible || ctx.is_hovered() || self.grab_anchor.is_some() {
+        let inset_start = if !collapsible
+            || ctx.is_hovered()
+            || ctx.is_focus_target()
+            || self.grab_anchor.is_some()
+        {
             cursor_padding
         } else {
             cursor_padding + scrollbar_width / 2.
@@ -579,7 +599,10 @@ impl Widget for ScrollBar {
         ) {
             self.grab_anchor = None;
         }
-        if matches!(event, Update::HoveredChanged(_) | Update::ActiveChanged(_)) {
+        if matches!(
+            event,
+            Update::HoveredChanged(_) | Update::ActiveChanged(_) | Update::FocusChanged(_)
+        ) {
             ctx.request_paint_only();
         }
     }

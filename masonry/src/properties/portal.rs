@@ -3,7 +3,8 @@
 
 use crate::core::Property;
 
-/// Declares if the scroll bar collapses when not being hovered.
+/// Hides the portal scrollbars after pointer inactivity.
+/// Independent of the thumb-width styling controlled by Collapsible.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AutoHideScrollBar(pub bool);
 
