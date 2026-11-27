@@ -102,7 +102,7 @@ fn view(state: &mut State) -> impl DomFragment<State> + use<> {
                         },
                     )
                     .id("line"),
-                Rect::new(1.0 + shift, 2.0, 2.0f64.mul_add(shift, 6.0), 9.0).id("rect"),
+                Rect::new(1.0 + shift, 2.0, 2.0_f64.mul_add(shift, 6.0), 9.0).id("rect"),
             )),
         )),
         memoized_await(
