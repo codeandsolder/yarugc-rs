@@ -86,6 +86,12 @@ fn form_fixture(phase: usize) -> impl DomFragment<State> {
         ))
         .id("controlled-select")
         .value((phase < 2).then_some("second")),
+        html::select((
+            html::option("First").attr("value", "first"),
+            html::option("Empty").attr("value", ""),
+        ))
+        .id("empty-select")
+        .value((phase < 2).then_some("")),
         html::input(())
             .id("controlled-range")
             .value(150)
