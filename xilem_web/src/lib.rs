@@ -73,6 +73,30 @@ pub const SVG_NS: &str = "http://www.w3.org/2000/svg";
 /// The `MathML` namespace
 pub const MATHML_NS: &str = "http://www.w3.org/1998/Math/MathML";
 
+// Wrappers that do not alter message routing or teardown share these methods.
+macro_rules! forward_view_lifecycle {
+    ($field:ident, $state:ident, $action:ident) => {
+        fn teardown(
+            &self,
+            view_state: &mut Self::ViewState,
+            ctx: &mut $crate::ViewCtx,
+            element: $crate::core::Mut<'_, Self::Element>,
+        ) {
+            self.$field.teardown(view_state, ctx, element);
+        }
+
+        fn message(
+            &self,
+            view_state: &mut Self::ViewState,
+            message: &mut $crate::core::MessageCtx,
+            element: $crate::core::Mut<'_, Self::Element>,
+            app_state: &mut $state,
+        ) -> $crate::core::MessageResult<$action> {
+            self.$field.message(view_state, message, element, app_state)
+        }
+    };
+}
+
 mod after_update;
 #[expect(
     clippy::redundant_pub_crate,

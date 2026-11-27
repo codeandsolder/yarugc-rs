@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 
 use wasm_bindgen::{JsCast, UnwrapThrowExt};
 
-use crate::core::{MessageCtx, MessageResult, Mut, View, ViewElement, ViewMarker};
+use crate::core::{Mut, View, ViewElement, ViewMarker};
 use crate::modifiers::{Modifier, WithModifier};
 use crate::vecmap::VecMap;
 use crate::{AttributeValue, DomView, IntoAttributeValue, ViewCtx};
@@ -304,22 +304,5 @@ where
         });
     }
 
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
-    ) {
-        self.inner.teardown(view_state, ctx, element);
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        self.inner.message(view_state, message, element, app_state)
-    }
+    forward_view_lifecycle!(inner, State, Action);
 }

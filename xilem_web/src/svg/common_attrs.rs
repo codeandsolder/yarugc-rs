@@ -7,7 +7,7 @@ use std::marker::PhantomData;
 
 use peniko::{Color, kurbo};
 
-use crate::core::{MessageCtx, MessageResult, Mut, View, ViewElement, ViewMarker};
+use crate::core::{Mut, View, ViewElement, ViewMarker};
 use crate::modifiers::{AttributeModifier, Attributes, Modifier, WithModifier};
 use crate::{DomView, ViewCtx};
 
@@ -186,24 +186,7 @@ where
         });
     }
 
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
-    ) {
-        self.child.teardown(view_state, ctx, element);
-    }
-
-    fn message(
-        &self,
-        child_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        self.child.message(child_state, message, element, app_state)
-    }
+    forward_view_lifecycle!(child, State, Action);
 }
 
 const STROKE_MODIFIER_COUNT: usize = 8;
@@ -329,24 +312,7 @@ where
         });
     }
 
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
-    ) {
-        self.child.teardown(view_state, ctx, element);
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        self.child.message(view_state, message, element, app_state)
-    }
+    forward_view_lifecycle!(child, State, Action);
 }
 
 #[cfg(test)]

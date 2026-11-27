@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 
 use wasm_bindgen::JsCast as _;
 
-use crate::core::{MessageCtx, MessageResult, Mut, View, ViewElement, ViewMarker};
+use crate::core::{Mut, View, ViewElement, ViewMarker};
 use crate::modifiers::{Modifier, WithModifier};
 use crate::{AttributeValue, DomView, IntoAttributeValue, ViewCtx};
 
@@ -18,21 +18,21 @@ pub struct FormValueState {
 }
 
 impl FormValueState {
-    fn push(this: &mut Modifier<'_, Self>, value: &Option<AttributeValue>) {
+    fn push(this: &mut Modifier<'_, Self>, value: Option<&AttributeValue>) {
         this.modifier.idx += 1;
         this.modifier.len += 1;
-        this.modifier.value.clone_from(value);
+        this.modifier.value = value.cloned();
         this.flags.set_needs_update();
     }
 
-    fn update(this: &mut Modifier<'_, Self>, value: &Option<AttributeValue>) {
+    fn update(this: &mut Modifier<'_, Self>, value: Option<&AttributeValue>) {
         if this.flags.was_created() {
             Self::push(this, value);
         } else {
             this.modifier.idx += 1;
             if this.modifier.idx == this.modifier.len {
-                if this.modifier.value != *value {
-                    this.modifier.value.clone_from(value);
+                if this.modifier.value.as_ref() != value {
+                    this.modifier.value = value.cloned();
                 }
                 // The user may have changed the live property even when the
                 // application supplied the same value again.
@@ -50,7 +50,13 @@ impl FormValueState {
         if let Some(input) = element.dyn_ref::<web_sys::HtmlInputElement>() {
             assign_if_changed(&input.value(), &value, |value| input.set_value(value));
         } else if let Some(select) = element.dyn_ref::<web_sys::HtmlSelectElement>() {
-            assign_if_changed(&select.value(), &value, |value| select.set_value(value));
+            if self.value.is_none() {
+                if select.selected_index() != -1 {
+                    select.set_selected_index(-1);
+                }
+            } else if select.selected_index() == -1 || select.value() != value {
+                select.set_value(&value);
+            }
         } else if let Some(textarea) = element.dyn_ref::<web_sys::HtmlTextAreaElement>() {
             assign_if_changed(&textarea.value(), &value, |value| textarea.set_value(value));
         }
@@ -94,7 +100,7 @@ where
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let (mut element, state) = self.inner.build(ctx, app_state);
-        FormValueState::push(&mut element.modifier(), &self.value);
+        FormValueState::push(&mut element.modifier(), self.value.as_ref());
         (element, state)
     }
 
@@ -114,27 +120,10 @@ where
             element.reborrow_mut(),
             app_state,
         );
-        FormValueState::update(&mut element.modifier(), &self.value);
+        FormValueState::update(&mut element.modifier(), self.value.as_ref());
     }
 
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
-    ) {
-        self.inner.teardown(view_state, ctx, element);
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        self.inner.message(view_state, message, element, app_state)
-    }
+    forward_view_lifecycle!(inner, State, Action);
 }
 
 #[cfg(test)]
@@ -149,19 +138,19 @@ mod tests {
         let m = &mut Modifier::new(&mut state, &mut flags);
         let inner = "inner".into_attr_value();
         let outer = "outer".into_attr_value();
-        FormValueState::push(m, &inner);
-        FormValueState::push(m, &outer);
+        FormValueState::push(m, inner.as_ref());
+        FormValueState::push(m, outer.as_ref());
         assert_eq!(m.modifier.value, outer);
         m.flags.clear();
         m.modifier.idx -= 2;
-        FormValueState::update(m, &None);
+        FormValueState::update(m, None);
         assert!(!m.flags.needs_update());
-        FormValueState::update(m, &outer);
+        FormValueState::update(m, outer.as_ref());
         assert!(m.flags.needs_update());
         assert_eq!(m.modifier.value, outer);
         m.flags.clear();
         m.modifier.idx -= 1;
-        FormValueState::update(m, &None);
+        FormValueState::update(m, None);
         assert!(m.flags.needs_update());
         assert_eq!(m.modifier.value, None);
     }

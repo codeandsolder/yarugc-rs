@@ -888,8 +888,8 @@ dom_interface!(HtmlScriptElement: HtmlElement => HtmlScriptElement {
 
 dom_interface!(HtmlSelectElement: HtmlElement => HtmlSelectElement {
     /// Control the live selected value after reconciling options.
-    /// A missing value selects the empty-valued option if present, or clears
-    /// selection otherwise. For multiple selections use individual option selection.
+    /// A missing value clears the selection; an empty string selects an empty-valued
+    /// option. For multiple selections use individual option selection.
     fn value(self, value: impl IntoAttributeValue) -> FormValue<Self, State, Action> {
         FormValue::new(self, value)
     }
