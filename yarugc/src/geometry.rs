@@ -123,7 +123,11 @@ impl Placement {
 
 // Reuse the clipped slot and working buffers for a series of glyph subrectangles.
 // Clip in slot-local space so the cell bounds and culling use the same coordinates.
-pub(super) struct SubrectMesh {
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Shared with readout internally; public visibility conflicts with unreachable_pub"
+)]
+pub(crate) struct SubrectMesh {
     transform: Affine,
     extent: [f64; 2],
     clip: Vec<Point>,
