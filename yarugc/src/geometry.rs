@@ -29,14 +29,15 @@ impl Placement {
     pub fn from_transform(transform: Affine) -> Self {
         Self {
             transform,
-            clip: corners(transform, Rect::new(0.0, 0.0, 1.0, 1.0)),
+            clip: corners(transform, Rect::new(0.0, 0.0, 1.0, 1.0))
+                .map_or_else(Vec::new, Vec::from),
         }
     }
 
     /// Apply an additional rectangular clip expressed in target pixels.
     #[must_use = "Use the clipped placement."]
     pub fn clipped(mut self, rect: Rect) -> Self {
-        self.clip = intersect(self.clip, &corners(Affine::IDENTITY, rect));
+        self.clip = intersect_rect(self.clip, Affine::IDENTITY, rect);
         self
     }
 
@@ -45,19 +46,25 @@ impl Placement {
     #[must_use = "Use the subrectangle placement."]
     pub fn subrect(&self, rect: Rect) -> Self {
         let transform = self.transform * rect_transform(rect);
-        let clip = intersect(
-            corners(transform, Rect::new(0.0, 0.0, 1.0, 1.0)),
-            &self.clip,
-        );
+        let clip = if rect.width() > 0.0 && rect.height() > 0.0 {
+            corners(transform, Rect::new(0.0, 0.0, 1.0, 1.0))
+                .map_or_else(Vec::new, |points| intersect(Vec::from(points), &self.clip))
+        } else {
+            Vec::new()
+        };
         Self { transform, clip }
     }
 
     /// Move the placement and its clip by the same physical-pixel displacement.
     #[must_use = "Use the translated placement."]
     pub fn translated(&self, offset: Vec2) -> Self {
+        let mut clip: Vec<_> = self.clip.iter().map(|p| *p + offset).collect();
+        if !has_positive_area(&clip) {
+            clip.clear();
+        }
         Self {
             transform: self.transform.then_translate(offset),
-            clip: self.clip.iter().map(|p| *p + offset).collect(),
+            clip,
         }
     }
 
@@ -80,11 +87,12 @@ impl Placement {
     )]
     pub(crate) fn vertices(&self, extent: [u32; 2]) -> Vec<[f32; 4]> {
         let [width, height] = extent.map(f64::from);
+        let determinant = self.transform.determinant();
         if width == 0.0
             || height == 0.0
             || !self.transform.is_finite()
-            || self.transform.determinant() == 0.0
-            || !self.transform.determinant().is_finite()
+            || determinant == 0.0
+            || !determinant.is_finite()
         {
             return Vec::new();
         }
@@ -92,31 +100,35 @@ impl Placement {
         if !inverse.is_finite() {
             return Vec::new();
         }
-        let polygon = intersect(
+        let polygon = intersect_rect(
             self.clip.clone(),
-            &corners(Affine::IDENTITY, Rect::new(0.0, 0.0, width, height)),
+            Affine::IDENTITY,
+            Rect::new(0.0, 0.0, width, height),
         );
-        if polygon.len() < 3 {
-            return Vec::new();
-        }
-        if polygon
-            .iter()
-            .any(|p| !p.is_finite() || !(inverse * *p).is_finite())
-        {
-            return Vec::new();
-        }
         let vertex = |p: Point| {
             let uv = inverse * p;
-            [
+            let vertex = [
                 (2.0 * p.x / width - 1.0) as f32,
                 (1.0 - 2.0 * p.y / height) as f32,
                 uv.x as f32,
                 uv.y as f32,
-            ]
+            ];
+            vertex.iter().all(|v| v.is_finite()).then_some(vertex)
+        };
+        let mut points = polygon.iter().copied();
+        let Some(first) = points.next().and_then(vertex) else {
+            return Vec::new();
+        };
+        let Some(mut previous) = points.next().and_then(vertex) else {
+            return Vec::new();
         };
         let mut result = Vec::with_capacity((polygon.len() - 2) * 3);
-        for pair in polygon[1..].windows(2) {
-            result.extend([vertex(polygon[0]), vertex(pair[0]), vertex(pair[1])]);
+        for point in points {
+            let Some(current) = vertex(point) else {
+                return Vec::new();
+            };
+            result.extend([first, previous, current]);
+            previous = current;
         }
         result
     }
@@ -140,7 +152,12 @@ impl SlotGeometry {
         let ctx = widget.ctx();
         let rect = ctx.content_box();
         let scale_factor = root.scale_factor();
-        if !scale_factor.is_finite() || scale_factor <= 0.0 {
+        if !scale_factor.is_finite()
+            || scale_factor <= 0.0
+            || !rect.is_finite()
+            || rect.width() <= 0.0
+            || rect.height() <= 0.0
+        {
             return None;
         }
         let scale = Affine::scale(scale_factor);
@@ -160,13 +177,11 @@ impl SlotGeometry {
                 return None;
             }
             if let Some(clip) = ctx.clip_path() {
-                placement.clip = intersect(
-                    placement.clip,
-                    &corners(scale * ctx.window_transform(), clip),
-                );
+                placement.clip =
+                    intersect_rect(placement.clip, scale * ctx.window_transform(), clip);
             }
         }
-        (placement.clip.len() >= 3 && rect.width() > 0.0 && rect.height() > 0.0).then_some(Self {
+        (!placement.clip.is_empty()).then_some(Self {
             placement,
             logical_size: [rect.width(), rect.height()],
             scale_factor,
@@ -196,37 +211,61 @@ fn rect_transform(rect: Rect) -> Affine {
     Affine::translate((rect.x0, rect.y0)) * Affine::scale_non_uniform(rect.width(), rect.height())
 }
 
-fn corners(transform: Affine, rect: Rect) -> Vec<Point> {
+// Positive signed area is a geometric invariant, not an approximate equality
+// test: touching or collapsed polygons have no visible interior.
+fn has_positive_area(polygon: &[Point]) -> bool {
+    if polygon.len() < 3 || polygon.iter().any(|point| !point.is_finite()) {
+        return false;
+    }
+    let origin = polygon[0];
+    let twice_area: f64 = polygon[1..]
+        .windows(2)
+        .map(|pair| (pair[0] - origin).cross(pair[1] - origin))
+        .sum();
+    twice_area.is_finite() && twice_area > 0.0
+}
+
+fn corners(transform: Affine, rect: Rect) -> Option<[Point; 4]> {
+    let determinant = transform.determinant();
     if !transform.is_finite()
         || !rect.is_finite()
         || rect.width() <= 0.0
         || rect.height() <= 0.0
-        || transform.determinant() == 0.0
-        || !transform.determinant().is_finite()
+        || determinant == 0.0
+        || !determinant.is_finite()
     {
-        return Vec::new();
+        return None;
     }
-    let mut corners = vec![
+    let mut corners = [
         transform * Point::new(rect.x0, rect.y0),
         transform * Point::new(rect.x1, rect.y0),
         transform * Point::new(rect.x1, rect.y1),
         transform * Point::new(rect.x0, rect.y1),
     ];
-    if transform.determinant() < 0.0 {
+    if determinant < 0.0 {
         corners.reverse();
     }
-    if corners.iter().any(|p| !p.is_finite()) {
-        corners.clear();
+    has_positive_area(&corners).then_some(corners)
+}
+
+fn intersect_rect(subject: Vec<Point>, transform: Affine, rect: Rect) -> Vec<Point> {
+    corners(transform, rect).map_or_else(Vec::new, |clip| intersect(subject, &clip))
+}
+
+fn push_distinct(points: &mut Vec<Point>, point: Point) {
+    if points.last() != Some(&point) {
+        points.push(point);
     }
-    corners
 }
 
 // Sutherland-Hodgman intersection of two convex polygons with positive winding.
 // Unlike an axis-aligned bounding box this preserves rotated and reflected clips.
+// Reuse the two buffers across clipping planes rather than allocate per edge.
 fn intersect(mut subject: Vec<Point>, clip: &[Point]) -> Vec<Point> {
-    if clip.len() < 3 {
+    if subject.is_empty() || clip.len() < 3 {
         return Vec::new();
     }
+    let mut output = Vec::with_capacity(subject.len().saturating_add(1));
     for (a, b) in clip
         .iter()
         .copied()
@@ -238,20 +277,43 @@ fn intersect(mut subject: Vec<Point>, clip: &[Point]) -> Vec<Point> {
             break;
         };
         let mut previous_distance = distance(previous);
-        let mut output = Vec::new();
-        for current in subject {
+        if !previous_distance.is_finite() {
+            return Vec::new();
+        }
+        output.clear();
+        for current in subject.iter().copied() {
             let current_distance = distance(current);
-            if (previous_distance < 0.0) != (current_distance < 0.0) {
-                let t = previous_distance / (previous_distance - current_distance);
-                output.push(previous + (current - previous) * t);
+            if !current_distance.is_finite() {
+                return Vec::new();
+            }
+            // Strictly crossing an edge creates a new vertex. A vertex exactly
+            // on the edge is already included by the ordinary inside test.
+            if (previous_distance < 0.0 && current_distance > 0.0)
+                || (previous_distance > 0.0 && current_distance < 0.0)
+            {
+                let scale = previous_distance.abs().max(current_distance.abs());
+                let p = previous_distance / scale;
+                let c = current_distance / scale;
+                let t = p / (p - c);
+                let crossing = previous + (current - previous) * t;
+                if !crossing.is_finite() {
+                    return Vec::new();
+                }
+                push_distinct(&mut output, crossing);
             }
             if current_distance >= 0.0 {
-                output.push(current);
+                push_distinct(&mut output, current);
             }
             previous = current;
             previous_distance = current_distance;
         }
-        subject = output;
+        if output.len() > 1 && output.first() == output.last() {
+            output.pop();
+        }
+        std::mem::swap(&mut subject, &mut output);
+    }
+    if !has_positive_area(&subject) {
+        subject.clear();
     }
     subject
 }
@@ -273,6 +335,62 @@ mod tests {
                 .vertices([100, 100])
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn edge_and_corner_contact_do_not_produce_visible_geometry() {
+        let placement = Placement::rect(Rect::new(0.0, 0.0, 10.0, 10.0));
+        for clip in [
+            Rect::new(10.0, 2.0, 20.0, 8.0),
+            Rect::new(10.0, 10.0, 20.0, 20.0),
+            Rect::new(2.0, 10.0, 8.0, 20.0),
+        ] {
+            let clipped = placement.clone().clipped(clip);
+            assert!(clipped.clip_polygon().is_empty());
+            assert!(clipped.vertices([100, 100]).is_empty());
+        }
+        assert!(
+            placement
+                .translated(Vec2::new(100.0, 0.0))
+                .vertices([100, 100])
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn invalid_or_collapsed_rectangles_have_empty_clips() {
+        let placement = Placement::rect(Rect::new(0.0, 0.0, 10.0, 10.0));
+        for rect in [
+            Rect::new(1.0, 0.0, 0.0, 1.0),
+            Rect::new(0.0, 1.0, 1.0, 0.0),
+            Rect::new(0.0, 0.0, 0.0, 1.0),
+            Rect::new(0.0, 0.0, f64::NAN, 1.0),
+        ] {
+            assert!(placement.subrect(rect).clip_polygon().is_empty());
+            assert!(Placement::rect(rect).clip_polygon().is_empty());
+        }
+        assert!(
+            placement
+                .translated(Vec2::new(f64::INFINITY, 0.0))
+                .clip_polygon()
+                .is_empty()
+        );
+        assert!(
+            placement
+                .translated(Vec2::new(1e30, 0.0))
+                .clip_polygon()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn clipping_through_existing_vertices_does_not_duplicate_them() {
+        let placement = Placement::from_transform(
+            Affine::translate((10.0, 10.0)) * Affine::new([2.0, 2.0, -2.0, 2.0, 0.0, 0.0]),
+        );
+        let clipped = placement.clipped(Rect::new(0.0, 0.0, 10.0, 20.0));
+        assert_eq!(clipped.clip_polygon().len(), 3);
+        assert_eq!(clipped.vertices([100, 100]).len(), 3);
     }
 
     #[test]
