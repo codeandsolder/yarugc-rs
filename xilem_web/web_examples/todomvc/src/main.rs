@@ -29,7 +29,7 @@ fn todo_item(todo: &Todo, editing: Option<&str>) -> impl Element<AppState> + use
         el::div((
             checkbox,
             el::label(todo.title.clone()).on_dblclick(move |state: &mut AppState, _| {
-                state.dispatch(TodoAction::BeginEdit(id))
+                state.dispatch(TodoAction::BeginEdit(id));
             }),
             el::button(())
                 .class("destroy")
