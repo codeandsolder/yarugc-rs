@@ -13,7 +13,9 @@ use masonry_core::dpi::PhysicalSize;
 use masonry_core::properties::{Background, Dimensions};
 use masonry_imaging::texture_render::Renderer;
 use peniko::Color;
-use yarugc::{AlphaMode, CachedWindow, Composition, Compositor, Layer, Refresh, Surface};
+use yarugc::{
+    AlphaMode, CachedWindow, Composition, CompositionError, Compositor, Layer, Refresh, Surface,
+};
 
 const EXTENT: [u32; 2] = [64, 16];
 
@@ -49,7 +51,7 @@ fn read_composition(
             ..Default::default()
         });
         if load == wgpu::LoadOp::Load {
-            compositor.draw(&mut pass, composition);
+            compositor.draw(&mut pass, composition).unwrap();
         }
     }
     encoder.copy_texture_to_buffer(
@@ -521,7 +523,7 @@ fn measure_readout_gpu(
                     })],
                     ..Default::default()
                 });
-                compositor.draw(&mut pass, composition);
+                compositor.draw(&mut pass, composition).unwrap();
             }
             encoder.write_timestamp(&query_set, base + 2);
             queue.submit(Some(encoder.finish()));
@@ -558,4 +560,53 @@ fn measure_readout_gpu(
         }
         read.unmap();
     }
+}
+
+#[test]
+#[ignore = "requires a working wgpu adapter; run explicitly on GPU hosts"]
+fn composition_rejects_foreign_device_before_encoding() {
+    let instance = wgpu::Instance::default();
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+    let (foreign, _) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+    let compositor = Compositor::new(&device, wgpu::TextureFormat::Rgba8Unorm);
+    let other = Compositor::new(&foreign, wgpu::TextureFormat::Rgba8Unorm);
+    let target = compositor
+        .create_surface(EXTENT, AlphaMode::Premultiplied)
+        .unwrap();
+    let surface = other
+        .create_surface([2, 2], AlphaMode::Premultiplied)
+        .unwrap();
+    let layer = Layer::at(&surface, [0.0, 0.0]);
+    assert!(matches!(
+        compositor.prepare(EXTENT, std::slice::from_ref(&layer)),
+        Err(CompositionError::DifferentDevice)
+    ));
+    let filled = other.prepare(EXTENT, &[layer]).unwrap();
+    let empty = other.prepare(EXTENT, &[]).unwrap();
+    let local = compositor.prepare(EXTENT, &[]).unwrap();
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target.view(),
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLUE),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..Default::default()
+        });
+        for composition in [&filled, &empty] {
+            assert_eq!(
+                compositor.draw(&mut pass, composition),
+                Err(CompositionError::DifferentDevice)
+            );
+        }
+        compositor.draw(&mut pass, &local).unwrap();
+    }
+    queue.submit(Some(encoder.finish()));
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
 }
