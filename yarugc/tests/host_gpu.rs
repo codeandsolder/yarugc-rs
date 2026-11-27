@@ -568,7 +568,10 @@ fn composition_rejects_foreign_device_before_encoding() {
     let instance = wgpu::Instance::default();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
-    let (foreign, _) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+    let foreign_adapter =
+        pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let (foreign, _) =
+        pollster::block_on(foreign_adapter.request_device(&Default::default())).unwrap();
     let compositor = Compositor::new(&device, wgpu::TextureFormat::Rgba8Unorm);
     let other = Compositor::new(&foreign, wgpu::TextureFormat::Rgba8Unorm);
     let target = compositor
