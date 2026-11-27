@@ -3,136 +3,63 @@
 
 use super::Modifier;
 
-#[derive(Default)]
-/// A specialized optimized boolean overwrite modifier, with support of up to 32 boolean elements, to avoid allocations.
+/// A last-writer-wins boolean modifier, with constant storage regardless of nesting.
 ///
-/// It is intended for just overwriting a possibly previous set value.
-/// For example `input_el.checked(true).checked(false)` will set the `checked` attribute to `false`.
-/// This will usually be used for boolean attributes such as `input.checked`, or `button.disabled`
-/// If used for more than 32 it will panic.
+/// Only the outermost modifier affects the DOM property. Reconciliation visits
+/// inner modifiers first and then the outer ones. There is no need to retain
+/// shadowed values; each view supplies its current value on rebuild.
+#[derive(Default)]
 pub struct OverwriteBool {
-    /// The underlying boolean flags encoded as bitflags.
-    modifiers: u32,
-    /// the current index of the modifiers. After reconciliation it should equal `len`. In rebuild it is decremented with [`OverwriteBool::rebuild`]
-    pub(crate) idx: u8,
-    /// The amount of boolean flags used in this modifier.
-    len: u8,
-    /// A dirty flag, to indicate whether `apply_changes` should update (i.e. call `f`) the underlying value.
+    // Rebuild walks down by decrementing the cursor; build/rebuild then advances
+    // it on the way out. A memoized child may retain its existing cursor prefix.
+    idx: usize,
+    len: usize,
+    effective: Option<bool>,
     needs_update: bool,
 }
 
-macro_rules! assert_overflow {
-    ($index: expr) => {
-        debug_assert!(
-            $index < 32,
-            "If you ever see this,\
-             please open an issue at https://github.com/linebender/xilem/, \
-             we would appreciate to know what caused this. There are known solutions.\
-             This is currently limited to 32 booleans to be more efficient."
-        );
-    };
-}
-
 impl OverwriteBool {
-    #[inline]
-    pub const fn rebuild(&mut self, prev_len: u8) {
+    pub const fn rebuild(&mut self, prev_len: usize) {
         self.idx -= prev_len;
     }
 
-    /// Returns if `modifier` has changed.
-    const fn set(&mut self, modifier: bool) -> bool {
-        let before = self.modifiers & (1 << self.idx);
-        if modifier {
-            self.modifiers |= 1 << self.idx;
-        } else {
-            self.modifiers &= !(1 << self.idx);
-        }
-        (self.modifiers & (1 << self.idx)) != before
-    }
-
-    /// Returns the current boolean modifier (at `self.idx`)
-    const fn get(&self) -> bool {
-        let bit = 1 << self.idx;
-        self.modifiers & bit == bit
-    }
-
-    #[inline]
-    /// Pushes `modifier` at the end of the current modifiers.
-    ///
-    /// Must only be used when `this.flags.was_created() == true`.
-    pub fn push(this: &mut Modifier<'_, Self>, modifier: bool) {
-        debug_assert!(
-            this.flags.was_created(),
-            "This should never be called, when the underlying element wasn't (re)created."
-        );
-        this.modifier.set(modifier);
-        this.modifier.needs_update = true;
-        this.flags.set_needs_update();
-        this.modifier.idx += 1;
-        this.modifier.len += 1;
-        assert_overflow!(this.modifier.len);
-    }
-
-    #[inline]
-    /// Mutates the next modifier.
-    ///
-    /// Must only be used when `this.flags.was_created() == false`.
-    pub fn mutate<R>(this: &mut Modifier<'_, Self>, f: impl FnOnce(&mut bool) -> R) -> R {
-        debug_assert!(
-            !this.flags.was_created(),
-            "This should never be called, when the underlying element was (re)created."
-        );
-        let mut modifier = this.modifier.get();
-        let retval = f(&mut modifier);
-        let dirty = this.modifier.set(modifier);
-        this.modifier.idx += 1;
-        this.modifier.needs_update |= this.modifier.len == this.modifier.idx && dirty;
-        if this.modifier.needs_update {
+    fn set_effective(this: &mut Modifier<'_, Self>, value: bool) {
+        if this.modifier.effective != Some(value) {
+            this.modifier.effective = Some(value);
+            this.modifier.needs_update = true;
             this.flags.set_needs_update();
         }
-        retval
     }
 
-    #[inline]
-    /// Skips the next `count` modifiers.
-    ///
-    /// Must only be used when `this.flags.was_created() == false`.
-    pub fn skip(this: &mut Modifier<'_, Self>, count: u8) {
+    /// Append a modifier while creating a fresh element.
+    pub fn push(this: &mut Modifier<'_, Self>, value: bool) {
         debug_assert!(
-            !this.flags.was_created(),
-            "This should never be called, when the underlying element was (re)created."
+            this.flags.was_created(),
+            "Use update when rebuilding an existing element."
         );
-        this.modifier.idx += count;
+        this.modifier.idx += 1;
+        this.modifier.len += 1;
+        Self::set_effective(this, value);
     }
 
-    #[inline]
-    /// Updates the next modifier, based on the diff of `prev` and `next`.
-    ///
-    /// It can also be used when the underlying element was recreated.
-    pub fn update(this: &mut Modifier<'_, Self>, prev: bool, next: bool) {
+    /// Reconcile the next modifier. Only the outermost value is observable.
+    pub fn update(this: &mut Modifier<'_, Self>, value: bool) {
         if this.flags.was_created() {
-            Self::push(this, next);
-        } else if next != prev {
-            Self::mutate(this, |modifier| *modifier = next);
+            Self::push(this, value);
         } else {
-            Self::skip(this, 1);
+            this.modifier.idx += 1;
+            if this.modifier.idx == this.modifier.len {
+                Self::set_effective(this, value);
+            }
         }
     }
 
-    #[inline]
-    /// Applies potential changes with `f`.
-    ///
-    /// Argument of `f` is the new value, `Some(_)` if set, and `None` if all values were deleted.
+    /// Apply a changed effective value, at most once per reconciliation.
     pub fn apply_changes(&mut self, f: impl FnOnce(Option<bool>)) {
-        let needs_update = self.needs_update;
-        self.needs_update = false;
-        if needs_update {
-            let bit = 1 << (self.idx - 1);
-            let modifier = (self.len > 0).then_some(self.modifiers & bit == bit);
-            f(modifier);
+        if core::mem::take(&mut self.needs_update) {
+            f(self.effective);
         }
     }
-    // TODO implement delete etc.
 }
 
 #[macro_export]
@@ -224,7 +151,7 @@ macro_rules! overwrite_bool_modifier_view {
                     app_state,
                 );
                 let mut modifier = super::$modifier::as_overwrite_bool_modifier(element.modifier());
-                $crate::modifiers::OverwriteBool::update(&mut modifier, prev.value, self.value);
+                $crate::modifiers::OverwriteBool::update(&mut modifier, self.value);
             }
 
             fn teardown(
@@ -255,205 +182,45 @@ mod tests {
     use crate::PodFlags;
 
     #[test]
-    fn overwrite_bool_push() {
+    fn outermost_value_wins_for_arbitrary_nesting() {
         let mut modifier = OverwriteBool::default();
-        let flags = &mut PodFlags::new(false);
-        let m = &mut Modifier::new(&mut modifier, flags);
+        let mut flags = PodFlags::new(false);
+        let m = &mut Modifier::new(&mut modifier, &mut flags);
         assert!(!m.flags.needs_update());
-        OverwriteBool::push(m, true);
-        assert!(m.flags.needs_update());
-        assert_eq!(m.modifier.len, 1);
-        OverwriteBool::push(m, false);
-        assert!(m.flags.needs_update());
-        assert_eq!(m.modifier.len, 2);
-        assert_eq!(m.modifier.idx, 2);
-        let mut was_applied = false;
-        m.modifier.apply_changes(|value| {
-            was_applied = true;
-            assert_eq!(value, Some(false));
-        });
-        assert!(was_applied);
-        assert!(!m.modifier.needs_update);
-    }
-
-    #[test]
-    fn overwrite_bool_mutate() {
-        let mut modifier = OverwriteBool::default();
-        let flags = &mut PodFlags::new(false);
-        let m = &mut Modifier::new(&mut modifier, flags);
-        OverwriteBool::push(m, true);
-        OverwriteBool::push(m, false);
-        OverwriteBool::push(m, true);
-        OverwriteBool::push(m, false);
-        assert!(m.modifier.needs_update);
-        let mut was_applied = false;
-        m.modifier.apply_changes(|value| {
-            was_applied = true;
-            assert_eq!(value, Some(false));
-        });
-        assert!(was_applied);
+        for i in 0..257 {
+            OverwriteBool::push(m, i % 2 == 0);
+        }
+        let mut applied = Vec::new();
+        m.modifier.apply_changes(|value| applied.push(value));
+        assert_eq!(applied, [Some(true)]);
         m.flags.clear();
+
+        m.modifier.rebuild(257);
+        for i in 0..256 {
+            OverwriteBool::update(m, i % 2 != 0);
+        }
         assert!(!m.flags.needs_update());
-        assert_eq!(m.modifier.len, 4);
-        assert_eq!(m.modifier.idx, 4);
-        m.modifier.rebuild(4);
-        assert_eq!(m.modifier.idx, 0);
-        assert_eq!(m.modifier.len, 4);
-        OverwriteBool::mutate(m, |first| *first = true);
-        assert!(!m.modifier.needs_update);
-        OverwriteBool::mutate(m, |second| *second = false);
-        assert!(!m.modifier.needs_update);
-        OverwriteBool::mutate(m, |third| *third = false);
-        assert!(!m.modifier.needs_update);
-        OverwriteBool::mutate(m, |fourth| *fourth = true);
-        assert!(m.modifier.needs_update);
-        let mut was_applied = false;
-        m.modifier.apply_changes(|value| {
-            was_applied = true;
-            assert_eq!(value, Some(true));
-        });
-        assert!(was_applied);
-        m.flags.clear();
-        assert!(!m.modifier.needs_update);
-        assert_eq!(m.modifier.len, 4);
-        assert_eq!(m.modifier.idx, 4);
+        OverwriteBool::update(m, true);
+        m.modifier.apply_changes(|value| applied.push(value));
+        assert_eq!(applied, [Some(true)]);
+
+        // A memoized inner subtree may retain a prefix of modifiers.
+        m.modifier.rebuild(1);
+        OverwriteBool::update(m, false);
+        assert!(m.flags.needs_update());
+        m.modifier.apply_changes(|value| applied.push(value));
+        assert_eq!(applied, [Some(true), Some(false)]);
     }
 
     #[test]
-    fn overwrite_bool_skip() {
+    fn recreated_element_applies_even_false_initial_value() {
         let mut modifier = OverwriteBool::default();
-        let flags = &mut PodFlags::new(false);
-        let m = &mut Modifier::new(&mut modifier, flags);
-        OverwriteBool::push(m, true);
-        OverwriteBool::push(m, false);
-        OverwriteBool::push(m, false);
-        let mut was_applied = false;
-        m.modifier.apply_changes(|value| {
-            was_applied = true;
-            assert_eq!(value, Some(false));
-        });
-        assert!(was_applied);
-        m.flags.clear();
-        assert!(!m.modifier.needs_update);
-
-        assert_eq!(m.modifier.idx, 3);
-        m.modifier.rebuild(3);
-        assert_eq!(m.modifier.len, 3);
-        assert_eq!(m.modifier.idx, 0);
-        OverwriteBool::mutate(m, |first| *first = false); // is overwritten, so don't dirty-flag this.
-        assert_eq!(m.modifier.idx, 1);
-        assert!(!m.modifier.needs_update);
-        OverwriteBool::skip(m, 2);
-        assert_eq!(m.modifier.len, 3);
-        assert_eq!(m.modifier.idx, 3);
-        assert!(!m.modifier.needs_update);
-        let mut was_applied = false;
-        m.modifier.apply_changes(|value| {
-            was_applied = true;
-            assert_eq!(value, Some(false));
-        });
-        m.flags.clear();
-        // don't apply if nothing has changed...
-        assert!(!was_applied);
-    }
-
-    #[test]
-    fn overwrite_bool_update() {
-        let mut modifier = OverwriteBool::default();
-        let flags = &mut PodFlags::new(false);
-        let m = &mut Modifier::new(&mut modifier, flags);
-        OverwriteBool::push(m, true);
-        OverwriteBool::push(m, false);
-        OverwriteBool::push(m, false);
-        let mut was_applied = false;
-        m.modifier.apply_changes(|value| {
-            was_applied = true;
-            assert_eq!(value, Some(false));
-        });
-        m.flags.clear();
-        assert!(was_applied);
-        assert!(!m.modifier.needs_update);
-
-        assert_eq!(m.modifier.idx, 3);
-        m.modifier.rebuild(3);
-        assert_eq!(m.modifier.len, 3);
-        assert_eq!(m.modifier.idx, 0);
-        assert_eq!(m.modifier.modifiers, 1);
-        // on rebuild
-        OverwriteBool::update(m, true, false);
-        assert_eq!(m.modifier.idx, 1);
-        assert_eq!(m.modifier.modifiers, 0);
-        assert!(!m.modifier.needs_update);
-        OverwriteBool::update(m, false, true);
-        assert_eq!(m.modifier.idx, 2);
-        assert_eq!(m.modifier.modifiers, 1 << 1);
-        assert!(!m.modifier.needs_update);
-        OverwriteBool::update(m, false, true);
-        assert_eq!(m.modifier.modifiers, 3 << 1);
-        assert_eq!(m.modifier.idx, 3);
-        assert!(m.modifier.needs_update);
-        let mut was_applied = false;
-        m.modifier.apply_changes(|value| {
-            was_applied = true;
-            assert_eq!(value, Some(true));
-        });
-        m.flags.clear();
-        assert!(was_applied);
-
-        // test recreation
-        let mut modifier = OverwriteBool::default();
-        let flags = &mut PodFlags::new(false);
-        let modifier = &mut Modifier::new(&mut modifier, flags);
-        assert_eq!(modifier.modifier.len, 0);
-        assert_eq!(modifier.modifier.idx, 0);
-        OverwriteBool::update(modifier, false, true);
-        assert_eq!(modifier.modifier.idx, 1);
-        assert_eq!(modifier.modifier.modifiers, 1);
-        assert!(modifier.modifier.needs_update);
-        OverwriteBool::update(modifier, true, false);
-        OverwriteBool::update(modifier, true, false);
-        assert_eq!(modifier.modifier.len, 3);
-        assert_eq!(modifier.modifier.idx, 3);
-        assert_eq!(modifier.modifier.modifiers, 1);
-        let mut was_applied = false;
-        modifier.modifier.apply_changes(|value| {
-            was_applied = true;
-            assert_eq!(value, Some(false));
-        });
-        modifier.flags.clear();
-        assert!(was_applied);
-    }
-
-    #[test]
-    #[should_panic(
-        expected = "This should never be called, when the underlying element was (re)created."
-    )]
-    fn panic_if_use_mutate_on_creation() {
-        let mut modifier = OverwriteBool::default();
-        let flags = &mut PodFlags::new(false);
-        let m = &mut Modifier::new(&mut modifier, flags);
-        assert!(m.flags.was_created());
-        OverwriteBool::mutate(m, |m| *m = false);
-    }
-
-    #[test]
-    #[should_panic(
-        expected = "This should never be called, when the underlying element wasn't (re)created."
-    )]
-    fn panic_if_use_push_on_rebuild() {
-        let mut modifier = OverwriteBool::default();
-        let flags = &mut PodFlags::new(false);
-        let m = &mut Modifier::new(&mut modifier, flags);
-        assert!(m.flags.was_created());
-        OverwriteBool::push(m, true);
-        let mut was_applied = false;
-        m.modifier.apply_changes(|value| {
-            was_applied = true;
-            assert_eq!(value, Some(true));
-        });
-        assert!(was_applied);
-        m.flags.clear();
-        assert!(!m.flags.was_created());
-        OverwriteBool::push(m, true);
+        let mut flags = PodFlags::new(false);
+        let m = &mut Modifier::new(&mut modifier, &mut flags);
+        OverwriteBool::update(m, false);
+        let mut applied = Vec::new();
+        m.modifier.apply_changes(|value| applied.push(value));
+        m.modifier.apply_changes(|value| applied.push(value));
+        assert_eq!(applied, [Some(false)]);
     }
 }

@@ -5,9 +5,12 @@
 
 use wasm_bindgen::UnwrapThrowExt;
 use xilem_web::concurrent::memoized_await;
-use xilem_web::elements::{custom_element, html};
-use xilem_web::interfaces::Element;
+use xilem_web::elements::{custom_element, html, svg};
+use xilem_web::interfaces::{Element, HtmlInputElement, SvgElement};
 use xilem_web::modifiers::style;
+use xilem_web::svg::StrokeStyle;
+use xilem_web::svg::kurbo::{Cap, Circle, Join, Line, Rect};
+use xilem_web::svg::peniko::color::palette;
 use xilem_web::{App, DomFragment, PointerMsg, document_body, get_element_by_id};
 
 #[derive(Default)]
@@ -29,6 +32,35 @@ impl Drop for RequestGuard {
             &true.into(),
         );
     }
+}
+
+fn geometry_fixture(phase: usize) -> impl DomFragment<State> {
+    let shift = if phase == 0 { 0.0 } else { 5.0 };
+    (
+        html::input(())
+            .type_("checkbox")
+            .checked(phase == 1)
+            .checked(phase < 2)
+            .id("overwritten-checked"),
+        svg::svg((
+            Circle::new((10.0 + shift, 20.0), 3.0 + shift).id("circle"),
+            Line::new((1.0, 2.0 + shift), (3.0 + shift, 4.0))
+                .stroke(
+                    palette::css::BLUE,
+                    if phase == 0 {
+                        StrokeStyle::new(2.0)
+                    } else {
+                        StrokeStyle::new(4.0)
+                            .with_cap(Cap::Square)
+                            .with_join(Join::Miter)
+                            .with_miter_limit(6.0)
+                            .with_dashes(2.0, [3.0, 1.0])
+                    },
+                )
+                .id("line"),
+            Rect::new(1.0 + shift, 2.0, 2.0_f64.mul_add(shift, 6.0), 9.0).id("rect"),
+        )),
+    )
 }
 
 fn view(state: &mut State) -> impl DomFragment<State> + use<> {
@@ -86,6 +118,7 @@ fn view(state: &mut State) -> impl DomFragment<State> + use<> {
                     state.request += 1;
                 }),
             html::div(state.output.clone()).id("output"),
+            geometry_fixture(state.phase),
             custom_element(tag, "pointer").id("pointer-target").pointer(
                 |state: &mut State, event| {
                     use std::fmt::Write as _;

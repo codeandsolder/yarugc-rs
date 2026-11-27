@@ -6,7 +6,8 @@
 use xilem_web::elements::svg::{g, svg, text};
 use xilem_web::interfaces::{Element, SvgElement};
 use xilem_web::modifiers::style as s;
-use xilem_web::svg::kurbo::{Circle, Line, Rect, Stroke, Vec2};
+use xilem_web::svg::StrokeStyle;
+use xilem_web::svg::kurbo::{Circle, Line, Rect, Vec2};
 use xilem_web::svg::peniko::Color;
 use xilem_web::svg::peniko::color::palette;
 use xilem_web::{App, DomView, PointerMsg, document_body};
@@ -70,7 +71,7 @@ fn app_logic(state: &mut AppState) -> impl DomView<AppState> + use<> {
         }),
         Rect::new(210.0, 100.0, 310.0, 200.0)
             .fill(palette::css::LIGHT_GRAY)
-            .stroke(palette::css::BLUE, Stroke::default())
+            .stroke(palette::css::BLUE, StrokeStyle::default())
             .scale((state.x / 100.0 + 1.0, state.y / 100.0 + 1.0)),
         Rect::new(320.0, 100.0, 420.0, 200.0).class("red"),
         Rect::new(state.x, state.y, state.x + 100., state.y + 100.)
@@ -89,7 +90,7 @@ fn app_logic(state: &mut AppState) -> impl DomView<AppState> + use<> {
         }),
         Line::new((310.0, 210.0), (410.0, 310.0)).stroke(
             palette::css::YELLOW_GREEN,
-            Stroke::new(1.0).with_dashes(state.x, [7.0, 1.0]),
+            StrokeStyle::new(1.0).with_dashes(state.x, [7.0, 1.0]),
         ),
         Circle::new((460.0, 260.0), 45.0).on_click(|_, _| {
             web_sys::console::log_1(&"circle clicked".into());

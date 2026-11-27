@@ -6,6 +6,6 @@
 pub(crate) mod common_attrs;
 pub(crate) mod kurbo_shape;
 
-pub use common_attrs::{Fill, Stroke, fill, stroke};
+pub use common_attrs::{Fill, Stroke, StrokeStyle, fill, stroke};
 pub use peniko;
 pub use peniko::kurbo;

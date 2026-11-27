@@ -57,14 +57,14 @@ include_doc_path = { version = "0.1.0", path = "include_doc_path", package = "li
 
 anymore = "1.0.0"
 # TODO: Switch back to released versions once imaging publishes its wgpu 30 support.
-imaging = { git = "https://github.com/forest-rs/imaging.git", rev = "f3f932a8a0e233f5ab52863041b8a3d6cff9255b" }
-imaging_wgpu = { git = "https://github.com/forest-rs/imaging.git", rev = "f3f932a8a0e233f5ab52863041b8a3d6cff9255b" }
+imaging = { git = "https://github.com/forest-rs/imaging.git", rev = "e9123c47b719f392a4803b1587a865fca3660be6" }
+imaging_wgpu = { git = "https://github.com/forest-rs/imaging.git", rev = "e9123c47b719f392a4803b1587a865fca3660be6" }
 imaging_skia = { git = "https://github.com/forest-rs/imaging.git", rev = "e9123c47b719f392a4803b1587a865fca3660be6", features = [
     "gpu",
 ] }
-imaging_vello = { git = "https://github.com/forest-rs/imaging.git", rev = "f3f932a8a0e233f5ab52863041b8a3d6cff9255b" }
-imaging_vello_hybrid = { git = "https://github.com/forest-rs/imaging.git", rev = "f3f932a8a0e233f5ab52863041b8a3d6cff9255b" }
-imaging_vello_cpu = { git = "https://github.com/forest-rs/imaging.git", rev = "f3f932a8a0e233f5ab52863041b8a3d6cff9255b" }
+imaging_vello = { git = "https://github.com/forest-rs/imaging.git", rev = "e9123c47b719f392a4803b1587a865fca3660be6" }
+imaging_vello_hybrid = { git = "https://github.com/forest-rs/imaging.git", rev = "e9123c47b719f392a4803b1587a865fca3660be6" }
+imaging_vello_cpu = { git = "https://github.com/forest-rs/imaging.git", rev = "e9123c47b719f392a4803b1587a865fca3660be6" }
 wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl"] }
 kurbo = "0.13.1"
 parley = { version = "0.11.1", features = ["accesskit"] }

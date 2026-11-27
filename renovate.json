@@ -1,4 +1,25 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>codeandsolder/ci-workflows:renovate-fleet"]
+  "extends": [
+    "github>codeandsolder/ci-workflows:renovate-fleet"
+  ],
+  "packageRules": [
+    {
+      "description": "Keep imaging crates on one Git revision to preserve shared Rust type identity",
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchDatasources": [
+        "git-refs"
+      ],
+      "matchPackageNames": [
+        "/^https:\\/\\/github\\.com\\/forest-rs\\/imaging(?:\\.git)?$/"
+      ],
+      "matchUpdateTypes": [
+        "digest"
+      ],
+      "groupName": "Imaging Git family",
+      "groupSlug": "imaging-git-family"
+    }
+  ]
 }
