@@ -11,6 +11,8 @@ use xilem_web::svg::peniko::Color;
 use xilem_web::svg::peniko::color::palette;
 use xilem_web::{App, DomView, PointerMsg, document_body};
 
+const PRIMARY_BUTTON: u16 = 1;
+
 #[derive(Default)]
 struct AppState {
     x: f64,
@@ -29,7 +31,7 @@ impl GrabState {
     fn handle(&mut self, x: &mut f64, y: &mut f64, p: &PointerMsg) {
         match p {
             PointerMsg::Down(e) => {
-                if e.button == 0 {
+                if !self.is_down && e.buttons & PRIMARY_BUTTON != 0 {
                     self.delta.x = *x - e.position.x;
                     self.delta.y = *y - e.position.y;
                     self.id = e.id;
@@ -38,12 +40,16 @@ impl GrabState {
             }
             PointerMsg::Move(e) => {
                 if self.is_down && self.id == e.id {
-                    *x = self.delta.x + e.position.x;
-                    *y = self.delta.y + e.position.y;
+                    if e.buttons & PRIMARY_BUTTON == 0 {
+                        self.is_down = false;
+                    } else {
+                        *x = self.delta.x + e.position.x;
+                        *y = self.delta.y + e.position.y;
+                    }
                 }
             }
-            PointerMsg::Up(e) => {
-                if self.id == e.id {
+            PointerMsg::Up(e) | PointerMsg::Cancel(e) => {
+                if self.is_down && self.id == e.id {
                     self.is_down = false;
                 }
             }

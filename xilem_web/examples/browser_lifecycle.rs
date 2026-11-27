@@ -8,7 +8,7 @@ use xilem_web::concurrent::memoized_await;
 use xilem_web::elements::{custom_element, html};
 use xilem_web::interfaces::Element;
 use xilem_web::modifiers::style;
-use xilem_web::{App, DomFragment, document_body, get_element_by_id};
+use xilem_web::{App, DomFragment, PointerMsg, document_body, get_element_by_id};
 
 #[derive(Default)]
 struct State {
@@ -16,6 +16,7 @@ struct State {
     count: usize,
     request: usize,
     output: String,
+    pointer_events: String,
 }
 
 struct RequestGuard(usize);
@@ -77,6 +78,24 @@ fn view(state: &mut State) -> impl DomFragment<State> + use<> {
                     state.request += 1;
                 }),
             html::div(state.output.clone()).id("output"),
+            custom_element(tag, "pointer").id("pointer-target").pointer(
+                |state: &mut State, event| {
+                    use std::fmt::Write as _;
+                    let kind = match event {
+                        PointerMsg::Down(_) => "D",
+                        PointerMsg::Move(_) => "M",
+                        PointerMsg::Up(_) => "U",
+                        PointerMsg::Cancel(_) => "C",
+                    };
+                    let _ = write!(
+                        state.pointer_events,
+                        "{kind}{}:{};",
+                        event.id(),
+                        event.buttons()
+                    );
+                },
+            ),
+            html::div(state.pointer_events.clone()).id("pointer-events"),
         )),
         memoized_await(
             state.request,
