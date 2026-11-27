@@ -1,6 +1,7 @@
 // Copyright 2026 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
+//! Regression coverage for identity-aware sequence replacement.
 mod common;
 
 use common::*;
