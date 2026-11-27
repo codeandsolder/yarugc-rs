@@ -5,9 +5,10 @@
 
 use wasm_bindgen::UnwrapThrowExt;
 use xilem_web::concurrent::memoized_await;
-use xilem_web::elements::{custom_element, html};
+use xilem_web::elements::{custom_element, html, svg};
 use xilem_web::interfaces::Element;
 use xilem_web::modifiers::style;
+use xilem_web::svg::kurbo::{Circle, Line, Rect};
 use xilem_web::{App, DomFragment, document_body, get_element_by_id};
 
 #[derive(Default)]
@@ -31,6 +32,7 @@ impl Drop for RequestGuard {
 }
 
 fn view(state: &mut State) -> impl DomFragment<State> + use<> {
+    let shift = if state.phase == 0 { 0.0 } else { 5.0 };
     let tag = if state.phase == 0 { "button" } else { "span" };
     let event = if state.phase == 2 {
         "mousedown"
@@ -77,6 +79,11 @@ fn view(state: &mut State) -> impl DomFragment<State> + use<> {
                     state.request += 1;
                 }),
             html::div(state.output.clone()).id("output"),
+            svg::svg((
+                Circle::new((10.0 + shift, 20.0), 3.0 + shift).id("circle"),
+                Line::new((1.0, 2.0 + shift), (3.0 + shift, 4.0)).id("line"),
+                Rect::new(1.0 + shift, 2.0, 6.0 + 2.0 * shift, 9.0).id("rect"),
+            )),
         )),
         memoized_await(
             state.request,

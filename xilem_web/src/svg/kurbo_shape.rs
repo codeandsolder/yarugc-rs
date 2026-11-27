@@ -25,172 +25,87 @@ fn create_element<R>(
     })
 }
 
-impl<State: 'static, Action: 'static> OrphanView<Line, State, Action> for ViewCtx {
-    type OrphanViewState = ();
-    type OrphanElement = Pod<web_sys::SvgLineElement>;
+// Declare the SVG attribute names and their values once, so initial creation,
+// hydration and subsequent rebuilds use exactly the same geometry schema.
+macro_rules! numeric_shape {
+    ($shape:ty, $element:ty, $tag:literal, |$view:ident| [$($key:literal => $value:expr),+ $(,)?]) => {
+        impl<State: 'static, Action: 'static> OrphanView<$shape, State, Action> for ViewCtx {
+            type OrphanViewState = ();
+            type OrphanElement = Pod<$element>;
 
-    fn orphan_build(
-        view: &Line,
-        ctx: &mut Self,
-        _: &mut State,
-    ) -> (Self::OrphanElement, Self::OrphanViewState) {
-        create_element("line", ctx, 4, |element, ctx| {
-            let mut element = Self::OrphanElement::from_with_ctx(element, ctx);
-            let attrs = &mut element.modifier();
-            Attributes::push(attrs, ("x1", view.p0.x));
-            Attributes::push(attrs, ("y1", view.p0.y));
-            Attributes::push(attrs, ("x2", view.p1.x));
-            Attributes::push(attrs, ("y2", view.p1.y));
-            (element, ())
-        })
-    }
+            fn orphan_build(
+                $view: &$shape,
+                ctx: &mut Self,
+                _: &mut State,
+            ) -> (Self::OrphanElement, Self::OrphanViewState) {
+                let values = [$(($key, $value)),+];
+                create_element($tag, ctx, values.len(), |element, ctx| {
+                    let mut element = Self::OrphanElement::from_with_ctx(element, ctx);
+                    let attrs = &mut element.modifier();
+                    for value in values {
+                        Attributes::push(attrs, value);
+                    }
+                    (element, ())
+                })
+            }
 
-    fn orphan_rebuild(
-        new: &Line,
-        prev: &Line,
-        (): &mut Self::OrphanViewState,
-        _ctx: &mut Self,
-        element: Mut<'_, Self::OrphanElement>,
-        _: &mut State,
-    ) {
-        Attributes::rebuild(element, 4, |mut element| {
-            let attrs = &mut element.modifier();
-            Attributes::update_with_same_key(attrs, "x1", &prev.p0.x, &new.p0.x);
-            Attributes::update_with_same_key(attrs, "y1", &prev.p0.y, &new.p0.y);
-            Attributes::update_with_same_key(attrs, "x2", &prev.p1.x, &new.p1.x);
-            Attributes::update_with_same_key(attrs, "y2", &prev.p1.y, &new.p1.y);
-        });
-    }
+            fn orphan_rebuild(
+                new: &$shape,
+                prev: &$shape,
+                (): &mut Self::OrphanViewState,
+                _ctx: &mut Self,
+                element: Mut<'_, Self::OrphanElement>,
+                _: &mut State,
+            ) {
+                let values = |$view: &$shape| [$($value),+];
+                let keys = [$($key),+];
+                Attributes::rebuild(element, keys.len(), |mut element| {
+                    let attrs = &mut element.modifier();
+                    for ((key, previous), next) in keys.into_iter().zip(values(prev)).zip(values(new)) {
+                        Attributes::update_with_same_key(attrs, key, &previous, &next);
+                    }
+                });
+            }
 
-    fn orphan_teardown(
-        _view: &Line,
-        (): &mut Self::OrphanViewState,
-        _ctx: &mut Self,
-        _element: Mut<'_, Self::OrphanElement>,
-    ) {
-    }
+            fn orphan_teardown(
+                _view: &$shape,
+                (): &mut Self::OrphanViewState,
+                _ctx: &mut Self,
+                _element: Mut<'_, Self::OrphanElement>,
+            ) {}
 
-    fn orphan_message(
-        _view: &Line,
-        (): &mut Self::OrphanViewState,
-        _message: &mut MessageCtx,
-        _element: Mut<'_, Self::OrphanElement>,
-        _app_state: &mut State,
-    ) -> MessageResult<Action> {
-        // TODO: Panic here?
-        MessageResult::Stale
-    }
+            fn orphan_message(
+                _view: &$shape,
+                (): &mut Self::OrphanViewState,
+                _message: &mut MessageCtx,
+                _element: Mut<'_, Self::OrphanElement>,
+                _app_state: &mut State,
+            ) -> MessageResult<Action> {
+                MessageResult::Stale
+            }
+        }
+    };
 }
 
-impl<State: 'static, Action: 'static> OrphanView<Rect, State, Action> for ViewCtx {
-    type OrphanViewState = ();
-    type OrphanElement = Pod<web_sys::SvgRectElement>;
+numeric_shape!(Line, web_sys::SvgLineElement, "line", |view| [
+    "x1" => view.p0.x,
+    "y1" => view.p0.y,
+    "x2" => view.p1.x,
+    "y2" => view.p1.y,
+]);
 
-    fn orphan_build(
-        view: &Rect,
-        ctx: &mut Self,
-        _: &mut State,
-    ) -> (Self::OrphanElement, Self::OrphanViewState) {
-        create_element("rect", ctx, 4, |element, ctx| {
-            let mut element = Self::OrphanElement::from_with_ctx(element, ctx);
-            let attrs = &mut element.modifier();
-            Attributes::push(attrs, ("x", view.x0));
-            Attributes::push(attrs, ("y", view.y0));
-            Attributes::push(attrs, ("width", view.width()));
-            Attributes::push(attrs, ("height", view.height()));
-            (element, ())
-        })
-    }
+numeric_shape!(Rect, web_sys::SvgRectElement, "rect", |view| [
+    "x" => view.x0,
+    "y" => view.y0,
+    "width" => view.width(),
+    "height" => view.height(),
+]);
 
-    fn orphan_rebuild(
-        new: &Rect,
-        prev: &Rect,
-        (): &mut Self::OrphanViewState,
-        _ctx: &mut Self,
-        element: Mut<'_, Self::OrphanElement>,
-        _: &mut State,
-    ) {
-        Attributes::rebuild(element, 4, |mut element| {
-            let attrs = &mut element.modifier();
-            Attributes::update_with_same_key(attrs, "x", &prev.x0, &new.x0);
-            Attributes::update_with_same_key(attrs, "y", &prev.y0, &new.y0);
-            Attributes::update_with_same_key(attrs, "width", &prev.width(), &new.width());
-            Attributes::update_with_same_key(attrs, "height", &prev.height(), &new.height());
-        });
-    }
-
-    fn orphan_teardown(
-        _view: &Rect,
-        (): &mut Self::OrphanViewState,
-        _ctx: &mut Self,
-        _element: Mut<'_, Self::OrphanElement>,
-    ) {
-    }
-
-    fn orphan_message(
-        _view: &Rect,
-        (): &mut Self::OrphanViewState,
-        _message: &mut MessageCtx,
-        _element: Mut<'_, Self::OrphanElement>,
-        _app_state: &mut State,
-    ) -> MessageResult<Action> {
-        MessageResult::Stale
-    }
-}
-
-impl<State: 'static, Action: 'static> OrphanView<Circle, State, Action> for ViewCtx {
-    type OrphanViewState = ();
-    type OrphanElement = Pod<web_sys::SvgCircleElement>;
-
-    fn orphan_build(
-        view: &Circle,
-        ctx: &mut Self,
-        _: &mut State,
-    ) -> (Self::OrphanElement, Self::OrphanViewState) {
-        create_element("circle", ctx, 3, |element, ctx| {
-            let mut element = Self::OrphanElement::from_with_ctx(element, ctx);
-            let attrs = &mut element.modifier();
-            Attributes::push(attrs, ("cx", view.center.x));
-            Attributes::push(attrs, ("cy", view.center.y));
-            Attributes::push(attrs, ("r", view.radius));
-            (element, ())
-        })
-    }
-
-    fn orphan_rebuild(
-        new: &Circle,
-        prev: &Circle,
-        (): &mut Self::OrphanViewState,
-        _ctx: &mut Self,
-        element: Mut<'_, Self::OrphanElement>,
-        _: &mut State,
-    ) {
-        Attributes::rebuild(element, 3, |mut element| {
-            let attrs = &mut element.modifier();
-            Attributes::update_with_same_key(attrs, "cx", &prev.center.x, &new.center.x);
-            Attributes::update_with_same_key(attrs, "cy", &prev.center.y, &new.center.y);
-            Attributes::update_with_same_key(attrs, "height", &prev.radius, &new.radius);
-        });
-    }
-
-    fn orphan_teardown(
-        _view: &Circle,
-        (): &mut Self::OrphanViewState,
-        _ctx: &mut Self,
-        _element: Mut<'_, Self::OrphanElement>,
-    ) {
-    }
-
-    fn orphan_message(
-        _view: &Circle,
-        (): &mut Self::OrphanViewState,
-        _message: &mut MessageCtx,
-        _element: Mut<'_, Self::OrphanElement>,
-        _app_state: &mut State,
-    ) -> MessageResult<Action> {
-        MessageResult::Stale
-    }
-}
+numeric_shape!(Circle, web_sys::SvgCircleElement, "circle", |view| [
+    "cx" => view.center.x,
+    "cy" => view.center.y,
+    "r" => view.radius,
+]);
 
 impl<State: 'static, Action: 'static> OrphanView<BezPath, State, Action> for ViewCtx {
     type OrphanViewState = ();
