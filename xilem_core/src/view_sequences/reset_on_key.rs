@@ -14,8 +14,9 @@ pub struct ResetOnKey<Key, Seq> {
     seq: Seq,
 }
 
-/// Reconcile a sequence normally while its key remains equal. On a key change,
-/// tear down the old sequence, build a fresh one, and invalidate its old message
+/// Reset a sequence when its identity key changes.
+///
+/// On a key change, tear down the old sequence, build a fresh one, and invalidate its old message
 /// paths, even if a previously used key returns later.
 ///
 /// This is useful for positional lists whose entries represent independent

@@ -67,6 +67,14 @@ fn view(state: &mut State) -> impl DomFragment<State> + use<> {
                     let event = web_sys::Event::new("mousedown").unwrap_throw();
                     element.dispatch_event(&event).unwrap_throw();
                 }),
+            html::button("retire-event")
+                .id("retire-event")
+                .on_click(|state: &mut State, _| {
+                    let element = get_element_by_id("target").unwrap_throw();
+                    let event = web_sys::Event::new("mousedown").unwrap_throw();
+                    element.dispatch_event(&event).unwrap_throw();
+                    state.phase += 1;
+                }),
             html::div(state.count).id("count"),
             html::div(())
                 .id("cascade")
