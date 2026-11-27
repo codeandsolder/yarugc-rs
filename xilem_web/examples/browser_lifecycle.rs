@@ -6,7 +6,7 @@
 use wasm_bindgen::UnwrapThrowExt;
 use xilem_web::concurrent::memoized_await;
 use xilem_web::elements::{custom_element, html, svg};
-use xilem_web::interfaces::{Element, SvgElement};
+use xilem_web::interfaces::{Element, HtmlInputElement, SvgElement};
 use xilem_web::modifiers::style;
 use xilem_web::svg::StrokeStyle;
 use xilem_web::svg::kurbo::{Cap, Circle, Join, Line, Rect};
@@ -81,6 +81,11 @@ fn view(state: &mut State) -> impl DomFragment<State> + use<> {
                     state.request += 1;
                 }),
             html::div(state.output.clone()).id("output"),
+            html::input(())
+                .type_("checkbox")
+                .checked(state.phase == 1)
+                .checked(state.phase < 2)
+                .id("overwritten-checked"),
             svg::svg((
                 Circle::new((10.0 + shift, 20.0), 3.0 + shift).id("circle"),
                 Line::new((1.0, 2.0 + shift), (3.0 + shift, 4.0))
