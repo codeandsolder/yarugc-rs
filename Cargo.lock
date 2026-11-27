@@ -2223,6 +2223,15 @@ checksum = "09e54e57b4c48b40f7aec75635392b12b3421fa26fe8b4332e63138ed278459c"
 [[package]]
 name = "imaging"
 version = "0.0.1"
+source = "git+https://github.com/forest-rs/imaging.git?rev=e9123c47b719f392a4803b1587a865fca3660be6#e9123c47b719f392a4803b1587a865fca3660be6"
+dependencies = [
+ "kurbo",
+ "peniko",
+]
+
+[[package]]
+name = "imaging"
+version = "0.0.1"
 source = "git+https://github.com/forest-rs/imaging.git?rev=f3f932a8a0e233f5ab52863041b8a3d6cff9255b#f3f932a8a0e233f5ab52863041b8a3d6cff9255b"
 dependencies = [
  "kurbo",
@@ -2235,7 +2244,7 @@ version = "0.0.1"
 source = "git+https://github.com/forest-rs/imaging.git?rev=f3f932a8a0e233f5ab52863041b8a3d6cff9255b#f3f932a8a0e233f5ab52863041b8a3d6cff9255b"
 dependencies = [
  "ash",
- "imaging",
+ "imaging 0.0.1 (git+https://github.com/forest-rs/imaging.git?rev=f3f932a8a0e233f5ab52863041b8a3d6cff9255b)",
  "imaging_wgpu",
  "kurbo",
  "oaty",
@@ -2250,7 +2259,7 @@ name = "imaging_vello"
 version = "0.0.2"
 source = "git+https://github.com/forest-rs/imaging.git?rev=f3f932a8a0e233f5ab52863041b8a3d6cff9255b#f3f932a8a0e233f5ab52863041b8a3d6cff9255b"
 dependencies = [
- "imaging",
+ "imaging 0.0.1 (git+https://github.com/forest-rs/imaging.git?rev=f3f932a8a0e233f5ab52863041b8a3d6cff9255b)",
  "imaging_wgpu",
  "kurbo",
  "peniko",
@@ -2263,7 +2272,7 @@ version = "0.0.2"
 source = "git+https://github.com/forest-rs/imaging.git?rev=f3f932a8a0e233f5ab52863041b8a3d6cff9255b#f3f932a8a0e233f5ab52863041b8a3d6cff9255b"
 dependencies = [
  "glifo",
- "imaging",
+ "imaging 0.0.1 (git+https://github.com/forest-rs/imaging.git?rev=f3f932a8a0e233f5ab52863041b8a3d6cff9255b)",
  "kurbo",
  "peniko",
  "vello_common",
@@ -2276,7 +2285,7 @@ version = "0.0.2"
 source = "git+https://github.com/forest-rs/imaging.git?rev=f3f932a8a0e233f5ab52863041b8a3d6cff9255b#f3f932a8a0e233f5ab52863041b8a3d6cff9255b"
 dependencies = [
  "glifo",
- "imaging",
+ "imaging 0.0.1 (git+https://github.com/forest-rs/imaging.git?rev=f3f932a8a0e233f5ab52863041b8a3d6cff9255b)",
  "imaging_wgpu",
  "kurbo",
  "peniko",
@@ -2290,7 +2299,7 @@ name = "imaging_wgpu"
 version = "0.0.2"
 source = "git+https://github.com/forest-rs/imaging.git?rev=f3f932a8a0e233f5ab52863041b8a3d6cff9255b#f3f932a8a0e233f5ab52863041b8a3d6cff9255b"
 dependencies = [
- "imaging",
+ "imaging 0.0.1 (git+https://github.com/forest-rs/imaging.git?rev=f3f932a8a0e233f5ab52863041b8a3d6cff9255b)",
  "wgpu",
 ]
 
@@ -2757,7 +2766,7 @@ dependencies = [
  "console_error_panic_hook",
  "cursor-icon",
  "dpi",
- "imaging",
+ "imaging 0.0.1 (git+https://github.com/forest-rs/imaging.git?rev=e9123c47b719f392a4803b1587a865fca3660be6)",
  "kurbo",
  "parley",
  "peniko",
@@ -2778,7 +2787,7 @@ dependencies = [
 name = "masonry_imaging"
 version = "0.4.0"
 dependencies = [
- "imaging",
+ "imaging 0.0.1 (git+https://github.com/forest-rs/imaging.git?rev=e9123c47b719f392a4803b1587a865fca3660be6)",
  "imaging_skia",
  "imaging_vello",
  "imaging_vello_cpu",
