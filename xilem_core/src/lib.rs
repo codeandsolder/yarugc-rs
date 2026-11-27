@@ -76,7 +76,7 @@ pub use self::message_proxy::{MessageProxy, ProxyError, RawProxy};
 pub use self::view::{View, ViewMarker};
 pub use self::view_ctx::{ViewId, ViewPathTracker};
 pub use self::view_sequence::{Count, ViewSequence};
-pub use self::view_sequences::{WithoutElements, without_elements};
+pub use self::view_sequences::{ResetOnKey, WithoutElements, reset_on_key, without_elements};
 pub use self::views::{
     ActionMapper, Fork, Frozen, Lens, MapMessage, MapState, Memoize, MessageMapper, OrphanView,
     RunOnce, fork, frozen, lens, map_action, map_message_result, map_state, memoize, one_of,

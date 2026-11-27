@@ -292,12 +292,14 @@ impl ElementSplice<TestElement> for SeqTracker<'_> {
     fn with_scratch<R>(&mut self, f: impl FnOnce(&mut AppendVec<TestElement>) -> R) -> R {
         let ret = f(self.scratch);
         for element in self.scratch.drain() {
-            self.inner.active.push(element);
+            self.inner.active.insert(self.ix, element);
+            self.ix += 1;
         }
         ret
     }
     fn insert(&mut self, element: TestElement) {
-        self.inner.active.push(element);
+        self.inner.active.insert(self.ix, element);
+        self.ix += 1;
     }
     fn mutate<R>(&mut self, f: impl FnOnce(Mut<'_, TestElement>) -> R) -> R {
         let ix = self.ix;

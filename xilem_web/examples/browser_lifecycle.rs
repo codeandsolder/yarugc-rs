@@ -11,7 +11,7 @@ use xilem_web::modifiers::style;
 use xilem_web::svg::StrokeStyle;
 use xilem_web::svg::kurbo::{Cap, Circle, Join, Line, Rect};
 use xilem_web::svg::peniko::color::palette;
-use xilem_web::{App, DomFragment, document_body, get_element_by_id};
+use xilem_web::{App, DomFragment, PointerMsg, document_body, get_element_by_id};
 
 #[derive(Default)]
 struct State {
@@ -19,6 +19,7 @@ struct State {
     count: usize,
     request: usize,
     output: String,
+    pointer_events: String,
 }
 
 struct RequestGuard(usize);
@@ -70,6 +71,14 @@ fn view(state: &mut State) -> impl DomFragment<State> + use<> {
                     let event = web_sys::Event::new("mousedown").unwrap_throw();
                     element.dispatch_event(&event).unwrap_throw();
                 }),
+            html::button("retire-event")
+                .id("retire-event")
+                .on_click(|state: &mut State, _| {
+                    let element = get_element_by_id("target").unwrap_throw();
+                    let event = web_sys::Event::new("mousedown").unwrap_throw();
+                    element.dispatch_event(&event).unwrap_throw();
+                    state.phase += 1;
+                }),
             html::div(state.count).id("count"),
             html::div(())
                 .id("cascade")
@@ -104,6 +113,24 @@ fn view(state: &mut State) -> impl DomFragment<State> + use<> {
                     .id("line"),
                 Rect::new(1.0 + shift, 2.0, 2.0_f64.mul_add(shift, 6.0), 9.0).id("rect"),
             )),
+            custom_element(tag, "pointer").id("pointer-target").pointer(
+                |state: &mut State, event| {
+                    use std::fmt::Write as _;
+                    let kind = match event {
+                        PointerMsg::Down(_) => "D",
+                        PointerMsg::Move(_) => "M",
+                        PointerMsg::Up(_) => "U",
+                        PointerMsg::Cancel(_) => "C",
+                    };
+                    let _ = write!(
+                        state.pointer_events,
+                        "{kind}{}:{};",
+                        event.id(),
+                        event.buttons()
+                    );
+                },
+            ),
+            html::div(state.pointer_events.clone()).id("pointer-events"),
         )),
         memoized_await(
             state.request,

@@ -124,9 +124,11 @@ pub trait Element<State: 'static, Action = ()>:
         events::OnEvent::new(self, event, handler)
     }
 
-    /// Add a stateful pointer event (down/move/up) listener to this [`Element`].
+    /// Add a stateful pointer event (down/move/up/cancel) listener to this [`Element`].
     ///
-    /// The pointer ids are captured from the underlying element.
+    /// Pointer ids are captured from the underlying element. A started gesture receives
+    /// a cancellation on pointer cancellation, lost capture, or element replacement.
+    /// Cancellation reports the last known position and no pressed buttons.
     ///
     /// # Examples
     ///
@@ -137,13 +139,16 @@ pub trait Element<State: 'static, Action = ()>:
     /// # fn component() -> impl Element<()> {
     /// div(()).pointer(|_, pointer_msg| {
     ///     match pointer_msg {
-    ///         PointerMsg::Down(PointerDetails { position, button, id }) => {
+    ///         PointerMsg::Down(PointerDetails { position, button, id, .. }) => {
     ///             log_1(&format!("Down({id}) at {position} and button: {button}").into());
     ///         }
-    ///         PointerMsg::Move(PointerDetails { position, button, id }) => {
+    ///         PointerMsg::Move(PointerDetails { position, button, id, .. }) => {
     ///             log_1(&format!("Move({id}) at {position} and button: {button}").into());
     ///         }
-    ///         PointerMsg::Up(PointerDetails { position, button, id }) => {
+    ///         PointerMsg::Cancel(PointerDetails { id, .. }) => {
+    ///             log_1(&format!("Cancel({id})").into());
+    ///         }
+    ///         PointerMsg::Up(PointerDetails { position, button, id, .. }) => {
     ///             log_1(&format!("Up({id}) at {position} and button: {button}").into());
     ///         }
     ///     };
