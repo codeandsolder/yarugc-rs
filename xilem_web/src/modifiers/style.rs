@@ -573,24 +573,7 @@ where
         });
     }
 
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
-    ) {
-        self.el.teardown(view_state, ctx, element);
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        self.el.message(view_state, message, element, app_state)
-    }
+    forward_view_lifecycle!(el, State, Action);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -697,24 +680,7 @@ where
         });
     }
 
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
-    ) {
-        self.el.teardown(view_state, ctx, element);
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        self.el.message(view_state, message, element, app_state)
-    }
+    forward_view_lifecycle!(el, State, Action);
 }
 
 #[cfg(test)]

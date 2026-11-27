@@ -135,25 +135,7 @@ where
             .rebuild(&prev.element, view_state, ctx, element, app_state);
     }
 
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        el: Mut<'_, Self::Element>,
-    ) {
-        self.element.teardown(view_state, ctx, el);
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        self.element
-            .message(view_state, message, element, app_state)
-    }
+    forward_view_lifecycle!(element, State, Action);
 }
 
 impl<State, Action, V, F> View<State, Action, ViewCtx> for AfterRebuild<State, Action, V, F>
@@ -190,25 +172,7 @@ where
         (self.callback)(app_state, element.node);
     }
 
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        el: Mut<'_, Self::Element>,
-    ) {
-        self.element.teardown(view_state, ctx, el);
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        self.element
-            .message(view_state, message, element, app_state)
-    }
+    forward_view_lifecycle!(element, State, Action);
 }
 
 impl<State, Action, V, F> View<State, Action, ViewCtx> for BeforeTeardown<State, Action, V, F>

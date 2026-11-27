@@ -179,7 +179,7 @@ fn cat_fetch_controls(state: &AppState) -> impl Element<AppState> + use<> {
                     .id("cat-count")
                     .type_("number")
                     .attr("min", 0)
-                    .attr("value", state.cats_to_fetch)
+                    .value(state.cats_to_fetch)
                     .on_input(|state: &mut AppState, ev: web_sys::Event| {
                         if !state.cats_are_being_fetched {
                             state.cats.clear();
@@ -207,7 +207,7 @@ fn cat_fetch_controls(state: &AppState) -> impl Element<AppState> + use<> {
                     .id("debounce-timeout-duration")
                     .type_("number")
                     .attr("min", 0)
-                    .attr("value", state.debounce_in_ms)
+                    .value(state.debounce_in_ms)
                     .on_input(|state: &mut AppState, ev: web_sys::Event| {
                         state.debounce_in_ms = input_target(&ev).value().parse().unwrap_or(0);
                     })),

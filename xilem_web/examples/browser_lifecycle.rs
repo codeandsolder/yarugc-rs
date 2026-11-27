@@ -6,7 +6,9 @@
 use wasm_bindgen::UnwrapThrowExt;
 use xilem_web::concurrent::memoized_await;
 use xilem_web::elements::{custom_element, html, svg};
-use xilem_web::interfaces::{Element, HtmlInputElement, SvgElement};
+use xilem_web::interfaces::{
+    Element, HtmlInputElement, HtmlSelectElement, HtmlTextAreaElement, SvgElement,
+};
 use xilem_web::modifiers::style;
 use xilem_web::svg::StrokeStyle;
 use xilem_web::svg::kurbo::{Cap, Circle, Join, Line, Rect};
@@ -60,6 +62,42 @@ fn geometry_fixture(phase: usize) -> impl DomFragment<State> {
                 .id("line"),
             Rect::new(1.0 + shift, 2.0, 2.0_f64.mul_add(shift, 6.0), 9.0).id("rect"),
         )),
+    )
+}
+
+fn form_fixture(phase: usize) -> impl DomFragment<State> {
+    let controlled = (phase < 2).then_some("model");
+    (
+        html::input(())
+            .id("controlled-input")
+            .value("shadowed")
+            .value(controlled)
+            .attr("value", "default")
+            .type_("text"),
+        html::input(())
+            .id("uncontrolled-input")
+            .attr("value", (phase < 2).then_some("default")),
+        html::textarea("default")
+            .id("controlled-textarea")
+            .value(controlled),
+        html::select((
+            html::option("First").attr("value", "first"),
+            (phase != 0).then(|| html::option("Second").attr("value", "second")),
+        ))
+        .id("controlled-select")
+        .value((phase < 2).then_some("second")),
+        html::select((
+            html::option("First").attr("value", "first"),
+            html::option("Empty").attr("value", ""),
+        ))
+        .id("empty-select")
+        .value((phase < 2).then_some("")),
+        html::input(())
+            .id("controlled-range")
+            .value(150)
+            .attr("min", 100)
+            .attr("max", 200)
+            .type_("range"),
     )
 }
 
@@ -119,6 +157,7 @@ fn view(state: &mut State) -> impl DomFragment<State> + use<> {
                 }),
             html::div(state.output.clone()).id("output"),
             geometry_fixture(state.phase),
+            form_fixture(state.phase),
             custom_element(tag, "pointer").id("pointer-target").pointer(
                 |state: &mut State, event| {
                     use std::fmt::Write as _;

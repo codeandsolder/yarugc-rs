@@ -21,7 +21,7 @@ pub enum AttributeValue {
 
 impl AttributeValue {
     #[must_use = "Use the serialized attribute value."]
-    pub fn serialize(&self) -> CowStr {
+    pub fn serialize(&self) -> std::borrow::Cow<'_, str> {
         match self {
             Self::True => "".into(), // empty string is equivalent to a true set attribute
             Self::I16(n) => n.to_string().into(),
@@ -31,7 +31,7 @@ impl AttributeValue {
             Self::Usize(n) => n.to_string().into(),
             Self::F32(n) => n.to_string().into(),
             Self::F64(n) => n.to_string().into(),
-            Self::String(s) => s.clone(),
+            Self::String(s) => std::borrow::Cow::Borrowed(s),
         }
     }
 }

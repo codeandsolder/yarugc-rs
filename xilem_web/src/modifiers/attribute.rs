@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 
 use wasm_bindgen::{JsCast, UnwrapThrowExt};
 
-use crate::core::{MessageCtx, MessageResult, Mut, View, ViewElement, ViewMarker};
+use crate::core::{Mut, View, ViewElement, ViewMarker};
 use crate::modifiers::{Modifier, WithModifier};
 use crate::vecmap::VecMap;
 use crate::{AttributeValue, DomView, IntoAttributeValue, ViewCtx};
@@ -231,19 +231,7 @@ fn element_attr_assertions(element: &web_sys::Element, name: &str) {
 fn set_attribute(element: &web_sys::Element, name: &str, value: &str) {
     element_attr_assertions(element, name);
 
-    // we have to special-case `value` because setting the value using `set_attribute`
-    // doesn't work after the value has been changed.
-    // TODO not sure, whether this is always a good idea, in case custom or other interfaces such as HtmlOptionElement elements are used that have "value" as an attribute name.
-    // We likely want to use the DOM attributes instead.
-    if name == "value" {
-        if let Some(input_element) = element.dyn_ref::<web_sys::HtmlInputElement>() {
-            input_element.set_value(value);
-        } else {
-            element.set_attribute("value", value).unwrap_throw();
-        }
-    } else {
-        element.set_attribute(name, value).unwrap_throw();
-    }
+    element.set_attribute(name, value).unwrap_throw();
 }
 
 fn remove_attribute(element: &web_sys::Element, name: &str) {
@@ -316,22 +304,5 @@ where
         });
     }
 
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
-    ) {
-        self.inner.teardown(view_state, ctx, element);
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        element: Mut<'_, Self::Element>,
-        app_state: &mut State,
-    ) -> MessageResult<Action> {
-        self.inner.message(view_state, message, element, app_state)
-    }
+    forward_view_lifecycle!(inner, State, Action);
 }

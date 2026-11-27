@@ -37,7 +37,7 @@ fn todo_item(todo: &Todo, editing: Option<&str>) -> impl Element<AppState> + use
         ))
         .class("view"),
         el::input(())
-            .attr("value", editing.unwrap_or(&todo.title).to_owned())
+            .value(editing.unwrap_or(&todo.title).to_owned())
             .class("edit")
             .on_keydown(move |state: &mut AppState, event| {
                 if !event.is_composing() {
@@ -137,7 +137,7 @@ fn app_logic(state: &mut AppState) -> impl DomView<AppState> + use<> {
     let input = el::input(())
         .class("new-todo")
         .attr("placeholder", "What needs to be done?")
-        .attr("value", state.new_todo.clone())
+        .value(state.new_todo.clone())
         .attr("autofocus", true);
     el::div((
         el::header((

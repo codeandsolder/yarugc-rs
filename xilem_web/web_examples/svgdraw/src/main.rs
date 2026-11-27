@@ -216,7 +216,7 @@ impl Draw {
                     .attr("min", 0.1_f64.ln())
                     .attr("max", 1000.0_f64.ln())
                     .attr("step", 0.01)
-                    .attr("value", self.new_line_width.ln())
+                    .value(self.new_line_width.ln())
                     .on_input(|state: &mut Self, event| {
                         if let Some(width) = input_event_target_value(&event)
                             .and_then(|value| value.parse::<f64>().ok())

@@ -17,7 +17,9 @@ use std::borrow::Cow;
 use wasm_bindgen::JsCast;
 
 use crate::core::anymore::AnyDebug;
-use crate::modifiers::{Attr, Class, ClassIter, Rotate, Scale, ScaleValue, Style, StyleIter};
+use crate::modifiers::{
+    Attr, Class, ClassIter, FormValue, Rotate, Scale, ScaleValue, Style, StyleIter,
+};
 use crate::props::{WithElementProps, WithHtmlInputElementProps};
 use crate::{DomNode, DomView, IntoAttributeValue, OptionalAction, Pointer, PointerMsg, events};
 
@@ -624,6 +626,14 @@ pub trait HtmlInputElement<State: 'static, Action = ()>:
         DomNode: DomNode<Props: WithHtmlInputElementProps> + AsRef<web_sys::HtmlInputElement>,
     >
 {
+    /// Control the live input value, not its default value attribute.
+    /// A missing value clears the property. Browser input-type sanitization still
+    /// applies; file inputs may only be set to the empty string.
+    /// Use the value content attribute for the default value instead.
+    fn value(self, value: impl IntoAttributeValue) -> FormValue<Self, State, Action> {
+        FormValue::new(self, value)
+    }
+
     /// See <https://developer.mozilla.org/en-US/docs/Web/API/HTMLInputElement/checked> for more details.
     ///
     /// # Examples
@@ -877,12 +887,11 @@ dom_interface!(HtmlScriptElement: HtmlElement => HtmlScriptElement {
 });
 
 dom_interface!(HtmlSelectElement: HtmlElement => HtmlSelectElement {
-    /// A string representing the value of the `HTMLOptionElement`, i.e. the value attribute of the equivalent `<option>`.
-    /// If this is not specified, the value of text is used as the value, e.g. for the associated `<select>` element's value when the form is submitted to the server.
-    ///
-    /// See <https://developer.mozilla.org/en-US/docs/Web/API/HTMLSelectElement/value> for more details
-    fn value(self, value: impl IntoAttributeValue) -> Attr<Self, State, Action> {
-        Attr::new(self, Cow::from("value"), value.into_attr_value())
+    /// Control the live selected value after reconciling options.
+    /// A missing value clears the selection; an empty string selects an empty-valued
+    /// option. For multiple selections use individual option selection.
+    fn value(self, value: impl IntoAttributeValue) -> FormValue<Self, State, Action> {
+        FormValue::new(self, value)
     }
 });
 
@@ -935,6 +944,11 @@ dom_interface!(HtmlTimeElement: HtmlElement => HtmlTimeElement {
 });
 
 dom_interface!(HtmlTextAreaElement: HtmlElement => HtmlTextAreaElement {
+    /// Control the live textarea value, independently of its default text.
+    /// A missing value clears the property.
+    fn value(self, value: impl IntoAttributeValue) -> FormValue<Self, State, Action> {
+        FormValue::new(self, value)
+    }
 });
 
 // #[cfg(feature = "HtmlTitleElement")]
