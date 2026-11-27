@@ -6,7 +6,7 @@ rust-version.workspace = true
 
 [[bin]]
 name = "todomvc"
-test = false
+test = true
 doctest = false
 doc = false
 bench = false

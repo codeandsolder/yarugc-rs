@@ -10,85 +10,67 @@
 )]
 mod state;
 
-use state::{AppState, Filter, Todo};
-use wasm_bindgen::JsCast;
-use xilem_web::core::{MessageResult, map_message_result, map_state};
+use state::{AppState, Filter, Todo, TodoAction};
+use xilem_web::core::reset_on_key;
 use xilem_web::elements::html as el;
 use xilem_web::interfaces::{Element, HtmlInputElement};
 use xilem_web::modifiers::style as s;
-use xilem_web::{Action, App, DomView, get_element_by_id};
+use xilem_web::{App, DomView, get_element_by_id, input_event_target_value};
 
-// All of these actions arise from within a `Todo`, but we need access to the full state to reduce
-// them.
-enum TodoAction {
-    SetEditing(u64),
-    CommitEdit,
-    CancelEditing,
-    Destroy(u64),
-}
-
-impl Action for TodoAction {}
-
-fn todo_item(todo: &Todo, editing: bool) -> impl Element<Todo, TodoAction> + use<> {
+fn todo_item(todo: &Todo, editing: Option<&str>) -> impl Element<AppState> + use<> {
+    let id = todo.id;
     let checkbox = el::input(())
         .class("toggle")
         .type_("checkbox")
         .checked(todo.completed)
-        .on_click(|state: &mut Todo, _| state.completed = !state.completed);
+        .on_click(move |state: &mut AppState, _| state.dispatch(TodoAction::Toggle(id)));
 
     el::li((
         el::div((
             checkbox,
-            el::label(todo.title.clone())
-                .on_dblclick(|state: &mut Todo, _| TodoAction::SetEditing(state.id)),
+            el::label(todo.title.clone()).on_dblclick(move |state: &mut AppState, _| {
+                state.dispatch(TodoAction::BeginEdit(id))
+            }),
             el::button(())
                 .class("destroy")
-                .on_click(|state: &mut Todo, _| TodoAction::Destroy(state.id)),
+                .on_click(move |state: &mut AppState, _| state.dispatch(TodoAction::Delete(id))),
         ))
         .class("view"),
         el::input(())
-            .attr("value", todo.title_editing.clone())
+            .attr("value", editing.unwrap_or(&todo.title).to_owned())
             .class("edit")
-            .on_keydown(|state: &mut Todo, evt| {
-                let key = evt.key();
-                if key == "Enter" {
-                    state.save_editing();
-                    Some(TodoAction::CommitEdit)
-                } else if key == "Escape" {
-                    Some(TodoAction::CancelEditing)
-                } else {
-                    None
+            .on_keydown(move |state: &mut AppState, event| {
+                if !event.is_composing() {
+                    match event.key().as_str() {
+                        "Enter" => state.dispatch(TodoAction::CommitEdit(id)),
+                        "Escape" => state.dispatch(TodoAction::CancelEdit(id)),
+                        _ => {}
+                    }
                 }
             })
-            .on_input(|state: &mut Todo, evt| {
-                // TODO There could/should be further checks, if this is indeed the right event (same DOM element)
-                if let Some(element) = evt
-                    .target()
-                    .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-                {
-                    evt.prevent_default();
-                    state.title_editing = element.value();
+            .on_input(move |state: &mut AppState, event| {
+                if let Some(title) = input_event_target_value(&event) {
+                    state.dispatch(TodoAction::EditTitle(id, title));
                 }
             })
-            .passive(true)
-            .on_blur(|_, _| TodoAction::CancelEditing),
+            .on_blur(move |state: &mut AppState, _| state.dispatch(TodoAction::CommitEdit(id))),
     ))
     .class(todo.completed.then_some("completed"))
-    .class(editing.then_some("editing"))
+    .class(editing.is_some().then_some("editing"))
 }
 
 fn footer_view(state: &AppState, should_display: bool) -> impl Element<AppState> + use<> {
-    let clear_button = (state.todos.iter().filter(|todo| todo.completed).count() > 0).then(|| {
+    let clear_button = state.todos().iter().any(|todo| todo.completed).then(|| {
         el::button("Clear completed")
             .class("clear-completed")
             .on_click(|state: &mut AppState, _| {
-                state.todos.retain(|todo| !todo.completed);
+                state.dispatch(TodoAction::ClearCompleted);
             })
     });
 
     let filter_class = |filter| (state.filter == filter).then_some("selected");
 
-    let items_left = state.todos.iter().filter(|todo| !todo.completed).count();
+    let items_left = state.todos().iter().filter(|todo| !todo.completed).count();
     let item_noun = if items_left == 1 { "item" } else { "items" };
 
     el::footer((
@@ -99,7 +81,7 @@ fn footer_view(state: &AppState, should_display: bool) -> impl Element<AppState>
                     .attr("href", "#/")
                     .class(filter_class(Filter::All)),
                 |state: &mut AppState, _| {
-                    state.filter = Filter::All;
+                    state.dispatch(TodoAction::SetFilter(Filter::All));
                 },
             )),
             " ",
@@ -108,7 +90,7 @@ fn footer_view(state: &AppState, should_display: bool) -> impl Element<AppState>
                     .attr("href", "#/active")
                     .class(filter_class(Filter::Active)),
                 |state: &mut AppState, _| {
-                    state.filter = Filter::Active;
+                    state.dispatch(TodoAction::SetFilter(Filter::Active));
                 },
             )),
             " ",
@@ -117,7 +99,7 @@ fn footer_view(state: &AppState, should_display: bool) -> impl Element<AppState>
                     .attr("href", "#/completed")
                     .class(filter_class(Filter::Completed)),
                 |state: &mut AppState, _| {
-                    state.filter = Filter::Completed;
+                    state.dispatch(TodoAction::SetFilter(Filter::Completed));
                 },
             )),
         ))
@@ -128,32 +110,10 @@ fn footer_view(state: &AppState, should_display: bool) -> impl Element<AppState>
     .style((!should_display).then_some(s("display", "none")))
 }
 
-fn main_view(state: &mut AppState, should_display: bool) -> impl Element<AppState> + use<> {
-    let editing_id = state.editing_id;
+fn main_view(state: &AppState, should_display: bool) -> impl Element<AppState> + use<> {
     let todos: Vec<_> = state
         .visible_todos()
-        .map(|(idx, todo)| {
-            map_message_result(
-                map_state(
-                    todo_item(todo, editing_id == Some(todo.id)),
-                    move |data: &mut AppState| &mut data.todos[idx],
-                ),
-                move |data: &mut AppState, result| {
-                    if let MessageResult::Action(action) = result {
-                        match action {
-                            TodoAction::SetEditing(id) => data.start_editing(id),
-                            TodoAction::CommitEdit => {
-                                data.save();
-                                data.editing_id = None;
-                            }
-                            TodoAction::CancelEditing => data.editing_id = None,
-                            TodoAction::Destroy(id) => data.todos.retain(|todo| todo.id != id),
-                        }
-                    }
-                    MessageResult::Nop
-                },
-            )
-        })
+        .map(|todo| reset_on_key(todo.id, todo_item(todo, state.editing_title(todo.id))))
         .collect();
     let toggle_all = el::input(())
         .attr("id", "toggle-all")
@@ -162,7 +122,7 @@ fn main_view(state: &mut AppState, should_display: bool) -> impl Element<AppStat
         .checked(state.are_all_complete());
 
     el::section((
-        toggle_all.on_click(|state: &mut AppState, _| state.toggle_all_complete()),
+        toggle_all.on_click(|state: &mut AppState, _| state.dispatch(TodoAction::ToggleAll)),
         el::label(()).attr("for", "toggle-all"),
         el::ul(todos).class("todo-list"),
     ))
@@ -171,8 +131,7 @@ fn main_view(state: &mut AppState, should_display: bool) -> impl Element<AppStat
 }
 
 fn app_logic(state: &mut AppState) -> impl DomView<AppState> + use<> {
-    tracing::debug!("render: {state:?}");
-    let some_todos = !state.todos.is_empty();
+    let some_todos = !state.todos().is_empty();
     let main = main_view(state, some_todos);
     let footer = footer_view(state, some_todos);
     let input = el::input(())
@@ -185,21 +144,15 @@ fn app_logic(state: &mut AppState) -> impl DomView<AppState> + use<> {
             el::h1("TODOs"),
             input
                 .on_keydown(|state: &mut AppState, evt| {
-                    if evt.key() == "Enter" {
-                        state.create_todo();
+                    if !evt.is_composing() && evt.key() == "Enter" {
+                        state.dispatch(TodoAction::Create);
                     }
                 })
-                .on_input(|state: &mut AppState, evt| {
-                    // TODO There could/should be further checks, if this is indeed the right event (same DOM element)
-                    if let Some(element) = evt
-                        .target()
-                        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-                    {
-                        state.update_new_todo(&element.value());
-                        evt.prevent_default();
+                .on_input(|state: &mut AppState, event| {
+                    if let Some(title) = input_event_target_value(&event) {
+                        state.dispatch(TodoAction::SetNewTitle(title));
                     }
-                })
-                .passive(false),
+                }),
         ))
         .class("header"),
         main,
