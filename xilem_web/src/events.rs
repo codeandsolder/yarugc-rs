@@ -3,6 +3,7 @@
 
 use std::borrow::Cow;
 use std::marker::PhantomData;
+use std::rc::Rc;
 
 use wasm_bindgen::prelude::Closure;
 use wasm_bindgen::{JsCast, UnwrapThrowExt};
@@ -137,11 +138,18 @@ impl Drop for EventListener {
     }
 }
 
+#[derive(Debug)]
+struct EventDelivery<Event> {
+    registration: Rc<()>,
+    event: Event,
+}
+
 fn create_event_listener<Event: JsCast + AnyDebug>(
     target: &EventTarget,
     event: &str,
     options: ListenerOptions,
     ctx: &ViewCtx,
+    registration: Rc<()>,
 ) -> EventListener {
     let thunk = ctx.message_thunk();
     EventListener::new(
@@ -151,14 +159,17 @@ fn create_event_listener<Event: JsCast + AnyDebug>(
         options.passive,
         move |event| {
             if let Ok(event) = event.dyn_into::<Event>() {
-                thunk.push_message(event);
+                thunk.push_message(EventDelivery {
+                    registration: Rc::clone(&registration),
+                    event,
+                });
             }
         },
     )
 }
 
 mod hidden {
-    use super::EventListener;
+    use super::{EventListener, Rc};
     #[expect(
         unnameable_types,
         reason = "Implementation detail, public because of trait visibility rules"
@@ -167,6 +178,7 @@ mod hidden {
     pub struct OnEventState<S> {
         pub(crate) child_state: S,
         pub(crate) listener: Option<EventListener>,
+        pub(crate) registration: Rc<()>,
     }
 }
 
@@ -190,10 +202,18 @@ where
     // we use a placeholder id here, the id can never change, so we don't need to store it anywhere
     ctx.with_id(ON_EVENT_VIEW_ID, |ctx| {
         let (element, child_state) = element_view.build(ctx, app_state);
-        let listener = create_event_listener::<Event>(element.as_ref(), event, options, ctx);
+        let registration = Rc::new(());
+        let listener = create_event_listener::<Event>(
+            element.as_ref(),
+            event,
+            options,
+            ctx,
+            Rc::clone(&registration),
+        );
         let state = OnEventState {
             child_state,
             listener: Some(listener),
+            registration,
         };
         (element, state)
     })
@@ -231,11 +251,13 @@ fn rebuild_event_listener<State, Action, V, Event>(
         }
         // Drop the previous registration before creating its replacement.
         drop(state.listener.take());
+        state.registration = Rc::new(());
         state.listener = Some(create_event_listener::<Event>(
             element.as_ref(),
             event,
             options,
             ctx,
+            Rc::clone(&state.registration),
         ));
     });
 }
@@ -276,10 +298,13 @@ where
         return MessageResult::Stale;
     }
     if message.remaining_path().is_empty() {
-        let Some(event) = message.take_message::<Event>() else {
+        let Some(delivery) = message.take_message::<EventDelivery<Event>>() else {
             return MessageResult::Stale;
         };
-        (handler)(app_state, *event)
+        if state.listener.is_none() || !Rc::ptr_eq(&delivery.registration, &state.registration) {
+            return MessageResult::Stale;
+        }
+        (handler)(app_state, delivery.event)
             .action()
             .map_or(MessageResult::Nop, MessageResult::Action)
     } else {

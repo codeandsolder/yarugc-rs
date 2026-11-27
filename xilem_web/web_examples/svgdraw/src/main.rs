@@ -11,7 +11,12 @@ use xilem_web::interfaces::{Element, HtmlInputElement, SvgElement, SvgPathElemen
 use xilem_web::modifiers::style as s;
 use xilem_web::svg::kurbo::{BezPath, Point, QuadSpline, Shape, Stroke};
 use xilem_web::svg::peniko::Color;
-use xilem_web::{AnyDomView, App, DomFragment, document_body, input_event_target_value};
+use xilem_web::{
+    AnyDomView, App, DomFragment, PointerMsg, document_body, input_event_target_value,
+};
+
+const PRIMARY_BUTTON: u16 = 1;
+const PAN_BUTTONS: u16 = 2 | 4;
 
 const RAINBOW_COLORS: [Color; 11] = [
     Color::from_rgb8(228, 3, 3),     // Red
@@ -55,7 +60,7 @@ impl SplineLine {
 
 #[derive(Default)]
 struct Draw {
-    pressed_buttons: [bool; 8],
+    active_pointer: Option<i32>,
     selected_color: usize,
     active_line: Option<SplineLine>,
     cursor_position: Point,
@@ -120,6 +125,7 @@ impl Draw {
     fn extend_active_line(&mut self) {
         if let (Some(cur_line), Some(view)) =
             (&mut self.active_line, self.memoized_line_views.last_mut())
+            && cur_line.points.last() != Some(&self.drawing_position)
         {
             cur_line.points.push(self.drawing_position);
             *view = Rc::new(cur_line.view()) as Rc<AnyDomView<Self>>;
@@ -130,12 +136,42 @@ impl Draw {
         self.active_line = None;
     }
 
-    fn toggle_button(&mut self, button: i16) {
-        // ignore exotic amount of buttons
-        if let Ok(index) = usize::try_from(button)
-            && let Some(pressed) = self.pressed_buttons.get_mut(index)
-        {
-            *pressed = !*pressed;
+    fn handle_pointer(&mut self, event: PointerMsg) {
+        let id = event.id();
+        if self.active_pointer.is_some_and(|active| active != id) {
+            return;
+        }
+        match event {
+            PointerMsg::Down(_) => self.active_pointer = Some(id),
+            PointerMsg::Cancel(_) => {
+                if self.active_pointer == Some(id) {
+                    self.finish_active_line();
+                    self.is_panning = false;
+                    self.active_pointer = None;
+                }
+                return;
+            }
+            PointerMsg::Move(_) | PointerMsg::Up(_) => {}
+        }
+        self.update_cursor(event.position());
+        if self.active_pointer != Some(id) {
+            return;
+        }
+        // The complete DOM button mask is authoritative even for chorded
+        // mouse buttons, where changes may arrive as pointermove events.
+        let buttons = event.buttons();
+        if self.active_line.is_some() {
+            self.extend_active_line();
+            if buttons & PRIMARY_BUTTON == 0 {
+                self.finish_active_line();
+            }
+        } else if buttons & PRIMARY_BUTTON != 0 {
+            self.start_new_line();
+        }
+        self.is_panning = buttons & PAN_BUTTONS != 0;
+        if matches!(event, PointerMsg::Up(_)) {
+            self.active_pointer = None;
+            self.is_panning = false;
         }
     }
 
@@ -148,26 +184,7 @@ impl Draw {
             .fill(Color::TRANSPARENT)
             .style(s("transform", transform));
         let canvas = svg(lines)
-            .pointer(|state: &mut Self, event| {
-                state.update_cursor(event.position());
-                let button = event.button();
-                let button_state_changed = button != -1;
-
-                if button_state_changed {
-                    state.toggle_button(button);
-
-                    if state.pressed_buttons[0] && state.active_line.is_none() {
-                        state.start_new_line();
-                    } else if !state.pressed_buttons[0] && state.active_line.is_some() {
-                        state.finish_active_line();
-                    }
-
-                    state.is_panning = state.pressed_buttons[1] || state.pressed_buttons[2];
-                }
-                if state.pressed_buttons[0] && state.active_line.is_some() {
-                    state.extend_active_line();
-                }
-            })
+            .pointer(Self::handle_pointer)
             .style([s("width", "100vw"), s("height", "100vh")])
             .on_wheel(|state, event| state.zoom_with_wheel_event(&event))
             .on_click(|_, event: web_sys::PointerEvent| event.prevent_default())
