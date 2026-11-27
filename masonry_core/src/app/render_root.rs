@@ -472,8 +472,18 @@ impl RenderRoot {
     pub fn handle_window_event(&mut self, event: WindowEvent) -> Handled {
         match event {
             WindowEvent::Rescale(scale_factor) => {
-                self.global_state.scale_factor = scale_factor;
-                self.request_render_all();
+                if self.global_state.scale_factor.to_bits() != scale_factor.to_bits() {
+                    self.global_state.scale_factor = scale_factor;
+                    // Even if physical size does not change, the logical
+                    // constraints do. Content-sized roots must also recompute
+                    // their physical extent from the new DPI.
+                    self.visit_widget_states(|state| {
+                        state.set_request_layout(true);
+                        state.set_needs_layout(true);
+                    });
+                    self.request_render_all();
+                    self.run_rewrite_passes();
+                }
             }
             WindowEvent::Resize(size) => {
                 self.global_state.size = size;

@@ -143,18 +143,36 @@ impl CachedWindow {
         }
         let size = self.root.size();
         let extent = [size.width, size.height];
-        if extent.contains(&0) {
+        let needs_rewrite = self.root.needs_rewrite_passes();
+        if extent.contains(&0) && !needs_rewrite {
             self.surface = None;
             self.dirty.set(true);
+            return Ok(Refresh::Hidden);
+        }
+        if !self.dirty.get()
+            && !needs_rewrite
+            && self
+                .surface
+                .as_ref()
+                .is_some_and(|s| s.size() == extent && s.belongs_to(device))
+        {
+            return Ok(Refresh::Unchanged);
+        }
+        // Rewrite can change a content-sized root's physical extent. Resolve
+        // it before selecting a surface or deciding that the window is hidden.
+        // A failed redraw/render must remain retryable.
+        self.dirty.set(true);
+        let plan = self.root.redraw_visual();
+        let size = self.root.size();
+        let extent = [size.width, size.height];
+        if extent.contains(&0) {
+            self.surface = None;
             return Ok(Refresh::Hidden);
         }
         let reallocated = self
             .surface
             .as_ref()
             .is_none_or(|s| s.size() != extent || !s.belongs_to(device));
-        if !self.dirty.get() && !reallocated {
-            return Ok(Refresh::Unchanged);
-        }
         let replacement = if reallocated {
             Some(
                 compositor
@@ -168,9 +186,6 @@ impl CachedWindow {
             .as_ref()
             .or(self.surface.as_ref())
             .ok_or(RefreshError::InvalidExtent)?;
-        // A failed redraw/render must remain retryable.
-        self.dirty.set(true);
-        let plan = self.root.redraw_visual();
         if plan
             .layers
             .iter()

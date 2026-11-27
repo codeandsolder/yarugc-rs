@@ -13,7 +13,9 @@ use masonry_core::dpi::PhysicalSize;
 use masonry_core::properties::{Background, Dimensions};
 use masonry_imaging::texture_render::Renderer;
 use peniko::Color;
-use yarugc::{AlphaMode, CachedWindow, Composition, Compositor, Layer, Refresh, Surface};
+use yarugc::{
+    AlphaMode, CachedWindow, Composition, CompositionError, Compositor, Layer, Refresh, Surface,
+};
 
 const EXTENT: [u32; 2] = [64, 16];
 
@@ -49,7 +51,7 @@ fn read_composition(
             ..Default::default()
         });
         if load == wgpu::LoadOp::Load {
-            compositor.draw(&mut pass, composition);
+            compositor.draw(&mut pass, composition).unwrap();
         }
     }
     encoder.copy_texture_to_buffer(
@@ -521,7 +523,7 @@ fn measure_readout_gpu(
                     })],
                     ..Default::default()
                 });
-                compositor.draw(&mut pass, composition);
+                compositor.draw(&mut pass, composition).unwrap();
             }
             encoder.write_timestamp(&query_set, base + 2);
             queue.submit(Some(encoder.finish()));
@@ -557,5 +559,122 @@ fn measure_readout_gpu(
             );
         }
         read.unmap();
+    }
+}
+
+#[test]
+#[ignore = "requires a working wgpu adapter; run explicitly on GPU hosts"]
+fn composition_rejects_foreign_device_before_encoding() {
+    let instance = wgpu::Instance::default();
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+    let foreign_adapter =
+        pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let (foreign, _) =
+        pollster::block_on(foreign_adapter.request_device(&Default::default())).unwrap();
+    let compositor = Compositor::new(&device, wgpu::TextureFormat::Rgba8Unorm);
+    let other = Compositor::new(&foreign, wgpu::TextureFormat::Rgba8Unorm);
+    let target = compositor
+        .create_surface(EXTENT, AlphaMode::Premultiplied)
+        .unwrap();
+    let surface = other
+        .create_surface([2, 2], AlphaMode::Premultiplied)
+        .unwrap();
+    let layer = Layer::at(&surface, [0.0, 0.0]);
+    assert!(matches!(
+        compositor.prepare(EXTENT, std::slice::from_ref(&layer)),
+        Err(CompositionError::DifferentDevice)
+    ));
+    let filled = other.prepare(EXTENT, &[layer]).unwrap();
+    let empty = other.prepare(EXTENT, &[]).unwrap();
+    let local = compositor.prepare(EXTENT, &[]).unwrap();
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target.view(),
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLUE),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..Default::default()
+        });
+        for composition in [&filled, &empty] {
+            assert_eq!(
+                compositor.draw(&mut pass, composition),
+                Err(CompositionError::DifferentDevice)
+            );
+        }
+        compositor.draw(&mut pass, &local).unwrap();
+    }
+    queue.submit(Some(encoder.finish()));
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+}
+
+#[test]
+#[ignore = "requires a working wgpu adapter; run explicitly on GPU hosts"]
+fn content_window_refresh_uses_post_rewrite_extent() {
+    use masonry_core::core::WidgetMut;
+    use masonry_core::layout::Length;
+
+    fn defer_resize(mut widget: WidgetMut<'_, SizedBox>, remaining: u32, side: Length) {
+        if remaining == 0 {
+            SizedBox::set_size(&mut widget, side, side);
+        } else {
+            widget.ctx.mutate_self_later::<SizedBox>(move |widget| {
+                defer_resize(widget, remaining - 1, side);
+            });
+        }
+    }
+
+    let instance = wgpu::Instance::default();
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+    let compositor = Compositor::new(&device, wgpu::TextureFormat::Rgba8Unorm);
+    let mut renderer = Renderer::new();
+    let mut window = CachedWindow::new(
+        NewWidget::new(SizedBox::empty().size(Length::ZERO, Length::ZERO)),
+        RenderRootOptions {
+            default_properties: Arc::new(DefaultProperties::new()),
+            use_system_fonts: false,
+            size_policy: WindowSizePolicy::Content,
+            size: PhysicalSize::new(0, 0),
+            scale_factor: 1.0,
+            test_font: None,
+        },
+        |_| {},
+    );
+    let mut refresh = |w: &mut CachedWindow| {
+        w.refresh(&compositor, &mut renderer, &adapter, &device, &queue)
+            .unwrap()
+    };
+    assert!(matches!(refresh(&mut window), Refresh::Hidden));
+    // Four mutate passes are run per edit; the fifth queued callback must
+    // run during refresh, including when the old extent is zero.
+    for side in [Length::px(4.0), Length::px(8.0), Length::ZERO] {
+        window
+            .root()
+            .edit_base_layer(|widget| defer_resize(widget, 5, side))
+            .unwrap();
+        assert!(window.root().needs_rewrite_passes());
+        let result = refresh(&mut window);
+        if side == Length::ZERO {
+            assert!(matches!(result, Refresh::Hidden));
+            assert!(window.surface().is_none());
+        } else {
+            assert!(matches!(
+                result,
+                Refresh::Painted {
+                    reallocated: true,
+                    ..
+                }
+            ));
+            let size = window.root().size();
+            assert_eq!(window.surface().unwrap().size(), [size.width, size.height]);
+            assert!(matches!(refresh(&mut window), Refresh::Unchanged));
+        }
     }
 }

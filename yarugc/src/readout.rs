@@ -17,6 +17,7 @@ use skrifa::{
 };
 use wgpu::util::DeviceExt;
 
+use crate::geometry::SubrectMesh;
 use crate::{AlphaMode, Compositor, SlotGeometry, Surface};
 
 /// Configuration of a fixed-width numerical readout. Glyph cells are right
@@ -367,13 +368,24 @@ fn append_slot_vertices(
     let dx = cell_w / (width * scale);
     let dy = cell_h / (height * scale);
     let top = (1.0 - dy) * 0.5;
-    let mut left = f64::from(cells.end - cells.start).mul_add(-dx, 1.0);
-    for cell in cells {
-        let placement =
-            slot.geometry
-                .placement()
-                .subrect(Rect::new(left, top, left + dx, top + dy));
-        let quad = placement.vertices(extent);
+    if !dx.is_finite() || !dy.is_finite() || dx <= 0.0 || dy <= 0.0 {
+        return Err(ReadoutError::InvalidExtent);
+    }
+    let Some(mut mesh) = SubrectMesh::new(slot.geometry.placement(), extent) else {
+        return Ok(());
+    };
+    let bounds = mesh.bounds();
+    let bottom = top + dy;
+    if bottom <= bounds.y0 || top >= bounds.y1 {
+        return Ok(());
+    }
+    // Compute every boundary from the right edge, avoiding cumulative error.
+    // The binary searches omit cells that cannot intersect the visible polygon.
+    let edge = |cell: u32| f64::from(cells.end - cell).mul_add(-dx, 1.0);
+    let visible = visible_cells(cells.clone(), &edge, bounds.x0, bounds.x1);
+    let [r, g, b, a] = slot.color.map(f32::to_bits);
+    for cell in visible {
+        let quad = mesh.vertices(Rect::new(edge(cell), top, edge(cell + 1), bottom));
         let next_len = vertices
             .len()
             .checked_add(quad.len())
@@ -385,8 +397,7 @@ fn append_slot_vertices(
         vertices
             .try_reserve(quad.len())
             .map_err(|_| ReadoutError::InvalidExtent)?;
-        let [r, g, b, a] = slot.color.map(f32::to_bits);
-        vertices.extend(quad.into_iter().map(|[x, y, u, v]| {
+        vertices.extend(quad.iter().map(|[x, y, u, v]| {
             [
                 x.to_bits(),
                 y.to_bits(),
@@ -399,9 +410,27 @@ fn append_slot_vertices(
                 a,
             ]
         }));
-        left += dx;
     }
     Ok(())
+}
+
+// A monotonic edge function means a logarithmic search is sufficient even
+// when a slot contains millions of logical cells outside its visible area.
+fn visible_cells(cells: Range<u32>, edge: &impl Fn(u32) -> f64, min: f64, max: f64) -> Range<u32> {
+    fn first_true(mut range: Range<u32>, predicate: impl Fn(u32) -> bool) -> u32 {
+        while range.start < range.end {
+            let mid = range.start.midpoint(range.end);
+            if predicate(mid) {
+                range.end = mid;
+            } else {
+                range.start = mid + 1;
+            }
+        }
+        range.start
+    }
+    let start = first_true(cells.clone(), |cell| edge(cell + 1) > min);
+    let end = first_true(start..cells.end, |cell| edge(cell) >= max);
+    start..end
 }
 
 impl ReadoutBatch {
@@ -770,6 +799,42 @@ fn draw_outline(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cell_culling_matches_brute_force_and_scales_logarithmically() {
+        for count in [0_u32, 1, 7, 100] {
+            for dx in [0.01, 0.25, 2.0] {
+                let cells = 11..11 + count;
+                let edge = |i| f64::from(cells.end - i).mul_add(-dx, 1.0);
+                for (min, max) in [
+                    (-2.0, -1.0),
+                    (0.0, 1.0),
+                    (0.24, 0.75),
+                    (0.75, 1.0),
+                    (1.0, 2.0),
+                ] {
+                    let expected: Vec<_> = cells
+                        .clone()
+                        .filter(|&i| edge(i + 1) > min && edge(i) < max)
+                        .collect();
+                    assert_eq!(
+                        visible_cells(cells.clone(), &edge, min, max).collect::<Vec<_>>(),
+                        expected
+                    );
+                }
+            }
+        }
+        let calls = std::cell::Cell::new(0);
+        let edge = |i| {
+            calls.set(calls.get() + 1);
+            f64::from(1_000_000_000_u32 - i).mul_add(-0.25, 1.0)
+        };
+        assert_eq!(
+            visible_cells(0..1_000_000_000, &edge, 0.0, 1.0),
+            999_999_996..1_000_000_000
+        );
+        assert!(calls.get() <= 64);
+    }
 
     #[test]
     fn fontations_readout_rasterizes_distinct_padded_glyphs() {

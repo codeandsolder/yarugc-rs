@@ -533,3 +533,46 @@ fn content_box_clamps_when_insets_exceed_size() {
     );
     assert_rect_approx_eq("content_box", ctx.content_box(), Rect::ZERO);
 }
+
+#[test]
+fn dpi_only_change_recomputes_user_and_content_sized_layout() {
+    use crate::app::{RenderRoot, RenderRootOptions, WindowSizePolicy};
+    use crate::core::{DefaultProperties, WindowEvent};
+    use crate::dpi::PhysicalSize;
+    use std::sync::Arc;
+
+    for (policy, expected) in [
+        (WindowSizePolicy::User, PhysicalSize::new(100, 80)),
+        (WindowSizePolicy::Content, PhysicalSize::new(40, 20)),
+    ] {
+        let widget = NewWidget::new(SizedBox::empty().size(20.px(), 10.px()))
+            .with_props(Dimensions::STRETCH);
+        // Stretch is relevant to the user-sized case only; for content
+        // roots the available size is unconstrained.
+        let mut root = RenderRoot::new(
+            widget,
+            |_| {},
+            RenderRootOptions {
+                default_properties: Arc::new(DefaultProperties::new()),
+                use_system_fonts: false,
+                size_policy: policy,
+                size: PhysicalSize::new(100, 80),
+                scale_factor: 1.0,
+                test_font: None,
+            },
+        );
+        let _ = root.redraw();
+        root.handle_window_event(WindowEvent::Rescale(2.0));
+        assert_eq!(root.size(), expected);
+        let logical_size = root.get_layer_root(0).unwrap().ctx().border_box().size();
+        let expected_logical = if policy == WindowSizePolicy::User {
+            Size::new(50.0, 40.0)
+        } else {
+            Size::new(20.0, 10.0)
+        };
+        assert_eq!(logical_size, expected_logical);
+        let _ = root.redraw();
+        root.handle_window_event(WindowEvent::Rescale(2.0));
+        assert!(!root.needs_rewrite_passes());
+    }
+}

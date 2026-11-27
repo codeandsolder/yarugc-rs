@@ -79,16 +79,17 @@ impl<'a> Layer<'a> {
 /// layer ordering, or surface allocation changes. Texture content can change in place.
 #[derive(Debug)]
 pub struct Composition {
+    device: wgpu::Device,
     vertices: Option<wgpu::Buffer>,
     bindings: Vec<(std::ops::Range<u32>, wgpu::BindGroup)>,
 }
 
-/// A failure to prepare a retained composition.
+/// A failure to prepare or draw a retained composition.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompositionError {
     /// A visible layer or total vertex buffer exceeds the host device's limits.
     InvalidExtent,
-    /// A surface belongs to a different WGPU device.
+    /// A surface or prepared composition belongs to a different WGPU device.
     DifferentDevice,
 }
 
@@ -96,7 +97,7 @@ impl std::fmt::Display for CompositionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::InvalidExtent => "composition exceeds device limits",
-            Self::DifferentDevice => "composition surface belongs to a different device",
+            Self::DifferentDevice => "composition resource belongs to a different device",
         })
     }
 }
@@ -299,15 +300,30 @@ impl Compositor {
                     usage: wgpu::BufferUsages::VERTEX,
                 })
         });
-        Ok(Composition { vertices, bindings })
+        Ok(Composition {
+            device: self.device.clone(),
+            vertices,
+            bindings,
+        })
     }
 
     /// Draw cached layers over the current host frame. The host controls load/store
     /// operations, submission and presentation. The pass must have the full target
-    /// viewport and scissor and match the compositor format.
-    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, composition: &Composition) {
+    /// viewport and scissor, use the same device, and match the compositor format.
+    ///
+    /// # Errors
+    /// Returns an error before modifying the pass if the composition was
+    /// prepared on a different device.
+    pub fn draw(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        composition: &Composition,
+    ) -> Result<(), CompositionError> {
+        if self.device != composition.device {
+            return Err(CompositionError::DifferentDevice);
+        }
         let Some(vertices) = &composition.vertices else {
-            return;
+            return Ok(());
         };
         pass.set_pipeline(&self.pipeline);
         pass.set_vertex_buffer(0, vertices.slice(..));
@@ -315,5 +331,6 @@ impl Compositor {
             pass.set_bind_group(0, binding, &[]);
             pass.draw(range.clone(), 0..1);
         }
+        Ok(())
     }
 }

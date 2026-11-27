@@ -115,22 +115,137 @@ impl Placement {
             ];
             vertex.iter().all(|v| v.is_finite()).then_some(vertex)
         };
-        let mut points = polygon.iter().copied();
-        let Some(first) = points.next().and_then(vertex) else {
-            return Vec::new();
-        };
-        let Some(mut previous) = points.next().and_then(vertex) else {
-            return Vec::new();
-        };
-        let mut result = Vec::with_capacity((polygon.len() - 2) * 3);
-        for point in points {
-            let Some(current) = vertex(point) else {
-                return Vec::new();
-            };
-            result.extend([first, previous, current]);
-            previous = current;
-        }
+        let mut result = Vec::new();
+        triangulate(&polygon, &mut result, vertex, false);
         result
+    }
+}
+
+// Reuse the clipped slot and working buffers for a series of glyph subrectangles.
+// Clip in slot-local space so the cell bounds and culling use the same coordinates.
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Shared with readout internally; public visibility conflicts with unreachable_pub"
+)]
+pub(crate) struct SubrectMesh {
+    transform: Affine,
+    extent: [f64; 2],
+    clip: Vec<Point>,
+    bounds: Rect,
+    polygon: Vec<Point>,
+    scratch: Vec<Point>,
+    vertices: Vec<[f32; 4]>,
+}
+
+impl SubrectMesh {
+    pub(crate) fn new(placement: &Placement, extent: [u32; 2]) -> Option<Self> {
+        let extent = extent.map(f64::from);
+        let [width, height] = extent;
+        let transform = placement.transform;
+        let determinant = transform.determinant();
+        if determinant == 0.0 || !determinant.is_finite() {
+            return None;
+        }
+        let inverse = transform.inverse();
+        if !inverse.is_finite() {
+            return None;
+        }
+        let mut clip = intersect_rect(
+            placement.clip.clone(),
+            Affine::IDENTITY,
+            Rect::new(0.0, 0.0, width, height),
+        );
+        for p in &mut clip {
+            *p = inverse * *p;
+        }
+        if determinant < 0.0 {
+            clip.reverse();
+        }
+        if !has_positive_area(&clip) {
+            return None;
+        }
+        let first = *clip.first()?;
+        let bounds = clip
+            .iter()
+            .copied()
+            .fold(Rect::from_points(first, first), |bounds, point| {
+                bounds.union_pt(point)
+            });
+        Some(Self {
+            transform,
+            extent,
+            clip,
+            bounds,
+            polygon: Vec::new(),
+            scratch: Vec::new(),
+            vertices: Vec::new(),
+        })
+    }
+
+    pub(crate) const fn bounds(&self) -> Rect {
+        self.bounds
+    }
+
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "GPU vertex coordinates are f32"
+    )]
+    pub(crate) fn vertices(&mut self, rect: Rect) -> &[[f32; 4]] {
+        self.vertices.clear();
+        let Some(edges) = corners(Affine::IDENTITY, rect) else {
+            return &self.vertices;
+        };
+        self.polygon.clear();
+        self.polygon.extend_from_slice(&self.clip);
+        intersect_in_place(&mut self.polygon, &edges, &mut self.scratch);
+        let [width, height] = self.extent;
+        let transform = self.transform;
+        let vertex = |p: Point| {
+            let target = transform * p;
+            let v = [
+                (2.0 * target.x / width - 1.0) as f32,
+                (1.0 - 2.0 * target.y / height) as f32,
+                ((p.x - rect.x0) / rect.width()) as f32,
+                ((p.y - rect.y0) / rect.height()) as f32,
+            ];
+            v.iter().all(|v| v.is_finite()).then_some(v)
+        };
+        triangulate(
+            &self.polygon,
+            &mut self.vertices,
+            vertex,
+            transform.determinant() < 0.0,
+        );
+        &self.vertices
+    }
+}
+
+fn triangulate(
+    polygon: &[Point],
+    vertices: &mut Vec<[f32; 4]>,
+    vertex: impl Fn(Point) -> Option<[f32; 4]>,
+    reverse: bool,
+) {
+    vertices.clear();
+    let mut points = polygon.iter().copied();
+    let Some(first) = points.next().and_then(&vertex) else {
+        return;
+    };
+    let Some(mut previous) = points.next().and_then(&vertex) else {
+        return;
+    };
+    vertices.reserve((polygon.len() - 2) * 3);
+    for point in points {
+        let Some(current) = vertex(point) else {
+            vertices.clear();
+            return;
+        };
+        if reverse {
+            vertices.extend([first, current, previous]);
+        } else {
+            vertices.extend([first, previous, current]);
+        }
+        previous = current;
     }
 }
 
@@ -262,10 +377,16 @@ fn push_distinct(points: &mut Vec<Point>, point: Point) {
 // Unlike an axis-aligned bounding box this preserves rotated and reflected clips.
 // Reuse the two buffers across clipping planes rather than allocate per edge.
 fn intersect(mut subject: Vec<Point>, clip: &[Point]) -> Vec<Point> {
+    let mut scratch = Vec::new();
+    intersect_in_place(&mut subject, clip, &mut scratch);
+    subject
+}
+
+fn intersect_in_place(subject: &mut Vec<Point>, clip: &[Point], output: &mut Vec<Point>) {
     if subject.is_empty() || clip.len() < 3 {
-        return Vec::new();
+        subject.clear();
+        return;
     }
-    let mut output = Vec::with_capacity(subject.len().saturating_add(1));
     for (a, b) in clip
         .iter()
         .copied()
@@ -278,13 +399,15 @@ fn intersect(mut subject: Vec<Point>, clip: &[Point]) -> Vec<Point> {
         };
         let mut previous_distance = distance(previous);
         if !previous_distance.is_finite() {
-            return Vec::new();
+            subject.clear();
+            return;
         }
         output.clear();
         for current in subject.iter().copied() {
             let current_distance = distance(current);
             if !current_distance.is_finite() {
-                return Vec::new();
+                subject.clear();
+                return;
             }
             // Strictly crossing an edge creates a new vertex. A vertex exactly
             // on the edge is already included by the ordinary inside test.
@@ -297,12 +420,13 @@ fn intersect(mut subject: Vec<Point>, clip: &[Point]) -> Vec<Point> {
                 let t = p / (p - c);
                 let crossing = previous + (current - previous) * t;
                 if !crossing.is_finite() {
-                    return Vec::new();
+                    subject.clear();
+                    return;
                 }
-                push_distinct(&mut output, crossing);
+                push_distinct(output, crossing);
             }
             if current_distance >= 0.0 {
-                push_distinct(&mut output, current);
+                push_distinct(output, current);
             }
             previous = current;
             previous_distance = current_distance;
@@ -310,17 +434,65 @@ fn intersect(mut subject: Vec<Point>, clip: &[Point]) -> Vec<Point> {
         if output.len() > 1 && output.first() == output.last() {
             output.pop();
         }
-        std::mem::swap(&mut subject, &mut output);
+        std::mem::swap(subject, output);
     }
-    if !has_positive_area(&subject) {
+    if !has_positive_area(subject) {
         subject.clear();
     }
-    subject
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reusable_subrect_mesh_preserves_visible_area_and_uvs() {
+        let extent = [100, 100];
+        for transform in [
+            Affine::new([45.0, 0.0, 0.0, 38.0, -8.0, 8.0]),
+            Affine::translate((50.0, 50.0))
+                * Affine::rotate(0.7)
+                * Affine::scale_non_uniform(80.0, 35.0),
+            Affine::translate((50.0, 50.0))
+                * Affine::rotate(0.7)
+                * Affine::scale_non_uniform(-80.0, 35.0),
+            Affine::new([60.0, 18.0, 15.0, 40.0, 10.0, 30.0]),
+        ] {
+            let placement =
+                Placement::from_transform(transform).clipped(Rect::new(0.0, 12.0, 72.0, 70.0));
+            let mut mesh = SubrectMesh::new(&placement, extent).unwrap();
+            let area = |vertices: &[[f32; 4]]| {
+                vertices
+                    .chunks_exact(3)
+                    .map(|tri| {
+                        let [a, b, c] = [tri[0], tri[1], tri[2]]
+                            .map(|v| Point::new(f64::from(v[0]), f64::from(v[1])));
+                        (b - a).cross(c - a)
+                    })
+                    .sum::<f64>()
+            };
+            for i in -3..12 {
+                let left = f64::from(i) / 10.0;
+                let rect = Rect::new(left, -0.1, left + 0.1, 0.85);
+                let reference = placement.subrect(rect).vertices(extent);
+                let actual = mesh.vertices(rect);
+                assert!((area(actual) - area(&reference)).abs() < 1e-6);
+                for &[x, y, u, v] in actual {
+                    assert!((-1e-5..=1.0 + 1e-5).contains(&u));
+                    assert!((-1e-5..=1.0 + 1e-5).contains(&v));
+                    let target = transform
+                        * Point::new(
+                            f64::from(u).mul_add(rect.width(), rect.x0),
+                            f64::from(v).mul_add(rect.height(), rect.y0),
+                        );
+                    assert!((target.x - (f64::from(x) + 1.0) * 50.0).abs() < 1e-4);
+                    assert!((target.y - (1.0 - f64::from(y)) * 50.0).abs() < 1e-4);
+                }
+            }
+        }
+        let hidden = Placement::rect(Rect::new(200.0, 0.0, 210.0, 10.0));
+        assert!(SubrectMesh::new(&hidden, extent).is_none());
+    }
 
     #[test]
     fn viewport_clipping_preserves_uvs() {
