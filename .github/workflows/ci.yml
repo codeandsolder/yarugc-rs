@@ -11,6 +11,7 @@ env:
     --exclude xilem
     --exclude xilem_masonry
     --exclude placehero
+    --exclude demo_support
     --exclude yarugc
   # Only some of our examples support Android (primarily due to extra required boilerplate).
   ANDROID_TARGETS: >-
@@ -59,7 +60,7 @@ jobs:
     uses: codeandsolder/rust-skills2/.github/workflows/strict-rust.yml@07359b7cf4cdb4af4fe74d78903e24db5efd7e7a # main
     with:
       rust-targets: wasm32-unknown-unknown
-      cargo-args: --locked --workspace --all-targets --all-features --target wasm32-unknown-unknown --exclude masonry_testing --exclude masonry --exclude masonry_winit --exclude xilem --exclude xilem_masonry --exclude placehero --exclude yarugc
+      cargo-args: --locked --workspace --all-targets --all-features --target wasm32-unknown-unknown --exclude masonry_testing --exclude masonry --exclude masonry_winit --exclude xilem --exclude xilem_masonry --exclude placehero --exclude demo_support --exclude yarugc
       allow-test-panics: true
       dependency-quality: false
 

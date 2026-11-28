@@ -25,6 +25,7 @@ members = [
     "xilem_web/web_examples/open_and_save_file",
     "tree_arena",
     "placehero",
+    "demo_support",
     "include_doc_path",
 ]
 

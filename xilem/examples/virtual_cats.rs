@@ -5,18 +5,16 @@
 //!
 //! Uses the same dataset as the `http_cats` example.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use masonry::core::ArcStr;
 use masonry::layout::{AsUnit, Dim, UnitPoint};
 use masonry::properties::{LineBreaking, Padding};
 use winit::dpi::LogicalSize;
-use xilem::RunError;
 use xilem::core::fork;
 use xilem::core::one_of::{Either, OneOf, OneOf3};
 use xilem::palette::css::{BLACK, WHITE};
-use xilem::peniko::{Blob, ImageAlphaType, ImageData, ImageFormat};
+use xilem::peniko::ImageData;
 use xilem::style::Style as _;
 use xilem::view::{
     ObjectFit, ZStackExt, flex_col, image, label, prose, spinner, virtual_scroll, zstack,
@@ -28,6 +26,7 @@ use xilem::{
 /// The main state of the application.
 struct VirtualCats {
     statuses: Vec<Status>,
+    client: demo_support::Client,
 }
 
 #[derive(Debug)]
@@ -62,12 +61,18 @@ impl VirtualCats {
             // lot more complicated currently.
             // Note that if this item scrolls offscreen, the ongoing load will be cancelled.
             Some(xilem::view::task_raw(
-                move |proxy, _| {
+                move |proxy, state: &mut Self| {
+                    let client = state.client.clone();
                     async move {
                         let url = format!("https://http.cat/{code}");
                         // Add an artificial delay to show how variable sizes work
                         tokio::time::sleep(Duration::from_millis(300)).await;
-                        let result = image_from_url(&url).await;
+                        let result = demo_support::fetch_image(
+                            &client,
+                            &url,
+                            demo_support::ImagePolicy::Illustration,
+                        )
+                        .await;
                         drop(proxy.message(result));
                     }
                 },
@@ -133,28 +138,10 @@ impl VirtualCats {
     }
 }
 
-/// Load the [`ImageData`] from the given url.
-///
-/// N.B. This is functionality shared with `http_cats`.
-async fn image_from_url(url: &str) -> anyhow::Result<ImageData> {
-    let response = reqwest::get(url).await?.error_for_status()?;
-    let bytes = response.bytes().await?;
-    let image = image::load_from_memory(&bytes)?.into_rgba8();
-    let width = image.width();
-    let height = image.height();
-    let data = image.into_vec();
-    Ok(ImageData {
-        data: Blob::new(Arc::new(data)),
-        format: ImageFormat::Rgba8,
-        alpha_type: ImageAlphaType::Alpha,
-        width,
-        height,
-    })
-}
-
-fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
+fn run(event_loop: EventLoopBuilder) -> anyhow::Result<()> {
     let data = VirtualCats {
         statuses: Status::parse_file(),
+        client: demo_support::client("Xilem HTTP cats")?,
     };
 
     let app = Xilem::new_simple(
@@ -164,7 +151,8 @@ fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
             .with_min_inner_size(LogicalSize::new(200., 200.)),
     );
 
-    app.run_in(event_loop)
+    app.run_in(event_loop)?;
+    Ok(())
 }
 
 impl Status {
@@ -198,6 +186,6 @@ const STATUS_CODES_CSV: &str = include_str!(concat!(
 ));
 
 // TODO: This example doesn't support Android because the virtual scroll component doesn't have gesture support.
-fn main() -> Result<(), RunError> {
+fn main() -> anyhow::Result<()> {
     run(EventLoop::with_user_event())
 }

@@ -1,0 +1,19 @@
+[package]
+name = "demo_support"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared bounded HTTP and image loading for native Xilem demos."
+publish = false
+
+[dependencies]
+anyhow = "1.0.102"
+image = { workspace = true, features = ["jpeg", "png"] }
+peniko.workspace = true
+reqwest.workspace = true
+tokio = { version = "1.50.0", features = ["rt", "sync"] }
+
+[lints]
+workspace = true
