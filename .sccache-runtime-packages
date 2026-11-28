@@ -1,0 +1,11 @@
+# Native GUI build and headless rendering tests
+libasound2-dev
+libudev-dev
+libfontconfig-dev
+xvfb
+xauth
+libegl-mesa0
+libgl1-mesa-dri
+libxcb-xfixes0-dev
+libxkbcommon-x11-0
+mesa-vulkan-drivers
