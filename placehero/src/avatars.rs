@@ -19,6 +19,7 @@ use xilem::{Blob, ImageFormat, ViewCtx, WidgetView};
 
 #[derive(Debug)]
 struct AvatarRequest {
+    client: reqwest::Client,
     avatar_url: String,
 }
 
@@ -37,6 +38,7 @@ enum AvatarState {
 
 #[derive(Debug)]
 pub(crate) struct Avatars {
+    client: reqwest::Client,
     icons: HashMap<String, AvatarState>,
     requester: Option<Sender<AvatarRequest>>,
     // TODO: lru: ...
@@ -66,6 +68,7 @@ impl Avatars {
                     && let Some(requester) = this.requester.as_ref()
                     && requester
                         .try_send(AvatarRequest {
+                            client: this.client.clone(),
                             avatar_url: url.clone(),
                         })
                         .is_ok()
@@ -102,17 +105,17 @@ impl Avatars {
         Action: 'static,
     {
         provides(
-            |_| Self {
+            move |_| Self {
+                client: client.clone(),
                 icons: HashMap::default(),
                 requester: None,
             },
-            fork(child, Self::worker(client)),
+            fork(child, Self::worker()),
         )
     }
 
-    fn worker<State, Action>(
-        client: reqwest::Client,
-    ) -> impl View<State, Action, ViewCtx, Element = NoElement> + use<State, Action>
+    fn worker<State, Action>()
+    -> impl View<State, Action, ViewCtx, Element = NoElement> + use<State, Action>
     where
         State: 'static,
         Action: 'static,
@@ -134,21 +137,17 @@ impl Avatars {
                 },
                 env_worker(
                     std::num::NonZeroUsize::MIN.saturating_add(63),
-                    move |proxy, rx: Receiver<AvatarRequest>| {
-                        let client = client.clone();
+                    |proxy, rx: Receiver<AvatarRequest>| {
                         process_requests(
                             proxy,
                             rx,
                             std::num::NonZeroUsize::MIN.saturating_add(7),
-                            move |request| {
-                                let client = client.clone();
-                                async move {
-                                    let url = request.avatar_url;
-                                    let result = image_from_url(&client, &url)
-                                        .await
-                                        .map_err(|err| err.to_string());
-                                    AvatarResponse { url, result }
-                                }
+                            |request| async move {
+                                let url = request.avatar_url;
+                                let result = image_from_url(&request.client, &url)
+                                    .await
+                                    .map_err(|err| err.to_string());
+                                AvatarResponse { url, result }
                             },
                         )
                     },

@@ -40,7 +40,7 @@ impl Mastodon {
         Ok(Self { client, base })
     }
 
-    pub(crate) fn client(&self) -> &Client {
+    pub(crate) const fn client(&self) -> &Client {
         &self.client
     }
 
