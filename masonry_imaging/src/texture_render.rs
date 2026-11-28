@@ -527,7 +527,7 @@ mod hybrid {
             frame: PreparedFrame<'_>,
         ) -> Result<(), Error> {
             let renderer = self.inner.get_or_try_init(device_queue_key(target), || {
-                Ok(new_target_renderer(
+                Ok::<_, Error>(new_target_renderer(
                     target.device.clone(),
                     target.queue.clone(),
                 ))
