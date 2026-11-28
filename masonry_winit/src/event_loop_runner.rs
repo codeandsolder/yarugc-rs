@@ -1206,9 +1206,7 @@ impl MasonryState {
             label: Some("Surface Blit"),
         });
         surface.blitter.copy(
-            device,
             &mut encoder,
-            &surface.target_view,
             &surface_texture
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default()),

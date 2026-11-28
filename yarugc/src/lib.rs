@@ -13,10 +13,11 @@ mod readout;
 #[cfg(not(target_arch = "wasm32"))]
 mod window;
 
-pub use compositor::{AlphaMode, Composition, CompositionError, Compositor, Layer, Surface};
+pub use compositor::{Composition, CompositionError, Compositor, Layer, Surface};
 pub use geometry::{Placement, SlotGeometry};
 pub use masonry_core;
 pub use masonry_imaging;
+pub use masonry_imaging::AlphaMode;
 #[cfg(not(target_arch = "wasm32"))]
 pub use readout::{ReadoutBatch, ReadoutError, ReadoutRenderer, ReadoutSlot, ReadoutStyle};
 #[cfg(not(target_arch = "wasm32"))]

@@ -76,6 +76,15 @@ pub use imaging::render::ImageRenderer;
 #[cfg(not(target_arch = "wasm32"))]
 pub use imaging_wgpu::TextureRenderer;
 
+/// Alpha representation of a GPU texture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AlphaMode {
+    /// RGB already multiplied by alpha.
+    Premultiplied,
+    /// RGB independent of alpha.
+    Straight,
+}
+
 /// A Masonry overlay layer ready to be composited into window space.
 #[derive(Clone, Copy)]
 pub struct Layer<'a> {

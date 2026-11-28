@@ -5,14 +5,7 @@ use crate::Placement;
 use masonry_core::kurbo::Rect;
 use wgpu::util::DeviceExt;
 
-/// Alpha representation of a retained RGBA8 texture.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AlphaMode {
-    /// RGB already multiplied by alpha.
-    Premultiplied,
-    /// RGB independent of alpha (Vello texture output).
-    Straight,
-}
+use masonry_imaging::AlphaMode;
 
 /// Persistent RGBA8 content, in physical pixels.
 #[derive(Debug)]

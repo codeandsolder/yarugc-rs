@@ -10,11 +10,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use wgpu::util::{TextureBlitter, TextureBlitterBuilder};
 use wgpu::{
-    self, BlendComponent, BlendFactor, BlendState, CompositeAlphaMode, Device, Instance,
-    MemoryBudgetThresholds, MemoryHints, PresentMode, Surface, SurfaceConfiguration, Texture,
-    TextureFormat, TextureUsages, TextureView,
+    self, CompositeAlphaMode, Device, Instance, MemoryBudgetThresholds, MemoryHints, PresentMode,
+    Surface, SurfaceConfiguration, Texture, TextureFormat, TextureUsages, TextureView,
 };
 use winit::event_loop::OwnedDisplayHandle;
 
@@ -22,14 +20,7 @@ use crate::app_driver::{GpuDeviceId, WgpuLimits};
 use crate::event_loop_runner::{EventLoopProxy, MasonryUserEvent};
 use masonry_imaging::texture_render::{Backend, Renderer};
 
-const PREMUL_BLEND_STATE: BlendState = BlendState {
-    alpha: BlendComponent::REPLACE,
-    color: BlendComponent {
-        src_factor: BlendFactor::SrcAlpha,
-        dst_factor: BlendFactor::Zero,
-        operation: wgpu::BlendOperation::Add,
-    },
-};
+use masonry_imaging::AlphaMode;
 
 #[derive(Debug)]
 pub(crate) enum RenderSurfaceError {
@@ -191,43 +182,10 @@ impl RenderContext {
             .find(|it| matches!(it, TextureFormat::Rgba8Unorm | TextureFormat::Bgra8Unorm))
             .ok_or(RenderSurfaceError::UnsupportedSurfaceFormat)?;
 
-        // TODO: check if the window is transparent then set alpha_mode accordingly
-        // also, Opaque mode may help in saving power.
-        // blocked on winit not exposing a way to check for transparency
-        let (alpha_mode, blitter) = if capabilities
-            .alpha_modes
-            .contains(&CompositeAlphaMode::PostMultiplied)
-        {
-            (
-                CompositeAlphaMode::PostMultiplied,
-                TextureBlitter::new(&device_handle.device, format),
-            )
-        } else if capabilities
-            .alpha_modes
-            .contains(&CompositeAlphaMode::PreMultiplied)
-        {
-            (
-                CompositeAlphaMode::PreMultiplied,
-                TextureBlitterBuilder::new(&device_handle.device, format)
-                    .blend_state(PREMUL_BLEND_STATE)
-                    .build(),
-            )
-        } else {
-            // TODO: check if the only available mode is Inherit then log info that postmultipled blit is being used
-            // TODO: check if non-opaque base color is used on unsupported device then warn
-            let texture_blitter =
-                if cfg!(windows) && device_handle.adapter.get_info().name.contains("AMD") {
-                    tracing::info!(
-                        "on Windows with AMD GPUs use premultiplied blitting even on opaque surface"
-                    );
-                    TextureBlitterBuilder::new(&device_handle.device, format)
-                        .blend_state(PREMUL_BLEND_STATE)
-                        .build()
-                } else {
-                    TextureBlitter::new(&device_handle.device, format)
-                };
-            (CompositeAlphaMode::Auto, texture_blitter)
-        };
+        let source_alpha = self.backend.output_alpha();
+        let amd_windows = cfg!(windows) && device_handle.adapter.get_info().name.contains("AMD");
+        let (alpha_mode, target_alpha) =
+            select_surface_alpha(&capabilities.alpha_modes, source_alpha, amd_windows);
 
         let config = SurfaceConfiguration {
             usage: TextureUsages::RENDER_ATTACHMENT,
@@ -242,6 +200,13 @@ impl RenderContext {
         };
         let (target_texture, target_view) = create_targets(width, height, &device_handle.device);
 
+        let blitter = SurfaceBlitter::new(
+            &device_handle.device,
+            format,
+            &target_view,
+            source_alpha,
+            target_alpha,
+        );
         let mut surface = RenderSurface {
             surface,
             config,
@@ -265,6 +230,9 @@ impl RenderContext {
         // especially important on metal.
         surface.target_texture = texture;
         surface.target_view = view;
+        surface
+            .blitter
+            .set_source(&self.devices[&surface.dev_id].device, &surface.target_view);
         surface.config.width = width;
         surface.config.height = height;
         self.configure_surface(surface);
@@ -399,6 +367,146 @@ impl RenderContext {
     }
 }
 
+// Prefer a representation the compositor accepts directly. The automatic
+// mode preserves the host's existing Windows/AMD premultiplication policy.
+fn select_surface_alpha(
+    supported: &[CompositeAlphaMode],
+    source: AlphaMode,
+    amd_windows: bool,
+) -> (CompositeAlphaMode, AlphaMode) {
+    let preferred = match source {
+        AlphaMode::Straight => CompositeAlphaMode::PostMultiplied,
+        AlphaMode::Premultiplied => CompositeAlphaMode::PreMultiplied,
+    };
+    if supported.contains(&preferred) {
+        (preferred, source)
+    } else if supported.contains(&CompositeAlphaMode::PostMultiplied) {
+        (CompositeAlphaMode::PostMultiplied, AlphaMode::Straight)
+    } else if supported.contains(&CompositeAlphaMode::PreMultiplied) {
+        (CompositeAlphaMode::PreMultiplied, AlphaMode::Premultiplied)
+    } else {
+        let target = if amd_windows {
+            AlphaMode::Premultiplied
+        } else {
+            AlphaMode::Straight
+        };
+        (CompositeAlphaMode::Auto, target)
+    }
+}
+
+/// One-to-one surface blit. Bind the intermediate texture once per allocation;
+/// source and destination dimensions are identical by construction.
+#[derive(Debug)]
+pub(crate) struct SurfaceBlitter {
+    layout: wgpu::BindGroupLayout,
+    binding: wgpu::BindGroup,
+    pipeline: wgpu::RenderPipeline,
+}
+
+impl SurfaceBlitter {
+    fn new(
+        device: &Device,
+        format: TextureFormat,
+        source: &TextureView,
+        source_alpha: AlphaMode,
+        target_alpha: AlphaMode,
+    ) -> Self {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Masonry surface source"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            }],
+        });
+        let binding = Self::bind_source(device, &layout, source);
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Masonry surface presentation layout"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let shader = device.create_shader_module(wgpu::include_wgsl!("surface_blit.wgsl"));
+        let entry_point = match (source_alpha, target_alpha) {
+            (AlphaMode::Straight, AlphaMode::Premultiplied) => "premultiply",
+            (AlphaMode::Premultiplied, AlphaMode::Straight) => "unpremultiply",
+            _ => "copy",
+        };
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Masonry surface presentation"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some(entry_point),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        Self {
+            layout,
+            binding,
+            pipeline,
+        }
+    }
+
+    fn bind_source(
+        device: &Device,
+        layout: &wgpu::BindGroupLayout,
+        source: &TextureView,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Masonry surface source binding"),
+            layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(source),
+            }],
+        })
+    }
+
+    fn set_source(&mut self, device: &Device, source: &TextureView) {
+        self.binding = Self::bind_source(device, &self.layout, source);
+    }
+
+    pub(crate) fn copy(&self, encoder: &mut wgpu::CommandEncoder, target: &TextureView) {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Masonry surface presentation"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..Default::default()
+        });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.binding, &[]);
+        pass.draw(0..3, 0..1);
+    }
+}
+
 fn supports_present_mode(supported: &[PresentMode], mode: PresentMode) -> bool {
     matches!(mode, PresentMode::AutoVsync | PresentMode::AutoNoVsync) || supported.contains(&mode)
 }
@@ -453,7 +561,7 @@ pub(crate) struct RenderSurface<'s> {
     pub format: TextureFormat,
     pub target_texture: Texture,
     pub target_view: TextureView,
-    pub blitter: TextureBlitter,
+    pub blitter: SurfaceBlitter,
     pub resizing: bool,
     pub needs_reconfigure: bool,
 }
@@ -478,6 +586,37 @@ impl std::fmt::Debug for RenderSurface<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn presentation_alpha_prefers_matching_representation() {
+        use AlphaMode::{Premultiplied, Straight};
+        use CompositeAlphaMode::{Auto, PostMultiplied, PreMultiplied};
+        let both = [PostMultiplied, PreMultiplied];
+        assert_eq!(
+            select_surface_alpha(&both, Premultiplied, false),
+            (PreMultiplied, Premultiplied)
+        );
+        assert_eq!(
+            select_surface_alpha(&both, Straight, false),
+            (PostMultiplied, Straight)
+        );
+        assert_eq!(
+            select_surface_alpha(&[PostMultiplied], Premultiplied, false),
+            (PostMultiplied, Straight)
+        );
+        assert_eq!(
+            select_surface_alpha(&[PreMultiplied], Straight, false),
+            (PreMultiplied, Premultiplied)
+        );
+        assert_eq!(
+            select_surface_alpha(&[Auto], Premultiplied, true),
+            (Auto, Premultiplied)
+        );
+        assert_eq!(
+            select_surface_alpha(&[Auto], Premultiplied, false),
+            (Auto, Straight)
+        );
+    }
 
     #[test]
     fn presentation_fallback_preserves_supported_preferences_and_tearing_policy() {

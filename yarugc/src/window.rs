@@ -9,7 +9,7 @@ use masonry_core::app::{RenderRoot, RenderRootOptions, RenderRootSignal, VisualL
 use masonry_core::core::{NewWidget, Widget};
 use masonry_core::imaging::record::Scene;
 use masonry_imaging::PreparedFrame;
-use masonry_imaging::texture_render::{Backend, RenderTarget, Renderer};
+use masonry_imaging::texture_render::{RenderTarget, Renderer};
 use peniko::Color;
 
 use crate::{AlphaMode, Compositor, Surface};
@@ -141,10 +141,7 @@ impl CachedWindow {
         if compositor.device() != device {
             return Err(RefreshError::DifferentDevice);
         }
-        let alpha_mode = match renderer.backend() {
-            Backend::Vello => AlphaMode::Straight,
-            Backend::VelloHybrid | Backend::Skia => AlphaMode::Premultiplied,
-        };
+        let alpha_mode = renderer.backend().output_alpha();
         let size = self.root.size();
         let extent = [size.width, size.height];
         let needs_rewrite = self.root.needs_rewrite_passes();

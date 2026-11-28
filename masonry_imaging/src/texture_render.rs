@@ -8,7 +8,7 @@
 
 use wgpu;
 
-use crate::PreparedFrame;
+use crate::{AlphaMode, PreparedFrame};
 
 /// GPU target that Masonry content should be rendered into.
 #[derive(Clone, Copy, Debug)]
@@ -45,6 +45,15 @@ impl Backend {
             Self::Vello => "imaging_vello",
             Self::VelloHybrid => "imaging_vello_hybrid",
             Self::Skia => "imaging_skia",
+        }
+    }
+
+    /// Alpha representation of this backend's texture output.
+    #[must_use = "Use the output alpha representation when composing or presenting textures."]
+    pub const fn output_alpha(self) -> AlphaMode {
+        match self {
+            Self::Vello => AlphaMode::Straight,
+            Self::VelloHybrid | Self::Skia => AlphaMode::Premultiplied,
         }
     }
 
