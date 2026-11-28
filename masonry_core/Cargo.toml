@@ -29,7 +29,7 @@ parley.workspace = true
 skrifa.workspace = true
 peniko.workspace = true
 smallvec.workspace = true
-tracing = { workspace = true, features = ["default"] }
+tracing = { workspace = true, features = ["std"] }
 tree_arena.workspace = true
 ui-events.workspace = true
 

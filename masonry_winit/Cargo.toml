@@ -32,7 +32,7 @@ masonry_core.workspace = true
 parley = { workspace = true, features = ["system"] }
 masonry_diagnostics = { workspace = true, optional = true }
 winit.workspace = true
-tracing = { workspace = true, features = ["default"] }
+tracing = { workspace = true, features = ["std"] }
 tracing-tracy = { version = "0.11.4", optional = true }
 ui-events-winit.workspace = true
 pollster = "0.4.0"

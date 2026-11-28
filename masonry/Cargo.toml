@@ -26,7 +26,7 @@ accesskit.workspace = true
 masonry_core.workspace = true
 masonry_testing = { workspace = true, optional = true, default-features = false }
 smallvec.workspace = true
-tracing = { workspace = true, features = ["default"] }
+tracing = { workspace = true, features = ["std"] }
 include_doc_path.workspace = true
 resvg = { workspace = true, optional = true }
 understory_virtual_list = "0.1.2"
