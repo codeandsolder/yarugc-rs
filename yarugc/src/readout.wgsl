@@ -30,7 +30,12 @@ struct VertexOut {
 @vertex
 fn vs(@location(0) position: vec2<f32>, @location(1) uv: vec2<f32>,
       @location(2) cell: u32, @location(3) color: vec4<f32>) -> VertexOut {
-    let glyph = glyph_table[glyph_ids[cell]];
+    let id = glyph_ids[cell];
+    let glyph = glyph_table[id];
+    if id == 0u || any(glyph.extent <= vec2<f32>(0.0)) {
+        // All vertices of an empty cell are outside the viewport.
+        return VertexOut(vec4(2.0, 2.0, 0.0, 1.0), vec2(0.0), vec2(0.0), vec2(0.0), 0u, color);
+    }
     return VertexOut(vec4(position, 0.0, 1.0), uv - glyph.offset, glyph.origin, glyph.extent, glyph.page, color);
 }
 
@@ -38,9 +43,10 @@ fn vs(@location(0) position: vec2<f32>, @location(1) uv: vec2<f32>,
 fn fs(in: VertexOut) -> @location(0) vec4<f32> {
     let texel = in.uv;
     if any(texel < vec2<f32>(0.0)) || any(texel >= in.atlas_extent) {
-        return vec4<f32>(0.0);
+        discard;
     }
     let coverage = sample_atlas(in.atlas_page, in.atlas_origin + texel);
     let alpha = coverage * in.color.a;
+    if alpha == 0.0 { discard; }
     return vec4(in.color.rgb * alpha, alpha);
 }

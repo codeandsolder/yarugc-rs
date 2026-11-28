@@ -99,6 +99,7 @@ pub struct ReadoutRenderer {
     glyphs: Arc<GlyphMap>,
     queue: wgpu::Queue,
     cell_size: [f32; 2],
+    ink: Rect,
     atlas: PreparedOutlineGlyphs,
     glyph_table: wgpu::Buffer,
     sampler: wgpu::Sampler,
@@ -270,6 +271,7 @@ impl ReadoutRenderer {
             )
             .map_err(|error| ReadoutError::Atlas(error.to_string()))?;
         let (cell_size, table) = atlas_layout(&metrics, style, &atlas, &limits)?;
+        let ink = ink_envelope(cell_size, &table);
         let glyph_table = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("yarugc shared glyph metadata"),
             contents: bytemuck::cast_slice(&table),
@@ -286,6 +288,7 @@ impl ReadoutRenderer {
             glyphs: Arc::new(GlyphMap::new(metrics.glyphs)),
             queue: queue.clone(),
             cell_size,
+            ink,
             atlas,
             glyph_table,
             sampler,
@@ -342,6 +345,7 @@ impl ReadoutRenderer {
                 &mut vertices,
                 slot,
                 self.cell_size,
+                self.ink,
                 extent,
                 start_u32..end_u32,
                 limits.max_buffer_size,
@@ -426,10 +430,15 @@ impl ReadoutRenderer {
     }
 }
 
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "GPU UV coordinates are f32; the ink envelope is bounded by the validated cell size."
+)]
 fn append_slot_vertices(
     vertices: &mut Vec<[u32; 9]>,
     slot: &ReadoutSlot,
     cell_size: [f32; 2],
+    ink: Rect,
     extent: [u32; 2],
     cells: Range<u32>,
     max_buffer_size: u64,
@@ -443,12 +452,16 @@ fn append_slot_vertices(
     if !dx.is_finite() || !dy.is_finite() || dx <= 0.0 || dy <= 0.0 {
         return Err(ReadoutError::InvalidExtent);
     }
+    if ink.width() <= 0.0 || ink.height() <= 0.0 || slot.color[3] == 0.0 {
+        return Ok(());
+    }
     let Some(mut mesh) = SubrectMesh::new(slot.geometry.placement(), extent) else {
         return Ok(());
     };
     let bounds = mesh.bounds();
-    let bottom = top + dy;
-    if bottom <= bounds.y0 || top >= bounds.y1 {
+    let ink_top = (ink.y0 / cell_h).mul_add(dy, top);
+    let ink_bottom = (ink.y1 / cell_h).mul_add(dy, top);
+    if ink_bottom <= bounds.y0 || ink_top >= bounds.y1 {
         return Ok(());
     }
     // Compute every boundary from the right edge, avoiding cumulative error.
@@ -457,7 +470,10 @@ fn append_slot_vertices(
     let visible = visible_cells(cells.clone(), &edge, bounds.x0, bounds.x1);
     let [r, g, b, a] = slot.color.map(f32::to_bits);
     for cell in visible {
-        let quad = mesh.vertices(Rect::new(edge(cell), top, edge(cell + 1), bottom));
+        let left = edge(cell);
+        let ink_left = (ink.x0 / cell_w).mul_add(dx, left);
+        let ink_right = (ink.x1 / cell_w).mul_add(dx, left);
+        let quad = mesh.vertices(Rect::new(ink_left, ink_top, ink_right, ink_bottom));
         let next_len = vertices
             .len()
             .checked_add(quad.len())
@@ -473,8 +489,8 @@ fn append_slot_vertices(
             [
                 x.to_bits(),
                 y.to_bits(),
-                (u * cell_size[0]).to_bits(),
-                (v * cell_size[1]).to_bits(),
+                (f64::from(*u).mul_add(ink.width(), ink.x0) as f32).to_bits(),
+                (f64::from(*v).mul_add(ink.height(), ink.y0) as f32).to_bits(),
                 cell,
                 r,
                 g,
@@ -823,9 +839,63 @@ fn atlas_layout(
     Ok((cell_size, table))
 }
 
+// Every glyph uses the same fixed cell and its own ink rectangle. The union
+// is a conservative layout-time bound, independent of the current glyph ID.
+// A one-texel guard keeps newly triangulated edges outside the sampled ink,
+// including fractional transformed placements. Never extend beyond the cell.
+fn ink_envelope(cell_size: [f32; 2], table: &[[u32; 8]]) -> Rect {
+    let cell = Rect::new(0.0, 0.0, f64::from(cell_size[0]), f64::from(cell_size[1]));
+    let mut ink: Option<Rect> = None;
+    for glyph in table.iter().skip(1) {
+        let [width, height, x, y] =
+            [glyph[2], glyph[3], glyph[4], glyph[5]].map(|bits| f64::from(f32::from_bits(bits)));
+        if width <= 0.0 || height <= 0.0 {
+            continue;
+        }
+        let bounds = Rect::new(x - 1.0, y - 1.0, x + width + 1.0, y + height + 1.0).intersect(cell);
+        if bounds.width() > 0.0 && bounds.height() > 0.0 {
+            ink = Some(ink.map_or(bounds, |previous| previous.union(bounds)));
+        }
+    }
+    ink.unwrap_or(Rect::ZERO)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ink_envelope_contains_every_glyph_with_guard_and_cell_clipping() {
+        let glyph = |width: f32, height: f32, x: f32, y: f32| {
+            [
+                0,
+                0,
+                width.to_bits(),
+                height.to_bits(),
+                x.to_bits(),
+                y.to_bits(),
+                0,
+                0,
+            ]
+        };
+        let empty = [0; 8];
+        assert_eq!(ink_envelope([20.0, 30.0], &[empty]), Rect::ZERO);
+        assert_eq!(
+            ink_envelope(
+                [20.0, 30.0],
+                &[
+                    empty,
+                    glyph(4.0, 8.0, 6.0, 10.0),
+                    glyph(6.0, 9.0, 8.0, 12.0)
+                ]
+            ),
+            Rect::new(5.0, 9.0, 15.0, 22.0)
+        );
+        assert_eq!(
+            ink_envelope([5.0, 8.0], &[empty, glyph(9.0, 7.0, -2.0, 2.0)]),
+            Rect::new(0.0, 1.0, 5.0, 8.0)
+        );
+    }
 
     #[test]
     fn cell_culling_matches_brute_force_and_scales_logarithmically() {
