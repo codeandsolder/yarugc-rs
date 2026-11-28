@@ -18,7 +18,14 @@ tracing = { workspace = true, features = ["std"] }
 tracing-core = { version = "0.1.36", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tracing-subscriber = { version = "0.3.23", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "tracing-log", "smallvec"] }
+tracing-subscriber = { version = "0.3.23", default-features = false, features = [
+    "env-filter",
+    "fmt",
+    "ansi",
+    "time",
+    "tracing-log",
+    "smallvec",
+] }
 time = { workspace = true, features = ["macros", "formatting"] }
 tracing-tracy = { version = "0.11.4", optional = true }
 
