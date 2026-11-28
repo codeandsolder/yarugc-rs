@@ -14,7 +14,7 @@ use masonry::parley::{
     FontContext, FontFamily, FontFamilyName, Layout, LayoutContext, PlainEditor, StyleProperty,
 };
 use masonry::peniko::Blob;
-use masonry::testing::ROBOTO;
+use masonry_testing::ROBOTO;
 
 fn text_contexts() -> (FontContext, LayoutContext<BrushIndex>) {
     let mut fonts = FontContext::new();
