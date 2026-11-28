@@ -244,7 +244,8 @@ fn cached_window_and_dynamic_layer_on_host_device() {
 #[test]
 #[ignore = "requires a working wgpu adapter; run explicitly on GPU hosts"]
 fn fixed_readouts_share_one_dynamic_layer() {
-    use masonry::widgets::{Grid, GridParams};
+    use masonry::parley::{FontFamily, FontFamilyName, StyleProperty};
+    use masonry::widgets::{Grid, GridParams, Label};
     use yarugc::{ReadoutError, ReadoutRenderer, ReadoutSlot, ReadoutStyle};
 
     const EXTENT: [u32; 2] = [2048, 512];
@@ -317,7 +318,33 @@ fn fixed_readouts_share_one_dynamic_layer() {
         })
         .collect();
 
-    let font = peniko::FontData::new(peniko::Blob::new(std::sync::Arc::new(FONT)), 0);
+    let font = peniko::FontData::new(peniko::Blob::new(Arc::new(FONT)), 0);
+    // Register the exact same Blob, then let Parley shape an ordinary label.
+    // A single leading glyph at integral x with vertical hinting has phase 0.
+    let mut label = CachedWindow::new(
+        NewWidget::new(
+            Label::new("0")
+                .with_style(FontFamily::Single(FontFamilyName::named("Roboto")))
+                .with_style(StyleProperty::FontSize(14.0))
+                .with_hint(true),
+        ),
+        RenderRootOptions {
+            default_properties: Arc::new(DefaultProperties::new()),
+            use_system_fonts: false,
+            size_policy: WindowSizePolicy::User,
+            size: PhysicalSize::new(64, 32),
+            scale_factor: 1.0,
+            test_font: None,
+        },
+        |_| {},
+    );
+    assert!(!label.root().register_fonts(font.data.clone()).is_empty());
+    assert!(matches!(
+        refresh(&mut label, &mut renderer),
+        Refresh::Painted { .. }
+    ));
+    let ordinary = renderer.glyph_atlas_stats().unwrap();
+    assert_eq!(ordinary.entries, 1);
     let glyphs = ReadoutRenderer::new(
         &mut renderer,
         &device,
@@ -326,13 +353,17 @@ fn fixed_readouts_share_one_dynamic_layer() {
         ReadoutStyle {
             font_size: 14.0,
             advance: None,
-            hint: false,
+            hint: true,
         },
         "0123456789.+-− kMµ°m/s".chars(),
     )
     .unwrap();
     let preflight = renderer.glyph_atlas_stats().unwrap();
     assert!(preflight.entries > 0);
+    assert!(
+        preflight.hits > ordinary.hits,
+        "prewarm must reuse the ordinary label glyph"
+    );
     assert_eq!(glyphs.cell_size()[0], glyphs.cell_size()[0].ceil());
     let second = ReadoutRenderer::new(
         &mut renderer,
@@ -342,7 +373,7 @@ fn fixed_readouts_share_one_dynamic_layer() {
         ReadoutStyle {
             font_size: 14.0,
             advance: Some(12.5),
-            hint: false,
+            hint: true,
         },
         "0123".chars(),
     )

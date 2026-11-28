@@ -619,6 +619,97 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a working wgpu adapter"]
+    fn surface_alpha_conversion_gpu() {
+        let instance = wgpu::Instance::default();
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+        let size = wgpu::Extent3d {
+            width: 2,
+            height: 1,
+            depth_or_array_layers: 1,
+        };
+        let texture = |usage| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("alpha conversion test"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: TextureFormat::Rgba8Unorm,
+                usage,
+                view_formats: &[],
+            })
+        };
+        let source = texture(TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST);
+        let target = texture(TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC);
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("alpha conversion readback"),
+            size: 8,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        use AlphaMode::{Premultiplied, Straight};
+        let straight = [200, 100, 50, 128, 180, 90, 45, 0];
+        let premultiplied = [100, 50, 25, 128, 0, 0, 0, 0];
+        let unpremultiplied = [199, 100, 50, 128, 0, 0, 0, 0];
+        for (src, dst, input, expected) in [
+            (Straight, Straight, straight, straight),
+            (Straight, Premultiplied, straight, premultiplied),
+            (Premultiplied, Premultiplied, premultiplied, premultiplied),
+            (Premultiplied, Straight, premultiplied, unpremultiplied),
+        ] {
+            queue.write_texture(
+                source.as_image_copy(),
+                &input,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: None,
+                    rows_per_image: None,
+                },
+                size,
+            );
+            let blitter = SurfaceBlitter::new(
+                &device,
+                TextureFormat::Rgba8Unorm,
+                &source.create_view(&Default::default()),
+                src,
+                dst,
+            );
+            let mut encoder = device.create_command_encoder(&Default::default());
+            blitter.copy(&mut encoder, &target.create_view(&Default::default()));
+            encoder.copy_texture_to_buffer(
+                target.as_image_copy(),
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: None,
+                        rows_per_image: None,
+                    },
+                },
+                size,
+            );
+            queue.submit([encoder.finish()]);
+            let (tx, rx) = std::sync::mpsc::sync_channel(1);
+            buffer
+                .slice(..)
+                .map_async(wgpu::MapMode::Read, move |result| tx.send(result).unwrap());
+            device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+            rx.recv().unwrap().unwrap();
+            let mapped = buffer.slice(..).get_mapped_range().unwrap();
+            assert!(
+                mapped.iter().zip(expected).all(|(a, b)| a.abs_diff(b) <= 1),
+                "{src:?} -> {dst:?}: {:?} != {expected:?}",
+                &*mapped
+            );
+            drop(mapped);
+            buffer.unmap();
+        }
+    }
+
+    #[test]
     fn presentation_fallback_preserves_supported_preferences_and_tearing_policy() {
         let all = [
             PresentMode::AutoVsync,
