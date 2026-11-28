@@ -19,7 +19,7 @@ impl AppDriver for Driver {
         &mut self,
         _: WindowId,
         _: &mut DriverCtx<'_>,
-        _: masonry_core::core::WidgetId,
+        _: WidgetId,
         _: ErasedAction,
     ) {
     }

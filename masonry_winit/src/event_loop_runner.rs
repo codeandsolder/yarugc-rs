@@ -1604,7 +1604,7 @@ impl MasonryState {
         }
     }
 
-    fn report_inspector_selection(window: &Window, widget_id: masonry_core::core::WidgetId) {
+    fn report_inspector_selection(window: &Window, widget_id: WidgetId) {
         let Some(widget) = window.render_root.get_widget(widget_id) else {
             return;
         };
