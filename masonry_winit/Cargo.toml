@@ -39,6 +39,11 @@ masonry_imaging = { workspace = true, default-features = false }
 wgpu = { workspace = true, features = ["parking_lot"] }
 copypasta = "0.10.2"
 
+# Only the native host selects platform backends. Input translation does not
+# implicitly activate Winit defaults or a separate client-side title renderer.
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))'.dependencies]
+winit = { workspace = true, features = ["x11", "wayland", "wayland-dlopen"] }
+
 [target.'cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))'.dependencies]
 wgpu = { workspace = true, features = ["vulkan", "gles"] }
 
