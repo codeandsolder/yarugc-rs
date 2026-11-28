@@ -18,9 +18,7 @@ use masonry_core::core::{
 };
 use masonry_core::peniko::Color;
 use masonry_core::util::Instant;
-use masonry_imaging::texture_render::{
-    RenderTarget as ImagingRenderTarget, Renderer as ImagingRenderer,
-};
+use masonry_imaging::texture_render::{Backend, RenderTarget as ImagingRenderTarget};
 use masonry_imaging::{Layer as ImagingLayer, PreparedFrame};
 use tracing::{info, info_span, trace};
 use ui_events_winit::{WindowEventReducer, WindowEventTranslation};
@@ -340,33 +338,79 @@ pub type EventLoopProxy = winit::event_loop::EventLoopProxy<MasonryUserEvent>;
 
 // --- MARK: RUN
 
+/// Failure to initialize or run the native window host.
+#[derive(Debug)]
+pub enum RunError {
+    /// No native WGPU API was compiled for this target.
+    NoGpuBackend,
+    /// The requested renderer is not enabled by Cargo features.
+    RendererUnavailable(Backend),
+    /// Winit could not create or run the event loop.
+    EventLoop(EventLoopError),
+}
+
+impl core::fmt::Display for RunError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NoGpuBackend => f.write_str("no WGPU backend compiled for this window host"),
+            Self::RendererUnavailable(backend) => {
+                write!(f, "renderer {} is not enabled", backend.name())
+            }
+            Self::EventLoop(err) => err.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for RunError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::EventLoop(err) => Some(err),
+            Self::NoGpuBackend | Self::RendererUnavailable(_) => None,
+        }
+    }
+}
+
+impl From<EventLoopError> for RunError {
+    fn from(err: EventLoopError) -> Self {
+        Self::EventLoop(err)
+    }
+}
+
 /// Runs the app to completion.
 ///
 /// This is usually one of the last functions called in your main function.
 ///
 /// # Errors
-/// Returns an error if the platform event loop cannot be created or run.
+/// Returns an error if the renderer or platform event loop cannot be initialized or run.
 pub fn run(
     new_windows: Vec<NewWindow>,
     app_driver: impl AppDriver + 'static,
     default_properties: DefaultProperties,
-) -> Result<(), EventLoopError> {
+    backend: Backend,
+) -> Result<(), RunError> {
     let event_loop = EventLoop::with_user_event().build()?;
 
-    run_with(event_loop, new_windows, app_driver, default_properties)
+    run_with(
+        event_loop,
+        new_windows,
+        app_driver,
+        default_properties,
+        backend,
+    )
 }
 
 /// Runs the app with the provided event loop to completion.
 ///
 /// # Errors
-/// Returns an error if the platform event loop fails.
+/// Returns an error if the renderer cannot be initialized or the platform event loop fails.
 pub fn run_with(
     // This is passed in mostly to allow configuring the Android app
     event_loop: EventLoop,
     new_windows: Vec<NewWindow>,
     app_driver: impl AppDriver + 'static,
     default_properties: DefaultProperties,
-) -> Result<(), EventLoopError> {
+    backend: Backend,
+) -> Result<(), RunError> {
     // If no tracing subscriber has been set before, we set our own. If one has
     // already been set, we get an error which we swallow.
     // By now, we're about to take control of the event loop. The user is unlikely
@@ -379,11 +423,12 @@ pub fn run_with(
             event_loop.owned_display_handle(),
             new_windows,
             default_properties,
-        ),
+            backend,
+        )?,
         app_driver: Box::new(app_driver),
     };
 
-    event_loop.run_app(&mut main_state)
+    Ok(event_loop.run_app(&mut main_state)?)
 }
 
 impl ApplicationHandler<MasonryUserEvent> for MainState {
@@ -448,18 +493,27 @@ impl MasonryState {
     /// - `display`: the display of your event loop, provided by [`EventLoop::owned_display_handle`](winit::event_loop::EventLoop::owned_display_handle).
     /// - `new_windows`: the initial list of windows.
     /// - `default_properties`: the default properties for all the widgets of the app.
+    /// - `backend`: the explicitly selected texture renderer, independent of other enabled features.
+    /// # Errors
+    /// Returns an error when the requested renderer or native GPU API is unavailable.
     pub fn new(
         event_loop_proxy: EventLoopProxy,
         display: OwnedDisplayHandle,
         new_windows: Vec<NewWindow>,
         default_properties: DefaultProperties,
-    ) -> Self {
+        backend: Backend,
+    ) -> Result<Self, RunError> {
+        if !backend.is_available() {
+            return Err(RunError::RendererUnavailable(backend));
+        }
+        if wgpu::Instance::enabled_backend_features().is_empty() {
+            return Err(RunError::NoGpuBackend);
+        }
         tracing::debug!(
-            backend = ImagingRenderer::BACKEND_NAME,
+            backend = backend.name(),
             "selected Masonry Winit render backend"
         );
-
-        let render_cx = RenderContext::new(display, event_loop_proxy.clone());
+        let render_cx = RenderContext::new(display, event_loop_proxy.clone(), backend);
 
         let (signal_sender, signal_receiver) = mpsc::channel::<(WindowId, RenderRootSignal)>();
 
@@ -470,7 +524,7 @@ impl MasonryState {
             Box::new(NopClipboardContext)
         });
 
-        Self {
+        Ok(Self {
             is_suspended: true,
             started: false,
             render_cx,
@@ -494,7 +548,7 @@ impl MasonryState {
             need_first_frame: Vec::new(),
             uninitialized_windows: VecDeque::new(),
             suspended_actions: VecDeque::new(),
-        }
+        })
     }
 
     /// Configure how Masonry requests the WGPU device (features and limits).
@@ -883,7 +937,7 @@ impl MasonryState {
         let queue = &handle.queue;
         let _render_span = tracing::info_span!(
             "Rendering Masonry window",
-            backend = ImagingRenderer::BACKEND_NAME
+            backend = handle.renderer.backend().name()
         )
         .entered();
         if let Err(err) = handle.renderer.render_to_texture(
@@ -897,7 +951,7 @@ impl MasonryState {
             frame,
         ) {
             tracing::error!(
-                backend = ImagingRenderer::BACKEND_NAME,
+                backend = handle.renderer.backend().name(),
                 "Couldn't render Masonry content into target texture: {err}"
             );
             return FrameOutcome::Skipped;

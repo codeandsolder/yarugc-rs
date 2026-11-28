@@ -64,6 +64,7 @@
 //!         )],
 //!         driver,
 //!         default_property_set(),
+//!         masonry_winit::app::Backend::Vello,
 //!     )
 //!     .unwrap();
 //! }
@@ -107,8 +108,9 @@ pub mod app {
     };
     pub use super::event_loop_runner::{
         EventLoop, EventLoopBuilder, EventLoopProxy, MasonryState, MasonryUserEvent, NewWindow,
-        Window, WindowCreationError, run, run_with,
+        RunError, Window, WindowCreationError, run, run_with,
     };
+    pub use masonry_imaging::texture_render::Backend;
 
     pub(crate) use super::convert_winit_event::{
         masonry_resize_direction_to_winit, winit_ime_to_masonry,

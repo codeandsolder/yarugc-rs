@@ -112,7 +112,9 @@
 //!
 //! The following crate [feature flags](https://doc.rust-lang.org/cargo/reference/features.html#dependency-features) are available:
 //!
-//! * `default`: Enables the default features of [Masonry][masonry] and [Masonry Winit][masonry_winit].
+//! * `default`: Enables the Vello GPU renderer in the native window host.
+//! * `imaging_vello`, `imaging_vello_hybrid`, `imaging_skia`: Enable the corresponding host renderer.
+//! * `svg`: Enables SVG image views.
 //!
 //! [accesskit_docs]: masonry::accesskit
 //! [Parley]: masonry::parley
@@ -156,7 +158,7 @@ pub use masonry::parley::Alignment as TextAlign;
 pub use masonry::parley::style::FontWeight;
 pub use masonry::peniko::{Blob, Color, ImageBrush, ImageFormat};
 pub use masonry::widgets::InsertNewline;
-pub use masonry_winit::app::{EventLoop, EventLoopBuilder, WindowId};
+pub use masonry_winit::app::{Backend, EventLoop, EventLoopBuilder, WindowId};
 
 pub use xilem_masonry::{
     AnyWidgetView, InitialRootWidget, MasonryRoot, Pod, ViewCtx, WidgetView, WidgetViewSequence,

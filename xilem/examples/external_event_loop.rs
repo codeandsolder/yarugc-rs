@@ -109,7 +109,8 @@ fn main() -> Result<(), RunError> {
         event_loop.owned_display_handle(),
         windows,
         default_property_set(),
-    );
+        xilem::Backend::Vello,
+    )?;
 
     let mut app = ExternalApp {
         masonry_state,

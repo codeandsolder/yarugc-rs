@@ -7,7 +7,9 @@ use std::sync::Arc;
 use masonry::core::DefaultProperties;
 use masonry::peniko::{Blob, Color};
 use masonry::theme::{BACKGROUND_COLOR, default_property_set};
-use masonry_winit::app::{EventLoopBuilder, MasonryState, MasonryUserEvent, NewWindow, WindowId};
+use masonry_winit::app::{
+    Backend, EventLoopBuilder, MasonryState, MasonryUserEvent, NewWindow, WindowId,
+};
 use tokio::runtime::Runtime as TokioRuntime;
 use winit::error::EventLoopError;
 
@@ -22,6 +24,8 @@ pub enum RunError {
     Runtime(std::io::Error),
     /// The window event loop could not be started or run.
     EventLoop(EventLoopError),
+    /// The native host could not initialize or run.
+    Host(masonry_winit::app::RunError),
 }
 
 impl std::fmt::Display for RunError {
@@ -29,6 +33,7 @@ impl std::fmt::Display for RunError {
         match self {
             Self::Runtime(err) => write!(f, "Could not start async runtime: {err}"),
             Self::EventLoop(err) => err.fmt(f),
+            Self::Host(err) => err.fmt(f),
         }
     }
 }
@@ -38,6 +43,7 @@ impl std::error::Error for RunError {
         match self {
             Self::Runtime(err) => Some(err),
             Self::EventLoop(err) => Some(err),
+            Self::Host(err) => Some(err),
         }
     }
 }
@@ -54,6 +60,12 @@ impl From<EventLoopError> for RunError {
     }
 }
 
+impl From<masonry_winit::app::RunError> for RunError {
+    fn from(err: masonry_winit::app::RunError) -> Self {
+        Self::Host(err)
+    }
+}
+
 pub(crate) type StartCallback = Box<dyn FnOnce(&mut MasonryState)>;
 
 // TODO - Rename to `AppLauncher` or something.
@@ -66,6 +78,7 @@ pub struct Xilem<State, Logic> {
     runtime: Option<Arc<TokioRuntime>>,
     default_properties: Option<DefaultProperties>,
     default_base_color: Color,
+    backend: Backend,
     // Font data to include in loading.
     fonts: Vec<Blob<u8>>,
     // Callback invoked once on startup, after windows creation.
@@ -196,6 +209,7 @@ where
             runtime,
             default_properties: None,
             default_base_color: BACKGROUND_COLOR,
+            backend: Backend::Vello,
             fonts: Vec::new(),
             on_start: None,
         }
@@ -223,6 +237,13 @@ where
         self
     }
 
+    /// Select the renderer used by the native window host. Defaults to Vello.
+    /// The chosen backend must be enabled by its corresponding Cargo feature.
+    pub const fn with_render_backend(mut self, backend: Backend) -> Self {
+        self.backend = backend;
+        self
+    }
+
     /// Registers a callback to be called once the application has started
     pub fn with_on_start(mut self, callback: impl FnOnce(&mut MasonryState) + 'static) -> Self {
         self.on_start = Some(Box::new(callback));
@@ -240,6 +261,7 @@ where
             .default_properties
             .take()
             .unwrap_or_else(default_property_set);
+        let backend = self.backend;
         let (driver, windows) = self
             .into_driver_and_windows(move |event| proxy.send_event(event).map_err(|err| err.0))?;
         Ok(masonry_winit::app::run_with(
@@ -247,6 +269,7 @@ where
             windows,
             driver,
             default_properties,
+            backend,
         )?)
     }
 

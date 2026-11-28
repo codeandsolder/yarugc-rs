@@ -20,7 +20,7 @@ use winit::event_loop::OwnedDisplayHandle;
 
 use crate::app_driver::{GpuDeviceId, WgpuLimits};
 use crate::event_loop_runner::{EventLoopProxy, MasonryUserEvent};
-use masonry_imaging::texture_render::Renderer;
+use masonry_imaging::texture_render::{Backend, Renderer};
 
 const PREMUL_BLEND_STATE: BlendState = BlendState {
     alpha: BlendComponent::REPLACE,
@@ -37,6 +37,7 @@ pub(crate) enum RenderSurfaceError {
     RequestAdapter(wgpu::RequestAdapterError),
     RequestDevice(wgpu::RequestDeviceError),
     UnsupportedSurfaceFormat,
+    Renderer(masonry_imaging::texture_render::Error),
 }
 
 impl core::fmt::Display for RenderSurfaceError {
@@ -46,6 +47,7 @@ impl core::fmt::Display for RenderSurfaceError {
             Self::RequestAdapter(err) => write!(f, "requesting WGPU adapter failed: {err}"),
             Self::RequestDevice(err) => write!(f, "requesting WGPU device failed: {err}"),
             Self::UnsupportedSurfaceFormat => write!(f, "unsupported surface format"),
+            Self::Renderer(err) => err.fmt(f),
         }
     }
 }
@@ -57,6 +59,7 @@ impl std::error::Error for RenderSurfaceError {
             Self::RequestAdapter(err) => Some(err),
             Self::RequestDevice(err) => Some(err),
             Self::UnsupportedSurfaceFormat => None,
+            Self::Renderer(err) => Some(err),
         }
     }
 }
@@ -68,6 +71,7 @@ pub(crate) struct RenderContext {
     /// after every surface referencing it has been detached.
     pub devices: BTreeMap<GpuDeviceId, DeviceHandle>,
     device_options_locked: bool,
+    backend: Backend,
     requested_features: wgpu::Features,
     requested_limits: WgpuLimits,
     event_loop_proxy: EventLoopProxy,
@@ -90,8 +94,13 @@ impl DeviceHandle {
 
 impl RenderContext {
     /// Creates a render context for windows on the given `display`.
-    pub(crate) fn new(display: OwnedDisplayHandle, event_loop_proxy: EventLoopProxy) -> Self {
-        let backends = wgpu::Backends::from_env().unwrap_or_default();
+    pub(crate) fn new(
+        display: OwnedDisplayHandle,
+        event_loop_proxy: EventLoopProxy,
+        backend: Backend,
+    ) -> Self {
+        let backends =
+            wgpu::Backends::from_env().unwrap_or_else(Instance::enabled_backend_features);
         let flags = wgpu::InstanceFlags::from_build_config().with_env();
         let backend_options = wgpu::BackendOptions::from_env_or_default();
         let instance = Instance::new(wgpu::InstanceDescriptor {
@@ -106,6 +115,7 @@ impl RenderContext {
             instance,
             devices: BTreeMap::new(),
             device_options_locked: false,
+            backend,
             requested_features: wgpu::Features::empty(),
             requested_limits: WgpuLimits::Default,
             event_loop_proxy,
@@ -345,6 +355,7 @@ impl RenderContext {
             Some(compatible_surface),
         ))
         .map_err(RenderSurfaceError::RequestAdapter)?;
+        let renderer = Renderer::new(self.backend).map_err(RenderSurfaceError::Renderer)?;
         let supported_features = adapter.features();
         let required_limits = match &self.requested_limits {
             WgpuLimits::Default => wgpu::Limits::default(),
@@ -380,7 +391,7 @@ impl RenderContext {
             queue,
             lost,
             ready_notified: false,
-            renderer: Renderer::new(),
+            renderer,
         };
         self.device_options_locked = true;
         self.devices.insert(dev_id, device_handle);

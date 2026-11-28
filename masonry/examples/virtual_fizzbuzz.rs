@@ -115,6 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )],
         driver,
         default_property_set(),
+        masonry_winit::app::Backend::Vello,
     )?;
     Ok(())
 }

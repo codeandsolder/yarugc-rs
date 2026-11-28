@@ -482,6 +482,7 @@ mod sized_box;
 mod slider;
 mod spinner;
 mod split;
+#[cfg(feature = "svg")]
 mod svg;
 mod switch;
 mod task;
@@ -515,6 +516,7 @@ pub use self::sized_box::*;
 pub use self::slider::*;
 pub use self::spinner::*;
 pub use self::split::*;
+#[cfg(feature = "svg")]
 pub use self::svg::*;
 pub use self::switch::*;
 pub use self::task::*;

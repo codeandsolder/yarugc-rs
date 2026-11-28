@@ -11,7 +11,7 @@ use masonry_core::app::{RenderRootOptions, WindowSizePolicy};
 use masonry_core::core::{DefaultProperties, NewWidget, WindowEvent};
 use masonry_core::dpi::PhysicalSize;
 use masonry_core::properties::{Background, Dimensions};
-use masonry_imaging::texture_render::Renderer;
+use masonry_imaging::texture_render::{Backend, Renderer};
 use peniko::Color;
 use yarugc::{
     AlphaMode, CachedWindow, Composition, CompositionError, Compositor, Layer, Refresh, Surface,
@@ -109,7 +109,7 @@ fn cached_window_and_dynamic_layer_on_host_device() {
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
     let compositor = Compositor::new(&device, wgpu::TextureFormat::Rgba8Unorm);
-    let mut renderer = Renderer::new();
+    let mut renderer = Renderer::new(Backend::Vello).unwrap();
     let mut window = CachedWindow::new(
         NewWidget::new(SizedBox::empty())
             .with_props(Dimensions::STRETCH)
@@ -274,7 +274,7 @@ fn fixed_readouts_share_one_dynamic_layer() {
     .unwrap();
     eprintln!("readout adapter: {:?}", adapter.get_info());
     let compositor = Compositor::new(&device, wgpu::TextureFormat::Rgba8Unorm);
-    let mut renderer = Renderer::new();
+    let mut renderer = Renderer::new(Backend::Vello).unwrap();
     let mut grid = Grid::with_dimensions(usize::from(COLUMNS), usize::from(ROWS));
     let mut ids = Vec::with_capacity(COUNT);
     for row in 0..ROWS {
@@ -634,7 +634,7 @@ fn content_window_refresh_uses_post_rewrite_extent() {
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
     let compositor = Compositor::new(&device, wgpu::TextureFormat::Rgba8Unorm);
-    let mut renderer = Renderer::new();
+    let mut renderer = Renderer::new(Backend::Vello).unwrap();
     let mut window = CachedWindow::new(
         NewWidget::new(SizedBox::empty().size(Length::ZERO, Length::ZERO)),
         RenderRootOptions {
