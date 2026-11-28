@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use masonry::core::{NewWidget, StyleProperty, Widget};
 use masonry::properties::types::CrossAxisAlignment;
+use masonry::usvg::{self, Tree};
 use masonry::widgets::{Flex, Label, Svg};
-use resvg::usvg::{self, Tree};
 
 use crate::demo::{CONTENT_GAP, DemoPage, ShellTags, wrap_in_shell};
 

@@ -17,7 +17,7 @@ targets = []
 
 [features]
 default = []
-svg = ["masonry/svg", "dep:usvg"]
+svg = ["masonry/svg"]
 
 [dependencies]
 xilem_core.workspace = true
@@ -25,7 +25,6 @@ masonry.workspace = true
 smallvec.workspace = true
 tracing.workspace = true
 tokio = { version = "1.50.0", features = ["rt", "rt-multi-thread", "time", "sync"] }
-usvg = { workspace = true, optional = true }
 
 [lints]
 workspace = true
