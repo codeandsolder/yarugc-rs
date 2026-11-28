@@ -19,6 +19,8 @@ pub use masonry_core;
 pub use masonry_imaging;
 pub use masonry_imaging::AlphaMode;
 #[cfg(not(target_arch = "wasm32"))]
-pub use readout::{ReadoutBatch, ReadoutError, ReadoutRenderer, ReadoutSlot, ReadoutStyle};
+pub use readout::{
+    ReadoutBatch, ReadoutError, ReadoutRasterStats, ReadoutRenderer, ReadoutSlot, ReadoutStyle,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use window::{CachedWindow, Refresh, RefreshError};

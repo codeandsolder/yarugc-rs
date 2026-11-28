@@ -467,6 +467,57 @@ fn fixed_readouts_share_one_dynamic_layer() {
         );
     }
 
+    // A changed slot should reconstruct only its actual tiles, and produce
+    // exactly the same image as reconstructing the entire layer.
+    assert!(batch.set_text(0, "0").unwrap());
+    assert!(draw_batch(&mut batch));
+    let sparse_stats = batch.last_raster_stats().unwrap();
+    assert!(!sparse_stats.full);
+    assert!(sparse_stats.pixels < u64::from(EXTENT[0]) * u64::from(EXTENT[1]));
+    let sparse_pixels = read_composition(&device, &queue, &compositor, &composition, &target);
+    batch.invalidate_surface();
+    assert!(draw_batch(&mut batch));
+    let full_stats = batch.last_raster_stats().unwrap();
+    assert!(full_stats.full);
+    assert!(sparse_stats.vertices < full_stats.vertices);
+    assert_eq!(
+        sparse_pixels,
+        read_composition(&device, &queue, &compositor, &composition, &target)
+    );
+    assert!(batch.set_text(0, "1.00 km").unwrap());
+    assert!(draw_batch(&mut batch));
+
+    // The test below uses a second slot at the same transformed geometry.
+    // Reconstructing a changed lower readout must retain the translucent
+    // unchanged readout drawn over it, in the same painter order.
+    let mut overlap_slots = slots.clone();
+    overlap_slots.insert(
+        1,
+        ReadoutSlot {
+            geometry: slots[0].geometry.clone(),
+            cells: 10,
+            color: [0.2, 0.8, 0.3, 0.5],
+        },
+    );
+    let mut overlap = glyphs.prepare(&compositor, EXTENT, &overlap_slots).unwrap();
+    assert!(overlap.set_text(0, "999 m").unwrap());
+    assert!(overlap.set_text(1, "999 m").unwrap());
+    assert!(overlap.set_text(COUNT, "1.00 km").unwrap());
+    assert!(draw_batch(&mut overlap));
+    let overlap_composition = compositor
+        .prepare(EXTENT, &[Layer::at(overlap.surface(), [0., 0.])])
+        .unwrap();
+    assert!(overlap.set_text(0, "1").unwrap());
+    assert!(draw_batch(&mut overlap));
+    assert!(!overlap.last_raster_stats().unwrap().full);
+    let partial = read_composition(&device, &queue, &compositor, &overlap_composition, &target);
+    overlap.invalidate_surface();
+    assert!(draw_batch(&mut overlap));
+    assert_eq!(
+        partial,
+        read_composition(&device, &queue, &compositor, &overlap_composition, &target)
+    );
+
     // Exercise the CPU-only update path without measuring text formatting,
     // layout, GPU execution, or texture allocation. This is not a frame benchmark.
     for count in [1, 8, 64, COUNT] {

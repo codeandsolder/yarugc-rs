@@ -1,6 +1,11 @@
 // Copyright 2026 the YARUGC Authors
 // SPDX-License-Identifier: Apache-2.0
 
+mod damage;
+
+use damage::DamageGrid;
+pub use damage::ReadoutRasterStats;
+
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::Arc;
@@ -99,6 +104,7 @@ pub struct ReadoutRenderer {
     sampler: wgpu::Sampler,
     layout: wgpu::BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
+    clear_pipeline: wgpu::RenderPipeline,
 }
 
 /// Persistent readout geometry and glyph data for a single dynamic layer.
@@ -110,6 +116,9 @@ pub struct ReadoutBatch {
     _atlas: PreparedOutlineGlyphs,
     glyphs: Arc<GlyphMap>,
     pipeline: wgpu::RenderPipeline,
+    clear_pipeline: wgpu::RenderPipeline,
+    damage: DamageGrid,
+    last_stats: Option<ReadoutRasterStats>,
     queue: wgpu::Queue,
     ranges: Vec<Range<usize>>,
     values: Vec<u32>,
@@ -282,6 +291,7 @@ impl ReadoutRenderer {
             sampler,
             layout,
             pipeline,
+            clear_pipeline: damage::clear_pipeline(device),
         })
     }
 
@@ -292,7 +302,7 @@ impl ReadoutRenderer {
     }
 
     /// Prepare fixed readout geometry. Repeat only after layout/DPI changes.
-    /// All cells of all slots are rendered in a single draw call.
+    /// Retain the geometry and spatial damage index for all visible cells.
     ///
     /// # Errors
     /// Returns an error for mismatched devices, invalid extents or resource limits.
@@ -341,6 +351,7 @@ impl ReadoutRenderer {
         }
         let vertex_count =
             u32::try_from(vertices.len()).map_err(|_| ReadoutError::InvalidExtent)?;
+        let damage = DamageGrid::new(extent, &vertices)?;
         let vertex_buffer = (!vertices.is_empty()).then(|| {
             self.device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -400,6 +411,9 @@ impl ReadoutRenderer {
             _atlas: self.atlas.clone(),
             glyphs: Arc::clone(&self.glyphs),
             pipeline: self.pipeline.clone(),
+            clear_pipeline: self.clear_pipeline.clone(),
+            damage,
+            last_stats: None,
             queue: self.queue.clone(),
             ranges,
             dirty: Some(0..0),
@@ -509,7 +523,12 @@ impl ReadoutBatch {
             .get(slot)
             .ok_or(ReadoutError::UnknownSlot)?
             .clone();
-        let Some(changed) = replace_glyphs(&self.glyphs, &mut self.values[range.clone()], text)?
+        let Some(changed) = replace_glyphs(
+            &self.glyphs,
+            &mut self.values[range.clone()],
+            text,
+            |index| self.damage.mark(range.start + index),
+        )?
         else {
             return Ok(false);
         };
@@ -517,21 +536,31 @@ impl ReadoutBatch {
         Ok(true)
     }
 
-    /// Upload changed glyph IDs and redraw the dynamic layer in one draw call.
-    /// Returns false for an unchanged batch. Submit the encoder before changing
-    /// its values again; the caller owns frame scheduling and submission.
+    /// Upload changed glyph IDs and reconstruct damaged tiles in painter order.
+    /// Dense updates use one full-surface redraw. Returns false if no visible
+    /// pixels need reconstruction. Submit the encoder before changing its
+    /// values again; the caller owns frame scheduling and submission.
     /// If the encoder is discarded, call [`Self::invalidate_surface`] before retrying.
     pub fn render(&mut self, encoder: &mut wgpu::CommandEncoder) -> bool {
-        let Some(dirty) = self.dirty.take() else {
-            return false;
-        };
-        if !dirty.is_empty() {
+        if let Some(dirty) = self.dirty.take()
+            && !dirty.is_empty()
+        {
             self.queue.write_buffer(
                 &self.glyph_buffer,
                 (dirty.start as u64) * 4,
                 bytemuck::cast_slice(&self.values[dirty]),
             );
         }
+        self.last_stats = self.damage.plan();
+        let Some(stats) = self.last_stats else {
+            return false;
+        };
+        self.encode_raster(encoder, stats.full);
+        self.damage.finish();
+        true
+    }
+
+    fn encode_raster(&self, encoder: &mut wgpu::CommandEncoder, full: bool) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("yarugc dynamic readout layer"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -539,27 +568,50 @@ impl ReadoutBatch {
                 resolve_target: None,
                 depth_slice: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    load: if full {
+                        wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+                    } else {
+                        wgpu::LoadOp::Load
+                    },
                     store: wgpu::StoreOp::Store,
                 },
             })],
             ..Default::default()
         });
+        if !full {
+            pass.set_pipeline(&self.clear_pipeline);
+            for tile in self.damage.dirty_tiles() {
+                tile.rect.scissor(&mut pass);
+                pass.draw(0..3, 0..1);
+            }
+        }
         if let Some(vertices) = &self.vertices {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.binding, &[]);
             pass.set_vertex_buffer(0, vertices.slice(..));
-            pass.draw(0..self.vertex_count, 0..1);
+            if full {
+                pass.draw(0..self.vertex_count, 0..1);
+            } else {
+                for tile in self.damage.dirty_tiles() {
+                    tile.rect.scissor(&mut pass);
+                    for range in &tile.vertices {
+                        pass.draw(range.clone(), 0..1);
+                    }
+                }
+            }
         }
-        true
     }
 
-    /// Request another raster pass without changing glyph IDs. Use after discarding
-    /// an encoded frame; queued buffer uploads are retained by the queue.
+    /// Request a full reconstruction without changing glyph IDs, including
+    /// after a discarded encoded frame. Queued uploads are retained by the queue.
     pub const fn invalidate_surface(&mut self) {
-        if self.dirty.is_none() {
-            self.dirty = Some(0..0);
-        }
+        self.damage.invalidate();
+    }
+
+    /// Work encoded by the last call to [`Self::render`], or none if unchanged.
+    #[must_use = "Inspect the actual raster work."]
+    pub const fn last_raster_stats(&self) -> Option<ReadoutRasterStats> {
+        self.last_stats
     }
 
     fn mark_dirty(&mut self, changed: Range<usize>) {
@@ -584,6 +636,7 @@ fn replace_glyphs(
     map: &GlyphMap,
     values: &mut [u32],
     text: &str,
+    mut on_change: impl FnMut(usize),
 ) -> Result<Option<Range<usize>>, ReadoutError> {
     let len = text.chars().count();
     let padding = values
@@ -604,6 +657,7 @@ fn replace_glyphs(
         let glyph = glyph?;
         if *value != glyph {
             *value = glyph;
+            on_change(index);
             changed = Some(changed.map_or(index..index + 1, |range| range.start..index + 1));
         }
     }
@@ -840,19 +894,25 @@ mod tests {
     fn glyph_updates_are_transactional_and_report_exact_changed_range() {
         let map = GlyphMap::new(BTreeMap::from([(' ', 0), ('a', 1), ('b', 2), ('Ω', 3)]));
         let mut values = [0; 4];
-        assert_eq!(replace_glyphs(&map, &mut values, "abΩ"), Ok(Some(1..4)));
-        assert_eq!(values, [0, 1, 2, 3]);
-        assert_eq!(replace_glyphs(&map, &mut values, "abΩ"), Ok(None));
         assert_eq!(
-            replace_glyphs(&map, &mut values, "a?"),
+            replace_glyphs(&map, &mut values, "abΩ", |_| {}),
+            Ok(Some(1..4))
+        );
+        assert_eq!(values, [0, 1, 2, 3]);
+        assert_eq!(replace_glyphs(&map, &mut values, "abΩ", |_| {}), Ok(None));
+        assert_eq!(
+            replace_glyphs(&map, &mut values, "a?", |_| {}),
             Err(ReadoutError::UnknownCharacter('?'))
         );
         assert_eq!(
-            replace_glyphs(&map, &mut values, "abΩab"),
+            replace_glyphs(&map, &mut values, "abΩab", |_| {}),
             Err(ReadoutError::TextTooLong)
         );
         assert_eq!(values, [0, 1, 2, 3]);
-        assert_eq!(replace_glyphs(&map, &mut values, "Ω"), Ok(Some(1..3)));
+        assert_eq!(
+            replace_glyphs(&map, &mut values, "Ω", |_| {}),
+            Ok(Some(1..3))
+        );
         assert_eq!(values, [0, 0, 0, 3]);
     }
 }
