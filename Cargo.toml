@@ -170,3 +170,7 @@ debug-assertions = true # Keep always on for dependencies for cache reuse.
 winit = { git = "https://github.com/codeandsolder/cargo-patches.git", branch = "generated/wayland-modernization" }
 wayland-backend = { git = "https://github.com/codeandsolder/cargo-patches.git", branch = "generated/wayland-modernization" }
 gpu-allocator = { git = "https://github.com/codeandsolder/cargo-patches.git", branch = "generated/hashbrown-017" }
+png = { git = "https://github.com/codeandsolder/cargo-patches.git", branch = "generated/ksp-image-codecs" }
+usvg = { git = "https://github.com/codeandsolder/cargo-patches.git", branch = "generated/ksp-image-codecs" }
+skia-bindings = { git = "https://github.com/codeandsolder/cargo-patches.git", branch = "generated/ksp-image-codecs" }
+zlib-rs = { git = "https://github.com/codeandsolder/zlib-rs-fast.git", rev = "1ec3a5612ee28803a7756fa52bd013389507a2db" }
