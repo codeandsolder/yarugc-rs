@@ -187,13 +187,12 @@ impl Renderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         font: &peniko::FontData,
-        font_size: f32,
-        hint: bool,
+        style: crate::vello_hybrid::OutlineGlyphStyle<'_>,
         glyph_ids: &[u32],
     ) -> Result<crate::vello_hybrid::PreparedOutlineGlyphs, Error> {
         match &mut self.0 {
             Inner::VelloHybrid(renderer) => {
-                renderer.prepare_outline_glyphs(device, queue, font, font_size, hint, glyph_ids)
+                renderer.prepare_outline_glyphs(device, queue, font, style, glyph_ids)
             }
             #[cfg(feature = "imaging_vello")]
             Inner::Vello(_) => Err(Error::NoGlyphAtlas(Backend::Vello)),
@@ -506,8 +505,7 @@ mod hybrid {
             device: &wgpu::Device,
             queue: &wgpu::Queue,
             font: &peniko::FontData,
-            font_size: f32,
-            hint: bool,
+            style: crate::vello_hybrid::OutlineGlyphStyle<'_>,
             glyph_ids: &[u32],
         ) -> Result<crate::vello_hybrid::PreparedOutlineGlyphs, Error> {
             let renderer = self
@@ -515,7 +513,7 @@ mod hybrid {
                 .get_or_try_init((device.clone(), queue.clone()), || {
                     Ok::<_, Error>(new_target_renderer(device.clone(), queue.clone()))
                 })?;
-            Ok(renderer.prepare_outline_glyphs(font, font_size, hint, glyph_ids)?)
+            Ok(renderer.prepare_outline_glyphs(font, style, glyph_ids)?)
         }
 
         pub(super) fn glyph_atlas_stats(&self) -> Option<crate::vello_hybrid::GlyphAtlasStats> {

@@ -6,11 +6,14 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use masonry_core::kurbo::Rect;
-use masonry_imaging::{texture_render::Renderer, vello_hybrid::PreparedOutlineGlyphs};
+use masonry_imaging::{
+    texture_render::Renderer,
+    vello_hybrid::{OutlineGlyphStyle, PreparedOutlineGlyphs},
+};
 use peniko::FontData;
 use skrifa::{
     FontRef, MetadataProvider,
-    instance::{LocationRef, Size},
+    instance::{LocationRef, NormalizedCoord, Size},
 };
 use wgpu::util::DeviceExt;
 
@@ -69,7 +72,7 @@ impl std::error::Error for ReadoutError {}
 
 /// Fixed-cell font policy, independent of geometry and current text.
 #[derive(Clone, Copy, Debug)]
-pub struct ReadoutStyle {
+pub struct ReadoutStyle<'a> {
     /// Physical pixels per em, matching the ordinary text renderer.
     pub font_size: f32,
     /// Optional explicit physical cell advance. Otherwise use the maximum
@@ -77,6 +80,8 @@ pub struct ReadoutStyle {
     pub advance: Option<f32>,
     /// Enable font hinting, matching the ordinary glyph cache policy.
     pub hint: bool,
+    /// Signed F2Dot14 variation coordinates, in font-axis order.
+    pub normalized_coords: &'a [i16],
 }
 
 /// Leased glyph subset and GPU pipeline for fixed-width readouts.
@@ -237,7 +242,7 @@ impl ReadoutRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         font: &FontData,
-        style: ReadoutStyle,
+        style: ReadoutStyle<'_>,
         alphabet: impl IntoIterator<Item = char>,
     ) -> Result<Self, ReadoutError> {
         let limits = device.limits();
@@ -247,8 +252,11 @@ impl ReadoutRenderer {
                 device,
                 queue,
                 font,
-                style.font_size,
-                style.hint,
+                OutlineGlyphStyle {
+                    font_size: style.font_size,
+                    hint: style.hint,
+                    normalized_coords: style.normalized_coords,
+                },
                 &metrics.ids,
             )
             .map_err(|error| ReadoutError::Atlas(error.to_string()))?;
@@ -647,7 +655,7 @@ struct Preflight {
 
 fn preflight(
     font: &FontData,
-    style: ReadoutStyle,
+    style: ReadoutStyle<'_>,
     alphabet: impl IntoIterator<Item = char>,
     limits: &wgpu::Limits,
 ) -> Result<Preflight, ReadoutError> {
@@ -662,7 +670,21 @@ fn preflight(
     }
     let font = FontRef::from_index(font.data.as_ref(), font.index)
         .map_err(|_| ReadoutError::InvalidFont)?;
-    let location = LocationRef::default();
+    if style.normalized_coords.len() > font.axes().len()
+        || style
+            .normalized_coords
+            .iter()
+            .any(|&c| !(-16384..=16384).contains(&c))
+    {
+        return Err(ReadoutError::InvalidFont);
+    }
+    let coords: Vec<_> = style
+        .normalized_coords
+        .iter()
+        .copied()
+        .map(NormalizedCoord::from_bits)
+        .collect();
+    let location = LocationRef::new(&coords);
     let size = Size::new(style.font_size);
     let metrics = font.metrics(size, location);
     let glyph_metrics = font.glyph_metrics(size, location);
@@ -711,7 +733,7 @@ fn preflight(
 
 fn atlas_layout(
     metrics: &Preflight,
-    style: ReadoutStyle,
+    style: ReadoutStyle<'_>,
     atlas: &PreparedOutlineGlyphs,
     limits: &wgpu::Limits,
 ) -> Result<([f32; 2], Vec<[u32; 8]>), ReadoutError> {
@@ -799,6 +821,7 @@ mod tests {
             font_size: 24.0,
             advance: Some(12.5),
             hint: false,
+            normalized_coords: &[],
         };
         let metrics = preflight(
             &font,

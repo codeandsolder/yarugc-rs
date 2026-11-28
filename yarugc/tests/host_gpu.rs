@@ -354,6 +354,7 @@ fn fixed_readouts_share_one_dynamic_layer() {
             font_size: 14.0,
             advance: None,
             hint: true,
+            normalized_coords: &[],
         },
         "0123456789.+-− kMµ°m/s".chars(),
     )
@@ -374,6 +375,7 @@ fn fixed_readouts_share_one_dynamic_layer() {
             font_size: 14.0,
             advance: Some(12.5),
             hint: true,
+            normalized_coords: &[],
         },
         "0123".chars(),
     )
