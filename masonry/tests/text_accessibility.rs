@@ -209,14 +209,14 @@ fn editor_ignores_accessible_selection_after_text_changes() {
     editor.set_text("hello world");
     editor.refresh_layout(&mut fonts, &mut context);
     let mut bridge = PlainEditorAccessibility::default();
-    let mut update = update();
+    let mut first_update = update();
     let mut parent = Node::new(Role::TextInput);
     let mut next = 0;
     bridge
         .build_nodes(
             &editor,
             TextAccessibilityTarget {
-                update: &mut update,
+                update: &mut first_update,
                 parent: &mut parent,
                 origin: Point::ORIGIN,
             },
@@ -228,7 +228,7 @@ fn editor_ignores_accessible_selection_after_text_changes() {
         )
         .unwrap();
     let position = TextPosition {
-        node: update.nodes[0].0,
+        node: first_update.nodes[0].0,
         character_index: 2,
     };
     let selection = masonry::accesskit::TextSelection {
@@ -238,6 +238,29 @@ fn editor_ignores_accessible_selection_after_text_changes() {
     bridge.select_from_access_selection(&mut editor.driver(&mut fonts, &mut context), &selection);
     assert_eq!(editor.raw_selection().focus().index(), 2);
     editor.set_text("other text");
+    let before = *editor.raw_selection();
+    bridge.select_from_access_selection(&mut editor.driver(&mut fonts, &mut context), &selection);
+    assert_eq!(editor.raw_selection(), &before);
+
+    editor.refresh_layout(&mut fonts, &mut context);
+    let mut new_update = update();
+    let mut new_parent = Node::new(Role::TextInput);
+    bridge
+        .build_nodes(
+            &editor,
+            TextAccessibilityTarget {
+                update: &mut new_update,
+                parent: &mut new_parent,
+                origin: Point::ORIGIN,
+            },
+            || {
+                next += 1;
+                NodeId(next)
+            },
+            |_, _| {},
+        )
+        .unwrap();
+    assert!(new_update.nodes.iter().all(|(id, _)| *id != position.node));
     let before = *editor.raw_selection();
     bridge.select_from_access_selection(&mut editor.driver(&mut fonts, &mut context), &selection);
     assert_eq!(editor.raw_selection(), &before);

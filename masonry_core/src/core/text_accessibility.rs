@@ -225,6 +225,7 @@ impl LayoutAccessibility {
         let id = self
             .spans
             .get(*spans_started)
+            .filter(|old| old.boundaries == span.boundaries)
             .map_or_else(next_node_id, |span| span.id);
         let mut span = span;
         let published = PublishedSpan {
@@ -321,6 +322,10 @@ impl PlainEditorAccessibility {
     ) -> Option<()> {
         let layout = editor.try_layout()?;
         if self.published_text != editor.raw_text() {
+            // Old assistive-technology actions may arrive after this update.
+            // Never reuse a node ID for a different text generation, even if
+            // the new text happens to have exactly the same byte boundaries.
+            self.layout_access.spans.clear();
             self.published_text.clear();
             self.published_text.push_str(editor.raw_text());
         }
