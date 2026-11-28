@@ -119,7 +119,7 @@ struct RemoteApp {
     /// Used to determine whether we need to recreate the application, because our
     /// set of required scopes has changed.
     ///
-    /// Ideally, we'd recover these dynamically, but that isn't currently feasible as Megalodon
+    /// Ideally, we'd recover these dynamically, but that isn't currently feasible as the Mastodon API
     /// doesn't expose this, and also doesn't expose the right fields in `verify_credentials`.
     scopes: HashSet<String>,
     /// The redirection URIs we created this application with. Same caveat as `scopes`.

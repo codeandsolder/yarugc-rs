@@ -1,14 +1,15 @@
 // Copyright 2025 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use megalodon::entities::Status;
+use std::sync::Arc;
+
+use crate::mastodon::Status;
 
 /// Ways that the app can navigate within itself.
-#[expect(clippy::large_enum_variant, reason = "Who cares?")]
 pub(crate) enum Navigation {
     /// Load the context (i.e. replies and ancestors) of a given
     /// (non-repost) status.
-    LoadContext(Status),
+    LoadContext(Arc<Status>),
     /// Load the timeline of the user with the given account id.
     LoadUser(String),
     /// Return to the main timeline.

@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use megalodon::entities::{Attachment, attachment::AttachmentType};
+use crate::mastodon::{Attachment, AttachmentType};
 use xilem::{
     Blob, ImageFormat, WidgetView,
     core::one_of::{OneOf, OneOf4},
@@ -61,9 +61,7 @@ fn maybe_blurhash<State: 'static>(
         tracing::error!("Couldn't find dimensions for blurhash. Using default.");
         (960, 960)
     };
-    // TODO: Shrink width and height in a more sane way (e.g. aspect ratio which gets closest to 64x64?)
-    let blur_width = width / 16;
-    let blur_height = height / 16;
+    let (blur_width, blur_height) = preview_dimensions(width, height)?;
     let result_bytes = blurhash::decode(blurhash, blur_width, blur_height, 1.0).ok()?;
     let image_data = Blob::new(Arc::new(result_bytes));
     // This image format doesn't seem to be documented by the blurhash crate, but this value seems to work.
@@ -133,4 +131,29 @@ fn image_attachment<State: 'static>(
         }),
         attachment.description.as_deref().map(prose),
     ))
+}
+
+// Bound remote dimensions before allocation, retaining the attachment aspect ratio.
+fn preview_dimensions(width: u32, height: u32) -> Option<(u32, u32)> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let longest = width.max(height);
+    let scaled = (longest / 16).clamp(1, 128);
+    let dimension = |value: u32| -> Option<u32> {
+        u32::try_from((u64::from(value) * u64::from(scaled) / u64::from(longest)).max(1)).ok()
+    };
+    Some((dimension(width)?, dimension(height)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::preview_dimensions;
+    #[test]
+    fn remote_preview_dimensions_are_bounded() {
+        assert_eq!(preview_dimensions(960, 480), Some((60, 30)));
+        assert_eq!(preview_dimensions(u32::MAX, 1), Some((128, 1)));
+        assert_eq!(preview_dimensions(1, 1), Some((1, 1)));
+        assert_eq!(preview_dimensions(0, 100), None);
+    }
 }

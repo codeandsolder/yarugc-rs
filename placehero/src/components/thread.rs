@@ -1,7 +1,9 @@
 // Copyright 2025 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use megalodon::entities::{Context, Status};
+use std::sync::Arc;
+
+use crate::mastodon::{Context, Status};
 use xilem::WidgetView;
 use xilem::masonry::layout::AsUnit;
 use xilem::masonry::util::debug_panic;
@@ -19,7 +21,7 @@ use crate::components::base_status;
 /// 1) We don't try and do anything "fancy", i.e. we just display all the items in a column.
 ///    That is, we don't have an "increasing depth" threading UI.
 pub(crate) fn thread(
-    root_status: &Status,
+    root_status: &Arc<Status>,
     // TODO: Maybe the context should be optional (for async loading)
     // The hard part there would be locking the scroll properly (i.e. once the thread loads)
     thread: &Context,
@@ -71,7 +73,7 @@ pub(crate) fn thread(
 ///
 /// These are rendered without a containing box, and with an adjoining "reply indicator"
 /// (which is currently known to be terrible!).
-fn thread_ancestor(status: &Status) -> impl WidgetView<Placehero, Navigation> + use<> {
+fn thread_ancestor(status: &Arc<Status>) -> impl WidgetView<Placehero, Navigation> + use<> {
     sized_box(flex_row((
         // An awful left-side border.
         flex_col(())
