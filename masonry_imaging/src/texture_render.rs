@@ -39,6 +39,7 @@ pub enum Backend {
 
 impl Backend {
     /// Stable backend name for diagnostics.
+    #[must_use = "use the selected backend name for diagnostics"]
     pub const fn name(self) -> &'static str {
         match self {
             Self::Vello => "imaging_vello",
@@ -48,6 +49,7 @@ impl Backend {
     }
 
     /// Whether this build includes the requested implementation.
+    #[must_use = "check that the requested backend is available"]
     pub const fn is_available(self) -> bool {
         match self {
             Self::Vello => cfg!(feature = "imaging_vello"),
@@ -99,6 +101,17 @@ impl Renderer {
     /// Create empty state for the explicitly selected backend.
     /// # Errors
     /// Returns an error if the requested backend was not enabled at build time.
+    #[cfg_attr(
+        all(
+            feature = "imaging_vello",
+            feature = "imaging_vello_hybrid",
+            feature = "imaging_skia"
+        ),
+        expect(
+            clippy::unnecessary_wraps,
+            reason = "backend selection is fallible in builds that enable fewer backends"
+        )
+    )]
     pub fn new(backend: Backend) -> Result<Self, Error> {
         match backend {
             Backend::Vello => {
@@ -135,6 +148,7 @@ impl Renderer {
     }
 
     /// The implementation chosen by this renderer's host.
+    #[must_use = "inspect the renderer selected by the host"]
     pub const fn backend(&self) -> Backend {
         match self.0 {
             #[cfg(feature = "imaging_vello")]

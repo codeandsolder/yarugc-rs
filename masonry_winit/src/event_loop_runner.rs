@@ -356,7 +356,7 @@ impl core::fmt::Display for RunError {
             Self::RendererUnavailable(backend) => {
                 write!(f, "renderer {} is not enabled", backend.name())
             }
-            Self::EventLoop(err) => err.fmt(f),
+            Self::EventLoop(err) => core::fmt::Display::fmt(err, f),
         }
     }
 }
