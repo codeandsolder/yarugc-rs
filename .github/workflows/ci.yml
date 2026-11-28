@@ -66,10 +66,10 @@ jobs:
       dependency-quality: false
 
   duplicates:
-    uses: codeandsolder/ci-workflows/.github/workflows/clone-regression.yml@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+    uses: codeandsolder/ci-workflows/.github/workflows/clone-regression.yml@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
 
   source-quality:
-    uses: codeandsolder/ci-workflows/.github/workflows/source-quality.yml@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+    uses: codeandsolder/ci-workflows/.github/workflows/source-quality.yml@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
 
   fmt:
     name: formatting
@@ -80,7 +80,7 @@ jobs:
 
       - name: Resolve compiler
         id: compiler
-        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
 
       - name: Install resolved Rust toolchain
         uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
@@ -89,7 +89,7 @@ jobs:
           components: rustfmt
 
       - name: Setup mandatory sccache
-        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
         with:
           rust-toolchain: ${{ steps.compiler.outputs.channel }}
 
@@ -152,7 +152,7 @@ jobs:
 
       - name: Finalize mandatory sccache
         if: always()
-        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
 
   clippy-stable:
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
@@ -167,7 +167,7 @@ jobs:
 
       - name: Resolve compiler
         id: compiler
-        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
         with:
           validation-tier: release
           rust-toolchain: ${{ env.RUST_STABLE_VER }}
@@ -188,7 +188,7 @@ jobs:
         run: sudo apt-get update; sudo apt-get install --no-install-recommends libasound2-dev libudev-dev libfontconfig1-dev
 
       - name: Setup mandatory sccache
-        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
         with:
           rust-toolchain: ${{ steps.compiler.outputs.channel }}
 
@@ -212,7 +212,7 @@ jobs:
 
       - name: Finalize mandatory sccache
         if: always()
-        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
 
   clippy-stable-wasm:
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
@@ -224,7 +224,7 @@ jobs:
 
       - name: Resolve compiler
         id: compiler
-        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
         with:
           validation-tier: release
           rust-toolchain: ${{ env.RUST_STABLE_VER }}
@@ -242,7 +242,7 @@ jobs:
           tool: cargo-hack
 
       - name: Setup mandatory sccache
-        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
         with:
           rust-toolchain: ${{ steps.compiler.outputs.channel }}
 
@@ -266,7 +266,7 @@ jobs:
 
       - name: Finalize mandatory sccache
         if: always()
-        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
 
   test-native:
     name: cargo test
@@ -281,7 +281,7 @@ jobs:
 
       - name: Resolve compiler
         id: compiler
-        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
 
       - name: Install resolved Rust toolchain
         uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
@@ -310,7 +310,7 @@ jobs:
           tool: cargo-nextest
 
       - name: Setup mandatory sccache
-        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
         with:
           rust-toolchain: ${{ steps.compiler.outputs.channel }}
 
@@ -353,7 +353,7 @@ jobs:
 
       - name: Finalize mandatory sccache
         if: always()
-        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
 
   miri:
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
@@ -364,7 +364,7 @@ jobs:
 
       - name: Resolve compiler
         id: compiler
-        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
 
       - name: Install resolved Rust toolchain
         uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
@@ -373,7 +373,7 @@ jobs:
           components: miri
 
       - name: Setup mandatory sccache
-        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
         with:
           rust-toolchain: ${{ steps.compiler.outputs.channel }}
 
@@ -382,7 +382,7 @@ jobs:
 
       - name: Finalize mandatory sccache
         if: always()
-        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
 
   test-wasm:
     name: cargo test (wasm32)
@@ -393,7 +393,7 @@ jobs:
 
       - name: Resolve compiler
         id: compiler
-        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
 
       - name: Install resolved Rust toolchain
         uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
@@ -402,7 +402,7 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Setup mandatory sccache
-        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
         with:
           rust-toolchain: ${{ steps.compiler.outputs.channel }}
 
@@ -427,7 +427,7 @@ jobs:
 
       - name: Finalize mandatory sccache
         if: always()
-        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
 
   check-stable-android:
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
@@ -441,7 +441,7 @@ jobs:
 
       - name: Resolve compiler
         id: compiler
-        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
         with:
           validation-tier: release
           rust-toolchain: ${{ env.RUST_STABLE_VER }}
@@ -453,7 +453,7 @@ jobs:
           targets: aarch64-linux-android
 
       - name: Setup mandatory sccache
-        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
         with:
           rust-toolchain: ${{ steps.compiler.outputs.channel }}
 
@@ -465,7 +465,7 @@ jobs:
 
       - name: Finalize mandatory sccache
         if: always()
-        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
 
   check-msrv:
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
@@ -480,7 +480,7 @@ jobs:
 
       - name: Resolve compiler
         id: compiler
-        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
         with:
           validation-tier: release
           rust-toolchain: ${{ env.RUST_MIN_VER }}
@@ -500,7 +500,7 @@ jobs:
         run: sudo apt-get update; sudo apt-get install --no-install-recommends libasound2-dev libudev-dev libfontconfig1-dev
 
       - name: Setup mandatory sccache
-        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
         with:
           rust-toolchain: ${{ steps.compiler.outputs.channel }}
 
@@ -515,7 +515,7 @@ jobs:
 
       - name: Finalize mandatory sccache
         if: always()
-        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
 
   check-msrv-wasm:
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
@@ -527,7 +527,7 @@ jobs:
 
       - name: Resolve compiler
         id: compiler
-        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
         with:
           validation-tier: release
           rust-toolchain: ${{ env.RUST_MIN_VER }}
@@ -544,7 +544,7 @@ jobs:
           tool: cargo-hack
 
       - name: Setup mandatory sccache
-        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
         with:
           rust-toolchain: ${{ steps.compiler.outputs.channel }}
 
@@ -559,7 +559,7 @@ jobs:
 
       - name: Finalize mandatory sccache
         if: always()
-        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
 
   doc:
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
@@ -573,7 +573,7 @@ jobs:
 
       - name: Resolve compiler
         id: compiler
-        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
 
       - name: Install resolved Rust toolchain
         uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
@@ -581,7 +581,7 @@ jobs:
           toolchain: ${{ steps.compiler.outputs.channel }}
 
       - name: Setup mandatory sccache
-        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
         with:
           rust-toolchain: ${{ steps.compiler.outputs.channel }}
 
@@ -604,7 +604,7 @@ jobs:
 
       - name: Finalize mandatory sccache
         if: always()
-        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
+        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@c91a4c750313d013131dd9b5cda15d1523cf81b6 # main
 
   typos:
     runs-on: ubuntu-24.04
