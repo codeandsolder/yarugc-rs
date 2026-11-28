@@ -357,7 +357,7 @@ pub struct WindowChrome {
 
 impl WindowChrome {
     /// Construct chrome around any content widget.
-    #[must_use]
+    #[must_use = "Use the constructed widget."]
     pub fn new(title: impl Into<ArcStr>, content: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
             title: Label::new(title)
@@ -382,21 +382,21 @@ impl WindowChrome {
 
     /// Delegate drag continuation to a native window manager. The chrome
     /// sends the initiating request but does not capture the compositor's pointer.
-    #[must_use]
+    #[must_use = "Use the configured chrome."]
     pub const fn with_delegated_drag(mut self) -> Self {
         self.delegate_drag = true;
         self
     }
 
     /// Insert arbitrary interactive content such as menus or tabs in the title strip.
-    #[must_use]
+    #[must_use = "Use the configured chrome."]
     pub fn with_header(mut self, header: NewWidget<impl Widget + ?Sized>) -> Self {
         self.header = Some(header.erased().into_pod());
         self
     }
 
     /// Set initial host capabilities.
-    #[must_use]
+    #[must_use = "Use the configured chrome."]
     pub fn with_state(mut self, state: ChromeState) -> Self {
         if state.minimized {
             self.controls[0] = ChromeButton::new(Control::Expand).prepare().into_pod();
@@ -409,14 +409,14 @@ impl WindowChrome {
     }
 
     /// Set chrome dimensions.
-    #[must_use]
+    #[must_use = "Use the configured chrome."]
     pub const fn with_metrics(mut self, metrics: ChromeMetrics) -> Self {
         self.metrics = metrics;
         self
     }
 
     /// Configure colors for this window's chrome.
-    #[must_use]
+    #[must_use = "Use the configured chrome."]
     pub const fn with_palette(mut self, palette: ChromePalette) -> Self {
         self.palette = palette;
         self
@@ -443,14 +443,14 @@ impl WindowChrome {
     }
 
     /// Stable content widget identity, independent of chrome visibility.
-    #[must_use]
+    #[must_use = "Use the stable content identifier."]
     pub const fn content_id(&self) -> WidgetId {
         self.content.id()
     }
 
     /// Test whether a source is one of this chrome's own control widgets.
     /// The host additionally compares the source against the chrome root ID.
-    #[must_use]
+    #[must_use = "Check whether the source is a chrome control."]
     pub fn owns_control(&self, source: WidgetId) -> bool {
         self.controls.iter().any(|control| control.id() == source)
     }
@@ -633,14 +633,10 @@ impl Widget for WindowChrome {
         };
         let length = child.saturating_add(extra.px());
         if self.state.visible && axis == Axis::Horizontal {
-            let controls = self
-                .buttons()
-                .into_iter()
-                .filter(|enabled| *enabled)
-                .count();
+            let controls = self.buttons().into_iter().map(u32::from).sum::<u32>();
             length.max(
                 (border
-                    + self.metrics.button_width.get() * controls as f64
+                    + self.metrics.button_width.get() * f64::from(controls)
                     + self.metrics.title_padding.get() * 2.0)
                     .px(),
             )
@@ -664,12 +660,12 @@ impl Widget for WindowChrome {
         ctx.set_clip_path(size.to_rect() + ctx.border_box_insets());
 
         let shown = self.buttons();
-        let count = shown.into_iter().filter(|enabled| *enabled).count();
+        let count: u32 = shown.into_iter().map(u32::from).sum();
         let button_width = self
             .metrics
             .button_width
             .get()
-            .min(width / (count.max(1) as f64));
+            .min(width / (f64::from(count.max(1))));
         let mut end = size.width - border;
         for (control, visible) in self.controls.iter().zip(shown).rev() {
             ctx.set_stashed(control, !visible);
@@ -902,7 +898,7 @@ impl ToolWindow {
     }
 
     /// The stable identity of this tool window's chrome.
-    #[must_use]
+    #[must_use = "Use the tool window identifier."]
     pub const fn id(&self) -> WidgetId {
         self.chrome.id()
     }
@@ -987,7 +983,9 @@ pub enum ToolWorkspaceAction {
 
 /// A base widget with independently movable and resizable embedded windows.
 /// Children are laid out in workspace coordinates and painted in z-order.
-/// Geometry changes do not replace the content widgets.
+/// Geometry changes do not replace the content widgets. Use
+/// [`Dimensions::STRETCH`](crate::properties::Dimensions::STRETCH) to fill
+/// the available workspace, rather than its background's preferred size.
 pub struct ToolWorkspace {
     background: WidgetPod<dyn Widget>,
     windows: Vec<ToolWindow>,
@@ -996,7 +994,7 @@ pub struct ToolWorkspace {
 
 impl ToolWorkspace {
     /// Construct a workspace over an arbitrary base widget.
-    #[must_use]
+    #[must_use = "Use the constructed widget."]
     pub fn new(background: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
             background: background.erased().into_pod(),
@@ -1006,20 +1004,20 @@ impl ToolWorkspace {
     }
 
     /// Add an initial tool window, above the preceding windows.
-    #[must_use]
+    #[must_use = "Use the configured workspace."]
     pub fn with_window(mut self, window: ToolWindow) -> Self {
         self.windows.push(window);
         self
     }
 
     /// Current frontmost window identity.
-    #[must_use]
+    #[must_use = "Inspect the frontmost tool window."]
     pub fn active_window(&self) -> Option<WidgetId> {
         self.windows.last().map(ToolWindow::id)
     }
 
     /// Requested normal bounds, independent of temporary maximize/collapse.
-    #[must_use]
+    #[must_use = "Inspect the window geometry."]
     pub fn normal_bounds(&self, id: WidgetId) -> Option<Rect> {
         self.windows
             .iter()
@@ -1035,7 +1033,7 @@ impl ToolWorkspace {
     }
 
     /// Remove an approved window. Returns false if it was absent.
-    #[must_use]
+    #[must_use = "Check whether the window was removed."]
     pub fn remove_window(this: &mut WidgetMut<'_, Self>, id: WidgetId) -> bool {
         let Some(index) = this
             .widget
@@ -1347,7 +1345,7 @@ mod tests {
         let content_id = content.id();
         let chrome = WindowChrome::new("Title", content)
             .prepare()
-            .with_props(Dimensions::MAX);
+            .with_props(Dimensions::STRETCH);
         let mut harness = TestHarness::create_with_size(test_property_set(), chrome, (240, 160));
         assert_eq!(
             harness
@@ -1386,7 +1384,7 @@ mod tests {
         let chrome = WindowChrome::new("Native", Label::new("content").prepare())
             .with_delegated_drag()
             .prepare()
-            .with_props(Dimensions::MAX);
+            .with_props(Dimensions::STRETCH);
         let mut harness = TestHarness::create_with_size(test_property_set(), chrome, (240, 160));
         harness.mouse_move((20., 20.));
         harness.mouse_button_press(PRIMARY);
@@ -1420,7 +1418,7 @@ mod tests {
         let chrome = ToolWorkspace::new(SizedBox::empty().prepare())
             .with_window(window)
             .prepare()
-            .with_props(Dimensions::MAX);
+            .with_props(Dimensions::STRETCH);
         let mut harness = TestHarness::create_with_size(test_property_set(), chrome, (400, 300));
         harness.mouse_move((40., 40.));
         harness.mouse_button_press(PRIMARY);
@@ -1510,7 +1508,7 @@ mod tests {
             .with_window(a)
             .with_window(b)
             .prepare()
-            .with_props(Dimensions::MAX);
+            .with_props(Dimensions::STRETCH);
         let mut harness = TestHarness::create_with_size(test_property_set(), workspace, (420, 300));
         assert_eq!(harness.root_widget().unwrap().active_window(), Some(b_id));
         harness.mouse_click_on(button, PRIMARY).unwrap();

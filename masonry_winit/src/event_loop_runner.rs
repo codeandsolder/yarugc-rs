@@ -215,7 +215,8 @@ impl NewWindow {
                 content_background: None,
                 ..Default::default()
             })
-            .prepare();
+            .prepare()
+            .with_props(masonry::properties::Dimensions::STRETCH);
         let id = chrome.id();
         self.root_widget = chrome.erased();
         (
@@ -389,6 +390,34 @@ impl Window {
             .get_widget(chrome.id)?
             .downcast::<WindowChrome>()?;
         (source == chrome.id || widget.owns_control(source)).then_some(*action)
+    }
+
+    fn handle_chrome_action(&self, action: ChromeAction) {
+        let handle = &self.handle;
+        match action {
+            ChromeAction::BeginMove(_) => {
+                if let Err(error) = handle.drag_window() {
+                    tracing::warn!(?error, "Native window move request failed");
+                }
+            }
+            ChromeAction::BeginResize(direction, _) => {
+                if let Err(error) =
+                    handle.drag_resize_window(masonry_resize_direction_to_winit(direction))
+                {
+                    tracing::warn!(?error, "Native window resize request failed");
+                }
+            }
+            ChromeAction::ToggleMaximized => handle.set_maximized(!handle.is_maximized()),
+            ChromeAction::ToggleMinimized => handle.set_minimized(true),
+            ChromeAction::ShowMenu(position) => {
+                handle.show_window_menu(LogicalPosition::new(position.x, position.y))
+            }
+            // Close policy belongs to the driver. Native drag continuation belongs to the compositor.
+            ChromeAction::Close
+            | ChromeAction::Drag(_)
+            | ChromeAction::EndDrag(_)
+            | ChromeAction::CancelDrag => {}
+        }
     }
 
     /// Returns the current base color.
@@ -1494,38 +1523,12 @@ impl MasonryState {
         match signal {
             RenderRootSignal::Action(action, widget_id) => {
                 if let Some(action) = window.chrome_action(widget_id, &action) {
-                    match action {
-                        ChromeAction::BeginMove(_) => {
-                            if let Err(error) = handle.drag_window() {
-                                tracing::warn!(?error, "Native window move request failed");
-                            }
-                        }
-                        ChromeAction::BeginResize(direction, _) => {
-                            if let Err(error) = handle
-                                .drag_resize_window(masonry_resize_direction_to_winit(direction))
-                            {
-                                tracing::warn!(?error, "Native window resize request failed");
-                            }
-                        }
-                        ChromeAction::ToggleMaximized => {
-                            handle.set_maximized(!handle.is_maximized())
-                        }
-                        ChromeAction::ToggleMinimized => handle.set_minimized(true),
-                        ChromeAction::Close => {
-                            app_driver.on_close_requested(
-                                window_id,
-                                &mut DriverCtx::new(self, event_loop),
-                            );
-                            return;
-                        }
-                        ChromeAction::ShowMenu(position) => {
-                            handle.show_window_menu(LogicalPosition::new(position.x, position.y))
-                        }
-                        // The compositor owns native drag continuation.
-                        ChromeAction::Drag(_)
-                        | ChromeAction::EndDrag(_)
-                        | ChromeAction::CancelDrag => {}
+                    if action == ChromeAction::Close {
+                        app_driver
+                            .on_close_requested(window_id, &mut DriverCtx::new(self, event_loop));
+                        return;
                     }
+                    window.handle_chrome_action(action);
                     need_redraw.insert(*handle_id);
                     return;
                 }
