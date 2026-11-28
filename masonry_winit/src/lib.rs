@@ -107,8 +107,8 @@ pub mod app {
         AppDriver, DriverCtx, GpuDeviceId, WgpuContext, WgpuLimits, WindowId,
     };
     pub use super::event_loop_runner::{
-        EventLoop, EventLoopBuilder, EventLoopProxy, MasonryState, MasonryUserEvent, NewWindow,
-        RunError, Window, WindowCreationError, run, run_with,
+        DecorationMode, EventLoop, EventLoopBuilder, EventLoopProxy, MasonryState,
+        MasonryUserEvent, NewWindow, RunError, Window, WindowCreationError, run, run_with,
     };
     pub use masonry_imaging::texture_render::Backend;
 

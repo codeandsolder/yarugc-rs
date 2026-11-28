@@ -226,6 +226,18 @@ pub trait Widget: AsDynWidget + Any {
     where
         Self: Sized;
 
+    /// Observe a pointer press in this subtree before its ordinary dispatch.
+    /// This notification visits ancestors even when the eventual target handles
+    /// the press. It is intended for container policy such as raising a tool
+    /// window; it does not consume the event or initiate pointer capture.
+    fn on_pointer_down_preview(
+        &mut self,
+        _ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _event: &crate::core::PointerButtonEvent,
+    ) {
+    }
+
     /// Handles a pointer event.
     ///
     /// Pointer events will target the widget under the pointer, and then the

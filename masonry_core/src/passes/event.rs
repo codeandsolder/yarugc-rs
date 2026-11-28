@@ -69,6 +69,7 @@ const fn try_event_position(event: &PointerEvent) -> Option<PhysicalPosition<f64
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum EventRoute {
+    Preview,
     Bubble,
     BubbleIncludingDisabled,
     TargetOnly,
@@ -96,7 +97,9 @@ fn run_event_pass<E>(
             break;
         };
 
-        if route == EventRoute::Bubble && node.item.state.is_disabled() {
+        if matches!(route, EventRoute::Bubble | EventRoute::Preview)
+            && node.item.state.is_disabled()
+        {
             // If the widget is disabled, we skip it and bubble to its parent.
             target_widget_id = parent_id;
             continue;
@@ -136,7 +139,7 @@ fn run_event_pass<E>(
                 class_set: &node.item.class_set,
             };
             pass_fn(widget, &mut ctx, &mut props, event);
-            is_handled = ctx.is_handled;
+            is_handled = route != EventRoute::Preview && ctx.is_handled;
         }
 
         merge_state_up(&mut root.widget_arena, widget_id);
@@ -285,6 +288,18 @@ pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEv
                 root.global_state.next_focused_widget = None;
             }
         }
+    }
+
+    if let PointerEvent::Down(press) = event {
+        let _ = run_event_pass(
+            root,
+            target_widget_id,
+            press,
+            EventRoute::Preview,
+            None,
+            |widget, ctx, props, press| widget.on_pointer_down_preview(ctx, props, press),
+            true,
+        );
     }
 
     let route = if matches!(event, PointerEvent::Cancel { .. }) {

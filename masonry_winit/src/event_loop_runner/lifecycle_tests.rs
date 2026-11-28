@@ -273,7 +273,7 @@ impl Lifecycle {
         assert_eq!(
             window
                 .render_root()
-                .get_layer_root(0)
+                .get_content_root()
                 .unwrap()
                 .get_prop::<ContentColor>()
                 .color,
@@ -284,7 +284,7 @@ impl Lifecycle {
         assert_eq!(
             window
                 .render_root()
-                .get_layer_root(0)
+                .get_content_root()
                 .unwrap()
                 .get_prop::<ContentColor>()
                 .color,
