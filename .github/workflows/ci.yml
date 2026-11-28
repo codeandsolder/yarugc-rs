@@ -42,21 +42,21 @@ permissions:
 
 jobs:
   strict-rust:
-    uses: codeandsolder/rust-skills2/.github/workflows/strict-rust.yml@6e3473415ed6be9cf25869ddeac80304ddb5a34b # main
+    uses: codeandsolder/rust-skills2/.github/workflows/strict-rust.yml@535609a4878f34a6697afea7ba3da04a454cc5f4 # main
     with:
       cargo-args: --locked --workspace --all-targets --all-features
       apt-packages: libasound2-dev libudev-dev libfontconfig1-dev
       allow-test-panics: true
 
   strict-tree-unsafe:
-    uses: codeandsolder/rust-skills2/.github/workflows/strict-rust.yml@6e3473415ed6be9cf25869ddeac80304ddb5a34b # main
+    uses: codeandsolder/rust-skills2/.github/workflows/strict-rust.yml@535609a4878f34a6697afea7ba3da04a454cc5f4 # main
     with:
       cargo-args: --locked -p tree_arena --all-targets --no-default-features
       allow-test-panics: true
       dependency-quality: false
 
   strict-wasm:
-    uses: codeandsolder/rust-skills2/.github/workflows/strict-rust.yml@6e3473415ed6be9cf25869ddeac80304ddb5a34b # main
+    uses: codeandsolder/rust-skills2/.github/workflows/strict-rust.yml@535609a4878f34a6697afea7ba3da04a454cc5f4 # main
     with:
       rust-targets: wasm32-unknown-unknown
       cargo-args: --locked --workspace --all-targets --all-features --target wasm32-unknown-unknown --exclude masonry_testing --exclude masonry --exclude masonry_winit --exclude xilem --exclude xilem_masonry --exclude placehero --exclude yarugc
