@@ -106,7 +106,8 @@ impl TextLayout {
                 }
                 breaker.finish();
             }
-            self.layout.align(alignment, TextAlignOptions::default());
+            self.layout
+                .set_alignment(alignment, TextAlignOptions::default());
             self.alignment = parameters;
         }
     }
