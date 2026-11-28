@@ -43,7 +43,10 @@ fn app_logic(state: &mut AppState) -> impl Element<AppState> + use<> {
                 state.start_opening = false;
                 memoized_await(
                     file,
-                    |file| gloo_file::futures::read_as_text(file),
+                    |file| {
+                        let file = file.clone();
+                        async move { gloo_file::futures::read_as_text(&file).await }
+                    },
                     handle_open_result,
                 )
             })
