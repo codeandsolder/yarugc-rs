@@ -91,8 +91,8 @@ fn split_spans_publish_every_byte_and_roundtrip_line_boundaries() {
             lengths.iter().map(|&len| usize::from(len)).sum::<usize>(),
             value.len()
         );
-        assert_eq!(node.character_positions().len(), lengths.len());
-        assert_eq!(node.character_widths().len(), lengths.len());
+        assert_eq!(node.character_positions().unwrap().len(), lengths.len());
+        assert_eq!(node.character_widths().unwrap().len(), lengths.len());
         let end = TextPosition {
             node: *id,
             character_index: lengths.len(),
