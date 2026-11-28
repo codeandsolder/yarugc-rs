@@ -49,6 +49,7 @@ mod text_input;
 mod text_layout;
 mod variable_label;
 mod virtual_scroll;
+mod window_chrome;
 mod zstack;
 
 // TODO - Split off widgets and other exports?
@@ -91,4 +92,5 @@ pub use self::text_area::*;
 pub use self::text_input::*;
 pub use self::variable_label::*;
 pub use self::virtual_scroll::*;
+pub use self::window_chrome::*;
 pub use self::zstack::*;

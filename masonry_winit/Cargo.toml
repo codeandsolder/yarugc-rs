@@ -27,6 +27,7 @@ imaging_skia = ["masonry_imaging/imaging_skia"]
 tracy = ["dep:tracing-tracy", "masonry_core/tracy"]
 
 [dependencies]
+masonry.workspace = true
 masonry_core.workspace = true
 winit.workspace = true
 tracing = { workspace = true, features = ["default"] }
@@ -47,13 +48,6 @@ wgpu = { workspace = true, features = ["dx12", "vulkan", "gles"] }
 [target.'cfg(target_vendor = "apple")'.dependencies]
 # Metal also integrates with CoreAnimation during macOS window resizing.
 wgpu = { workspace = true, features = ["metal"] }
-
-[dev-dependencies]
-# We don't use the "workspace" dependency here, because this makes a loop in publishing.
-# This does mean that this dev-dependency edge won't be recorded in the uploaded Cargo.toml,
-# but that's only an issue for crater?
-# See https://github.com/rust-lang/cargo/issues/4242
-masonry = { path = "../masonry", default-features = false }
 
 [lints]
 workspace = true

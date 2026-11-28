@@ -379,7 +379,7 @@ where
     fn on_window_created(&mut self, _id: WindowId, window: &mut masonry_winit::app::Window) {
         let root = window.render_root();
         if let Some(root_widget) = root
-            .get_layer_root(0)
+            .get_content_root()
             .and_then(|root| root.downcast::<masonry::widgets::Passthrough>())
         {
             let fallback = root_widget.inner().inner_id();

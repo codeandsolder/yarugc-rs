@@ -9,12 +9,13 @@ use std::sync::{Arc, mpsc};
 use accesskit_winit::Adapter;
 use copypasta::nop_clipboard::NopClipboardContext;
 use copypasta::{ClipboardContext, ClipboardProvider};
+use masonry::widgets::{ChromeAction, ChromePalette, ChromeState, WindowChrome};
 use masonry_core::app::{
     RenderRoot, RenderRootOptions, RenderRootSignal, VisualLayerKind, WindowSizePolicy,
 };
 use masonry_core::core::keyboard::{Key, KeyState};
 use masonry_core::core::{
-    DefaultProperties, ErasedAction, NewWidget, TextEvent, Widget, WindowEvent,
+    DefaultProperties, ErasedAction, NewWidget, TextEvent, Widget, WidgetId, WindowEvent,
 };
 use masonry_core::peniko::Color;
 use masonry_core::util::Instant;
@@ -23,11 +24,13 @@ use masonry_imaging::{Layer as ImagingLayer, PreparedFrame};
 use tracing::{info, info_span, trace};
 use ui_events_winit::{WindowEventReducer, WindowEventTranslation};
 use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalSize;
+use winit::dpi::{LogicalPosition, PhysicalSize};
 use winit::error::{EventLoopError, OsError};
 use winit::event::WindowEvent as WinitWindowEvent;
 use winit::event_loop::{ActiveEventLoop, OwnedDisplayHandle};
-use winit::window::{Window as WindowHandle, WindowAttributes, WindowId as HandleId};
+use winit::window::{
+    Window as WindowHandle, WindowAttributes, WindowButtons, WindowId as HandleId,
+};
 
 use crate::app::{
     AppDriver, DriverCtx, GpuDeviceId, WgpuContext, WgpuLimits, masonry_resize_direction_to_winit,
@@ -88,6 +91,40 @@ impl std::error::Error for WindowCreationError {
     }
 }
 
+/// Who renders a native window's decorations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DecorationMode {
+    /// Render shared Masonry chrome inside the application surface.
+    Custom,
+    /// Ask the platform/compositor for decorations. Wayland compositors
+    /// that do not support server-side decoration may provide none.
+    Native,
+}
+
+impl Default for DecorationMode {
+    fn default() -> Self {
+        if cfg!(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "netbsd",
+            target_os = "dragonfly"
+        )) {
+            Self::Custom
+        } else {
+            Self::Native
+        }
+    }
+}
+
+#[derive(Debug)]
+struct NativeChrome {
+    id: WidgetId,
+    requested_visible: bool,
+    state: ChromeState,
+    applied: ChromeState,
+}
+
 /// A container for a window yet to be created.
 ///
 /// This is stored inside [`MasonryState`] and will be created during the `resumed` event.
@@ -106,6 +143,8 @@ pub struct NewWindow {
     /// [`Window`]: crate::winit::window::Window
     /// [`Window::default_attributes()`]: crate::winit::window::Window::default_attributes()
     pub attributes: WindowAttributes,
+    /// Choose shared or platform-rendered window chrome.
+    pub decoration_mode: DecorationMode,
     /// The widget which will take up the entire contents of the new window.
     pub root_widget: NewWidget<dyn Widget>,
     /// The base color of the window.
@@ -137,10 +176,58 @@ impl NewWindow {
         Self {
             id,
             attributes,
+            decoration_mode: DecorationMode::default(),
             root_widget,
             base_color: Color::BLACK,
             default_properties: None,
         }
+    }
+
+    /// Select how decorations are rendered, independently of whether they
+    /// are currently visible.
+    pub const fn with_decoration_mode(mut self, mode: DecorationMode) -> Self {
+        self.decoration_mode = mode;
+        self
+    }
+
+    fn prepare_chrome(mut self) -> (Self, WidgetId, Option<NativeChrome>) {
+        let content_id = self.root_widget.id();
+        if self.decoration_mode == DecorationMode::Native {
+            return (self, content_id, None);
+        }
+        let requested_visible = self.attributes.decorations;
+        let buttons = self.attributes.enabled_buttons;
+        let state = ChromeState {
+            visible: requested_visible && self.attributes.fullscreen.is_none(),
+            resizable: self.attributes.resizable,
+            can_minimize: buttons.contains(WindowButtons::MINIMIZE),
+            can_maximize: buttons.contains(WindowButtons::MAXIMIZE),
+            can_close: buttons.contains(WindowButtons::CLOSE),
+            maximized: self.attributes.maximized,
+            minimized: false,
+            active: self.attributes.active,
+        };
+        self.attributes.decorations = false;
+        let chrome = WindowChrome::new(self.attributes.title.clone(), self.root_widget)
+            .with_delegated_drag()
+            .with_state(state)
+            .with_palette(ChromePalette {
+                content_background: None,
+                ..Default::default()
+            })
+            .prepare();
+        let id = chrome.id();
+        self.root_widget = chrome.erased();
+        (
+            self,
+            content_id,
+            Some(NativeChrome {
+                id,
+                requested_visible,
+                state,
+                applied: state,
+            }),
+        )
     }
 
     /// Sets the base color of the new window.
@@ -169,6 +256,7 @@ pub struct Window {
     pub(crate) accesskit_adapter: Adapter,
     event_reducer: WindowEventReducer,
     pub(crate) render_root: RenderRoot,
+    chrome: Option<NativeChrome>,
     pub(crate) base_color: Color,
     application_properties: Arc<DefaultProperties>,
     last_anim: Option<Instant>,
@@ -177,8 +265,10 @@ pub struct Window {
 }
 
 impl Window {
-    pub(crate) fn new(
+    fn new(
         new_window: NewWindow,
+        content_id: WidgetId,
+        chrome: Option<NativeChrome>,
         handle: Arc<WindowHandle>,
         accesskit_adapter: Adapter,
         signal_sender: Sender<(WindowId, RenderRootSignal)>,
@@ -203,12 +293,18 @@ impl Window {
                 },
                 options,
             ),
+            chrome,
             base_color: new_window.base_color,
             application_properties,
             last_anim: None,
             present_mode: wgpu::PresentMode::AutoVsync,
             surface_recovery_attempted: false,
         };
+        assert!(
+            window.render_root.set_content_root(content_id),
+            "host content must belong to the base layer"
+        );
+        window.sync_chrome();
         if !window.handle.has_focus() {
             window
                 .render_root
@@ -225,6 +321,74 @@ impl Window {
     /// Access the [`RenderRoot`] of this window.
     pub const fn render_root(&mut self) -> &mut RenderRoot {
         &mut self.render_root
+    }
+
+    /// Set both the compositor metadata and the shared visible title.
+    pub fn set_title(&mut self, title: &str) {
+        self.handle.set_title(title);
+        if let Some(chrome) = &self.chrome {
+            let _ = self.render_root.edit_widget(chrome.id, |mut widget| {
+                WindowChrome::set_title(&mut widget, title);
+            });
+        }
+    }
+
+    /// Show or hide the selected decoration implementation.
+    pub fn set_decorations(&mut self, visible: bool) {
+        if let Some(chrome) = &mut self.chrome {
+            chrome.requested_visible = visible;
+            self.sync_chrome();
+        } else {
+            self.handle.set_decorations(visible);
+        }
+    }
+
+    /// Update resize permission and the shared resize handles.
+    pub fn set_resizable(&mut self, resizable: bool) {
+        self.handle.set_resizable(resizable);
+        if let Some(chrome) = &mut self.chrome {
+            chrome.state.resizable = resizable;
+            self.sync_chrome();
+        }
+    }
+
+    /// Update the available controls. The requested button mask is retained
+    /// even on Wayland, where Winit cannot query it from the compositor.
+    pub fn set_enabled_buttons(&mut self, buttons: WindowButtons) {
+        self.handle.set_enabled_buttons(buttons);
+        if let Some(chrome) = &mut self.chrome {
+            chrome.state.can_minimize = buttons.contains(WindowButtons::MINIMIZE);
+            chrome.state.can_maximize = buttons.contains(WindowButtons::MAXIMIZE);
+            chrome.state.can_close = buttons.contains(WindowButtons::CLOSE);
+            self.sync_chrome();
+        }
+    }
+
+    fn sync_chrome(&mut self) {
+        let Some(chrome) = &mut self.chrome else {
+            return;
+        };
+        let mut state = chrome.state;
+        state.visible = chrome.requested_visible && self.handle.fullscreen().is_none();
+        state.maximized = self.handle.is_maximized();
+        state.active = self.handle.has_focus();
+        if state == chrome.applied {
+            return;
+        }
+        chrome.applied = state;
+        let _ = self.render_root.edit_widget(chrome.id, |mut widget| {
+            WindowChrome::set_state(&mut widget, state);
+        });
+    }
+
+    fn chrome_action(&self, source: WidgetId, action: &ErasedAction) -> Option<ChromeAction> {
+        let chrome = self.chrome.as_ref()?;
+        let action = action.downcast_ref::<ChromeAction>()?;
+        let widget = self
+            .render_root
+            .get_widget(chrome.id)?
+            .downcast::<WindowChrome>()?;
+        (source == chrome.id || widget.owns_control(source)).then_some(*action)
     }
 
     /// Returns the current base color.
@@ -676,7 +840,7 @@ impl MasonryState {
     pub(crate) fn create_window(
         &mut self,
         event_loop: &ActiveEventLoop,
-        mut new_window: NewWindow,
+        new_window: NewWindow,
     ) -> Result<(), WindowCreationError> {
         if self.window_id_to_handle_id.contains_key(&new_window.id)
             || self
@@ -703,6 +867,7 @@ impl MasonryState {
             );
         }
 
+        let (mut new_window, content_id, chrome) = new_window.prepare_chrome();
         let visible = new_window.attributes.visible;
         // We always create the window as invisible so that we can
         // render the first frame before showing it to avoid flashing.
@@ -726,6 +891,8 @@ impl MasonryState {
 
         let window = Window::new(
             new_window,
+            content_id,
+            chrome,
             handle,
             adapter,
             self.signal_sender.clone(),
@@ -776,6 +943,7 @@ impl MasonryState {
         let Some(window) = self.windows.get_mut(&handle_id) else {
             return;
         };
+        window.sync_chrome();
         let size = window.render_root.size();
         if size.width == 0 || size.height == 0 {
             // Surface can't have a dimension of zero, remove the stale surface to save memory.
@@ -1125,6 +1293,7 @@ impl MasonryState {
                 window
                     .render_root
                     .handle_text_event(&TextEvent::WindowFocusChange(new_focus));
+                window.sync_chrome();
             }
             WinitWindowEvent::Occluded(false) => {
                 window.sync_geometry();
@@ -1324,6 +1493,42 @@ impl MasonryState {
 
         match signal {
             RenderRootSignal::Action(action, widget_id) => {
+                if let Some(action) = window.chrome_action(widget_id, &action) {
+                    match action {
+                        ChromeAction::BeginMove(_) => {
+                            if let Err(error) = handle.drag_window() {
+                                tracing::warn!(?error, "Native window move request failed");
+                            }
+                        }
+                        ChromeAction::BeginResize(direction, _) => {
+                            if let Err(error) = handle
+                                .drag_resize_window(masonry_resize_direction_to_winit(direction))
+                            {
+                                tracing::warn!(?error, "Native window resize request failed");
+                            }
+                        }
+                        ChromeAction::ToggleMaximized => {
+                            handle.set_maximized(!handle.is_maximized())
+                        }
+                        ChromeAction::ToggleMinimized => handle.set_minimized(true),
+                        ChromeAction::Close => {
+                            app_driver.on_close_requested(
+                                window_id,
+                                &mut DriverCtx::new(self, event_loop),
+                            );
+                            return;
+                        }
+                        ChromeAction::ShowMenu(position) => {
+                            handle.show_window_menu(LogicalPosition::new(position.x, position.y))
+                        }
+                        // The compositor owns native drag continuation.
+                        ChromeAction::Drag(_)
+                        | ChromeAction::EndDrag(_)
+                        | ChromeAction::CancelDrag => {}
+                    }
+                    need_redraw.insert(*handle_id);
+                    return;
+                }
                 trace!(
                     "Action {:?} on widget {:?}",
                     (*action).type_name(),
@@ -1365,7 +1570,7 @@ impl MasonryState {
                 }
             }
             RenderRootSignal::SetTitle(title) => {
-                handle.set_title(&title);
+                window.set_title(&title);
             }
             RenderRootSignal::DragWindow => {
                 // TODO - Handle return value?

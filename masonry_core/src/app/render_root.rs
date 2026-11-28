@@ -56,6 +56,8 @@ const INVALID_IME_AREA: Rect = Rect::new(f64::NAN, f64::NAN, f64::NAN, f64::NAN)
 ///
 /// This is also the type that owns the widget tree.
 pub struct RenderRoot {
+    /// Application content root, which may be inside host-owned chrome.
+    content_root: WidgetId,
     /// `WidgetPod` handle for the layer stack, which holds the root widget of each layer.
     pub(crate) layer_stack: WidgetPod<LayerStack>,
 
@@ -332,12 +334,14 @@ impl RenderRoot {
 
         // LayerStack can't use Dimensions::AUTO because it'll resolve to the window size.
         // Instead we want to always measure LayerStack, so it can measure its base layer.
+        let content_root = root_widget.id();
         let layer_stack = LayerStack::new(root_widget)
             .prepare()
             .with_props(Dimensions::MAX)
             .into_pod();
 
         let mut root = Self {
+            content_root,
             layer_stack,
             global_state: RenderRootState {
                 signal_sink: Box::new(signal_sink),
@@ -611,6 +615,41 @@ impl RenderRoot {
     }
 
     // --- MARK: ACCESS WIDGETS
+    /// Identify the application content inside a host-owned base-layer widget.
+    /// The content widget must be a registered descendant of the base layer;
+    /// its identity remains stable as host chrome is shown or hidden.
+    /// Returns false for an absent widget or one in an overlay layer.
+    #[must_use]
+    pub fn set_content_root(&mut self, content: WidgetId) -> bool {
+        let Some(base) = self.layer_root_id(0) else {
+            return false;
+        };
+        if !self.widget_path(content).contains(&base) {
+            return false;
+        }
+        self.content_root = content;
+        true
+    }
+
+    /// The application content widget, independent of host decorations.
+    #[must_use]
+    pub const fn content_root_id(&self) -> WidgetId {
+        self.content_root
+    }
+
+    /// Borrow the application content, rather than host-owned chrome.
+    pub fn get_content_root(&self) -> Option<WidgetRef<'_, dyn Widget>> {
+        self.get_widget(self.content_root)
+    }
+
+    /// Edit application content without depending on the host's root layout.
+    pub fn edit_content_root<R, W: Widget + FromDynWidget + ?Sized>(
+        &mut self,
+        f: impl FnOnce(WidgetMut<'_, W>) -> R,
+    ) -> Option<R> {
+        self.edit_widget(self.content_root, f)
+    }
+
     /// Returns a [`WidgetRef`] to the root widget of the given [layer](crate::doc::masonry_concepts#layers).
     pub fn get_layer_root(&self, layer_idx: usize) -> Option<WidgetRef<'_, dyn Widget>> {
         self.get_widget(self.layer_root_id(layer_idx)?)

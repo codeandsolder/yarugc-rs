@@ -183,6 +183,7 @@ mod window_view;
 
 pub use app::{AppState, ExitOnClose, RunError, Xilem};
 pub use driver::{MasonryDriver, async_action};
+pub use masonry_winit::app::DecorationMode;
 pub use window_options::WindowOptions;
 pub use window_view::{PodWindow, WindowView, window};
 

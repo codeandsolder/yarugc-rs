@@ -1,8 +1,9 @@
 // Copyright 2025 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
+use masonry_winit::app::{DecorationMode, Window as HostedWindow};
 use winit::dpi::{Position, Size};
-use winit::window::{Cursor, Icon, Window, WindowAttributes, WindowButtons, WindowLevel};
+use winit::window::{Cursor, Icon, WindowAttributes, WindowButtons, WindowLevel};
 
 // TODO: make this a type-state builder to force Xilem::new apps to define on_close?
 /// Attributes and callbacks of a window.
@@ -37,6 +38,7 @@ pub(crate) struct ReactiveWindowAttrs {
 /// These are attributes the user can change, so we cannot make them reactive.
 #[derive(Clone, Debug)]
 pub(crate) struct InitialAttrs {
+    pub(crate) decoration_mode: DecorationMode,
     inner_size: Option<Size>,
     position: Option<Position>,
     transparent: bool,
@@ -74,6 +76,7 @@ impl<State> WindowOptions<State> {
                 platform_specific: PlatformSpecificReactiveWindowAttrs::default(),
             },
             initial: InitialAttrs {
+                decoration_mode: DecorationMode::default(),
                 inner_size: None,
                 position: None,
                 transparent: false,
@@ -143,6 +146,12 @@ impl<State> WindowOptions<State> {
         self
     }
 
+    /// Select native or application-rendered chrome at window creation.
+    pub const fn with_decoration_mode(mut self, mode: DecorationMode) -> Self {
+        self.initial.decoration_mode = mode;
+        self
+    }
+
     /// Requests the window to be of specific dimensions.
     pub fn with_initial_inner_size<S: Into<Size>>(mut self, size: S) -> Self {
         self.initial.inner_size = Some(size.into());
@@ -206,12 +215,12 @@ impl<State> WindowOptions<State> {
         attrs
     }
 
-    pub(crate) fn rebuild(&self, prev: &Self, window: &Window) {
+    pub(crate) fn rebuild(&self, prev: &Self, window: &mut HostedWindow) {
         self.rebuild_reactive_window_attributes(prev, window);
         self.warn_for_changed_initial_attributes(prev);
     }
 
-    fn rebuild_reactive_window_attributes(&self, prev: &Self, window: &Window) {
+    fn rebuild_reactive_window_attributes(&self, prev: &Self, window: &mut HostedWindow) {
         let current = &self.reactive;
         let prev = &prev.reactive;
 
@@ -225,16 +234,16 @@ impl<State> WindowOptions<State> {
             window.set_enabled_buttons(current.enabled_buttons);
         }
         if current.cursor != prev.cursor {
-            window.set_cursor(current.cursor.clone());
+            window.handle().set_cursor(current.cursor.clone());
         }
         if current.min_inner_size != prev.min_inner_size {
-            window.set_min_inner_size(current.min_inner_size);
+            window.handle().set_min_inner_size(current.min_inner_size);
         }
         if current.max_inner_size != prev.max_inner_size {
-            window.set_max_inner_size(current.max_inner_size);
+            window.handle().set_max_inner_size(current.max_inner_size);
         }
         if current.window_level != prev.window_level {
-            window.set_window_level(current.window_level);
+            window.handle().set_window_level(current.window_level);
         }
         if current.decorations != prev.decorations {
             window.set_decorations(current.decorations);
@@ -243,13 +252,18 @@ impl<State> WindowOptions<State> {
         #[cfg(windows)]
         current
             .platform_specific
-            .rebuild(&prev.platform_specific, window);
+            .rebuild(&prev.platform_specific, window.handle());
     }
 
     fn warn_for_changed_initial_attributes(&self, prev: &Self) {
         let current = &self.initial;
         let prev = &prev.initial;
 
+        if current.decoration_mode != prev.decoration_mode {
+            tracing::warn!(
+                "decoration mode is fixed at window creation; change visibility instead"
+            );
+        }
         if current.inner_size != prev.inner_size {
             tracing::warn!(
                 "attempted to change inner_size attribute after window creation, this is not supported"
