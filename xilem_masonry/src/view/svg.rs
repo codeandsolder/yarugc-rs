@@ -6,7 +6,7 @@ use std::sync::Arc;
 use masonry::core::ArcStr;
 use masonry::properties::ObjectFit;
 use masonry::widgets;
-use usvg::Tree;
+use masonry::usvg::Tree;
 
 use crate::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use crate::view::Prop;

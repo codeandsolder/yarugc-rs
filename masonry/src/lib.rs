@@ -326,3 +326,5 @@ pub use masonry_core::{app, core, dpi, kurbo, layout, parley, peniko, ui_events,
 #[cfg(any(feature = "testing", test))]
 pub use masonry_testing as testing;
 pub use parley::{Alignment as TextAlign, AlignmentOptions as TextAlignOptions};
+#[cfg(feature = "svg")]
+pub use resvg::usvg;
