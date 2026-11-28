@@ -170,7 +170,7 @@ where
             logic,
             default_properties: None,
             default_base_color: BACKGROUND_COLOR,
-            backend: Backend::Vello,
+            backend: Backend::VelloHybrid,
             fonts: Vec::new(),
             on_start: None,
         }

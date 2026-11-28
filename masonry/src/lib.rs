@@ -139,7 +139,7 @@
 //!         ],
 //!         driver,
 //!         default_property_set(),
-//!         masonry_winit::app::Backend::Vello,
+//!         masonry_winit::app::Backend::VelloHybrid,
 //!     )
 //!     .unwrap();
 //! }

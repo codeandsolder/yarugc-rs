@@ -32,7 +32,7 @@ debuggable = true
 name = "android.permission.INTERNET"
 
 [features]
-default = ["imaging_vello"]
+default = ["imaging_vello_hybrid"]
 imaging_vello = ["masonry_winit/imaging_vello"]
 imaging_vello_hybrid = ["masonry_winit/imaging_vello_hybrid"]
 imaging_skia = ["masonry_winit/imaging_skia"]

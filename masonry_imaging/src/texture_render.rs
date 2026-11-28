@@ -73,6 +73,13 @@ pub enum Error {
     #[cfg(feature = "imaging_skia")]
     #[error("creating Skia renderer failed: {0}")]
     CreateSkia(#[source] crate::skia::Error),
+    /// The selected renderer does not expose a shared glyph atlas.
+    #[error("renderer {0:?} does not expose a shared glyph atlas")]
+    NoGlyphAtlas(Backend),
+    /// Preparing fixed-cell glyphs failed.
+    #[cfg(feature = "imaging_vello_hybrid")]
+    #[error("preparing shared glyph atlas failed: {0}")]
+    PrepareGlyphs(#[from] crate::vello_hybrid::PrepareOutlineGlyphsError),
     /// The selected renderer could not paint the frame.
     #[error("rendering with {backend:?} failed: {source}")]
     Render {
@@ -160,6 +167,44 @@ impl Renderer {
         }
     }
 
+    /// Prewarm a fixed-cell monochrome glyph subset in the selected renderer's atlas.
+    ///
+    /// The returned lease keeps glyphs resident while an external layer uses them.
+    /// # Errors
+    /// Returns an error if the backend cannot expose its atlas or a glyph cannot be cached.
+    #[cfg(feature = "imaging_vello_hybrid")]
+    pub fn prepare_outline_glyphs(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        font: &peniko::FontData,
+        font_size: f32,
+        hint: bool,
+        glyph_ids: &[u32],
+    ) -> Result<crate::vello_hybrid::PreparedOutlineGlyphs, Error> {
+        match &mut self.0 {
+            Inner::VelloHybrid(renderer) => {
+                renderer.prepare_outline_glyphs(device, queue, font, font_size, hint, glyph_ids)
+            }
+            #[cfg(feature = "imaging_vello")]
+            Inner::Vello(_) => Err(Error::NoGlyphAtlas(Backend::Vello)),
+            #[cfg(feature = "imaging_skia")]
+            Inner::Skia(_) => Err(Error::NoGlyphAtlas(Backend::Skia)),
+        }
+    }
+
+    /// Cache residency on the currently initialized device.
+    #[cfg(feature = "imaging_vello_hybrid")]
+    pub fn glyph_atlas_stats(&self) -> Option<crate::vello_hybrid::GlyphAtlasStats> {
+        match &self.0 {
+            Inner::VelloHybrid(renderer) => renderer.glyph_atlas_stats(),
+            #[cfg(feature = "imaging_vello")]
+            Inner::Vello(_) => None,
+            #[cfg(feature = "imaging_skia")]
+            Inner::Skia(_) => None,
+        }
+    }
+
     /// Render the given Masonry paint output into the provided target texture.
     /// # Errors
     /// Returns an error if backend initialization or rendering fails.
@@ -235,6 +280,11 @@ mod shared_texture_renderer {
     impl<R, K: Eq> RendererCache<R, K> {
         pub(super) const fn new() -> Self {
             Self { entry: None }
+        }
+
+        #[cfg(feature = "imaging_vello_hybrid")]
+        pub(super) fn get(&self) -> Option<&R> {
+            self.entry.as_ref().map(|(_, renderer)| renderer)
         }
 
         pub(super) fn get_or_try_init<E>(
@@ -440,6 +490,27 @@ mod hybrid {
             Self {
                 inner: RendererCache::new(),
             }
+        }
+
+        pub(super) fn prepare_outline_glyphs(
+            &mut self,
+            device: &wgpu::Device,
+            queue: &wgpu::Queue,
+            font: &peniko::FontData,
+            font_size: f32,
+            hint: bool,
+            glyph_ids: &[u32],
+        ) -> Result<crate::vello_hybrid::PreparedOutlineGlyphs, Error> {
+            let renderer = self
+                .inner
+                .get_or_try_init((device.clone(), queue.clone()), || {
+                    Ok::<_, Error>(new_target_renderer(device.clone(), queue.clone()))
+                })?;
+            Ok(renderer.prepare_outline_glyphs(font, font_size, hint, glyph_ids)?)
+        }
+
+        pub(super) fn glyph_atlas_stats(&self) -> Option<crate::vello_hybrid::GlyphAtlasStats> {
+            self.inner.get()?.glyph_atlas_stats()
         }
 
         /// Render the given Masonry paint output into the provided target texture.

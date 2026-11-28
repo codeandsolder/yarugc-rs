@@ -9,7 +9,7 @@ use masonry_core::app::{RenderRoot, RenderRootOptions, RenderRootSignal, VisualL
 use masonry_core::core::{NewWidget, Widget};
 use masonry_core::imaging::record::Scene;
 use masonry_imaging::PreparedFrame;
-use masonry_imaging::texture_render::{RenderTarget, Renderer};
+use masonry_imaging::texture_render::{Backend, RenderTarget, Renderer};
 use peniko::Color;
 
 use crate::{AlphaMode, Compositor, Surface};
@@ -141,6 +141,10 @@ impl CachedWindow {
         if compositor.device() != device {
             return Err(RefreshError::DifferentDevice);
         }
+        let alpha_mode = match renderer.backend() {
+            Backend::Vello => AlphaMode::Straight,
+            Backend::VelloHybrid | Backend::Skia => AlphaMode::Premultiplied,
+        };
         let size = self.root.size();
         let extent = [size.width, size.height];
         let needs_rewrite = self.root.needs_rewrite_passes();
@@ -151,10 +155,9 @@ impl CachedWindow {
         }
         if !self.dirty.get()
             && !needs_rewrite
-            && self
-                .surface
-                .as_ref()
-                .is_some_and(|s| s.size() == extent && s.belongs_to(device))
+            && self.surface.as_ref().is_some_and(|s| {
+                s.size() == extent && s.belongs_to(device) && s.alpha_mode() == alpha_mode
+            })
         {
             return Ok(Refresh::Unchanged);
         }
@@ -169,14 +172,13 @@ impl CachedWindow {
             self.surface = None;
             return Ok(Refresh::Hidden);
         }
-        let reallocated = self
-            .surface
-            .as_ref()
-            .is_none_or(|s| s.size() != extent || !s.belongs_to(device));
+        let reallocated = self.surface.as_ref().is_none_or(|s| {
+            s.size() != extent || !s.belongs_to(device) || s.alpha_mode() != alpha_mode
+        });
         let replacement = if reallocated {
             Some(
                 compositor
-                    .create_surface(extent, AlphaMode::Straight)
+                    .create_surface(extent, alpha_mode)
                     .ok_or(RefreshError::InvalidExtent)?,
             )
         } else {

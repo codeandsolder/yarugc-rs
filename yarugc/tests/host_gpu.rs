@@ -245,7 +245,7 @@ fn cached_window_and_dynamic_layer_on_host_device() {
 #[ignore = "requires a working wgpu adapter; run explicitly on GPU hosts"]
 fn fixed_readouts_share_one_dynamic_layer() {
     use masonry::widgets::{Grid, GridParams};
-    use yarugc::{ReadoutError, ReadoutRenderer, ReadoutSlot};
+    use yarugc::{ReadoutError, ReadoutRenderer, ReadoutSlot, ReadoutStyle};
 
     const EXTENT: [u32; 2] = [2048, 512];
     const COUNT: usize = 256;
@@ -273,7 +273,7 @@ fn fixed_readouts_share_one_dynamic_layer() {
     .unwrap();
     eprintln!("readout adapter: {:?}", adapter.get_info());
     let compositor = Compositor::new(&device, wgpu::TextureFormat::Rgba8Unorm);
-    let mut renderer = Renderer::new(Backend::Vello).unwrap();
+    let mut renderer = Renderer::new(Backend::VelloHybrid).unwrap();
     let mut grid = Grid::with_dimensions(usize::from(COLUMNS), usize::from(ROWS));
     let mut ids = Vec::with_capacity(COUNT);
     for row in 0..ROWS {
@@ -317,14 +317,41 @@ fn fixed_readouts_share_one_dynamic_layer() {
         })
         .collect();
 
+    let font = peniko::FontData::new(peniko::Blob::new(std::sync::Arc::new(FONT)), 0);
     let glyphs = ReadoutRenderer::new(
+        &mut renderer,
         &device,
         &queue,
-        FONT,
-        14.0,
+        &font,
+        ReadoutStyle {
+            font_size: 14.0,
+            advance: None,
+            hint: false,
+        },
         "0123456789.+-− kMµ°m/s".chars(),
     )
     .unwrap();
+    let preflight = renderer.glyph_atlas_stats().unwrap();
+    assert!(preflight.entries > 0);
+    assert_eq!(glyphs.cell_size()[0], glyphs.cell_size()[0].ceil());
+    let second = ReadoutRenderer::new(
+        &mut renderer,
+        &device,
+        &queue,
+        &font,
+        ReadoutStyle {
+            font_size: 14.0,
+            advance: Some(12.5),
+            hint: false,
+        },
+        "0123".chars(),
+    )
+    .unwrap();
+    assert_eq!(second.cell_size()[0], 12.5);
+    let reused = renderer.glyph_atlas_stats().unwrap();
+    assert_eq!(reused.entries, preflight.entries);
+    assert!(reused.hits >= preflight.hits + 4);
+    drop(second);
     let mut batch = glyphs.prepare(&compositor, EXTENT, &slots).unwrap();
     assert_eq!(batch.cell_count(), COUNT * 10);
     assert!(batch.set_text(0, "−1.0 µm").unwrap());

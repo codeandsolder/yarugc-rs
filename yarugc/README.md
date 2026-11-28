@@ -6,13 +6,22 @@ redraw. Native GPU producers can update other surfaces independently. A prepared
 composition returned by the fallible `Compositor::prepare` reuses GPU placement buffers and texture bindings until geometry or
 ordering changes. Preparation rejects mismatched devices and unsupported buffer sizes. The host draws it over its own scene and presents.
 
+## Shared text rendering
+
+Ordinary text is shaped and positioned by Parley/HarfRust, and the native
+Vello Hybrid renderer lazily rasterizes missing glyphs into bounded GPU atlas
+pages. The same renderer supplies pinned glyph subsets to fixed-cell layers.
+Use the same FontData identity, physical size and hinting policy to reuse entries.
+Large or transformed outlines that cannot use the atlas remain GPU vector draws.
+
 ## Fixed-layout telemetry
 
 - Resolve widget geometry with `CachedWindow::slot(widget_id)` after layout.
   `SlotGeometry` retains the content box, physical transform and ancestor clips.
   `Placement` supports arbitrary affine transforms and convex clipping.
-- Create a shared `ReadoutRenderer` with font bytes, a pixel size and the desired
-  alphabet. `prepare` creates a retained `ReadoutBatch` for a window's slots.
+- Create a `ReadoutRenderer` from the existing window renderer, shared
+  `FontData`, `ReadoutStyle` and the desired alphabet. `ReadoutStyle` allows an
+  explicit physical cell advance, independent of the font’s natural spacing. `prepare` creates a retained `ReadoutBatch` for a window's slots.
 - Use `ReadoutBatch::set_text` to update fixed-width, right-aligned glyph cells.
   It validates characters and capacity before mutation. No layout, shaping,
   allocation or geometry rebuilding is needed for a value update.
@@ -22,13 +31,13 @@ ordering changes. Preparation rejects mismatched devices and unsupported buffer 
 - Compose the cached window surface, dynamic readout surface and any native GPU
   instrument surfaces in painter order. Reuse the prepared composition until
   placement/order/texture allocation changes. Reprepare slots after layout
-  changes; regenerate the glyph atlas when the desired physical font size changes.
+  changes; prepare a new glyph subset when the desired physical font size changes.
 
 This architecture deliberately does not perform general-purpose damage tracking.
 Window-local input routing, docking, and extraction of foreground/popup layers
 above dynamic content are subsequent work. The compositor accepts straight or
-premultiplied RGBA8 layers in painter order. Vello writes straight alpha; the
-compositor premultiplies before interpolation.
+premultiplied RGBA8 layers in painter order. Vello writes straight alpha; Hybrid writes premultiplied alpha. The
+compositor premultiplies straight-alpha input before interpolation.
 
 ## Validation
 

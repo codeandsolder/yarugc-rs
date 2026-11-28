@@ -315,7 +315,7 @@ jobs:
           # Check that doc file paths are correct
           CHECK_DOC_PATHS: "true"
 
-      - name: Verify backend-free compositor and imaging adapter
+      - name: Verify shared-atlas compositor and backend-free imaging adapter
         if: runner.os == 'Linux'
         run: |
           cargo check -p yarugc --locked --profile ci --lib

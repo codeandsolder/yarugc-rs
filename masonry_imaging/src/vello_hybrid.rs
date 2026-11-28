@@ -3,6 +3,8 @@
 
 use crate::headless_wgpu;
 
+pub use imaging_vello_hybrid::{GlyphAtlasStats, PrepareOutlineGlyphsError, PreparedOutlineGlyphs};
+
 /// Stable backend name for diagnostics.
 pub const BACKEND_NAME: &str = "imaging_vello_hybrid";
 
