@@ -92,11 +92,16 @@ impl TextLayout {
     fn align(&mut self, alignment: TextAlign, alignment_width: f32) {
         let parameters = Some((alignment, alignment_width));
         if self.alignment != parameters {
-            // Parley now records the alignment width on individual lines.
-            // Rebreak the existing shaped runs only when the actual container
-            // width differs from the wrapping constraint, preserving unwrapped
-            // Clip/Overflow labels and explicit paragraph boundaries.
-            if self.max_advance != Some(alignment_width) {
+            // Alignment is a line-breaking input in Parley 0.13. Apply it
+            // before rebuilding lines from the already shaped text, even when
+            // the wrapping and alignment widths are equal.
+            self.layout
+                .set_alignment(alignment, TextAlignOptions::default());
+            if self.max_advance == Some(alignment_width) {
+                self.layout.break_all_lines(self.max_advance);
+            } else {
+                // Keep wrapping independent from the container width for
+                // Clip/Overflow labels, including explicit paragraph breaks.
                 let mut breaker = self.layout.break_lines();
                 let wrapping_width = self.max_advance.unwrap_or(f32::MAX);
                 breaker.state_mut().set_layout_max_advance(wrapping_width);
@@ -106,8 +111,6 @@ impl TextLayout {
                 }
                 breaker.finish();
             }
-            self.layout
-                .set_alignment(alignment, TextAlignOptions::default());
             self.alignment = parameters;
         }
     }
@@ -398,6 +401,9 @@ impl Label {
             }
             builder.build_into(&mut layout.layout, &self.text);
         }
+        layout
+            .layout
+            .set_alignment(TextAlign::Start, TextAlignOptions::default());
         layout.layout.break_all_lines(max_advance);
 
         idx
@@ -681,6 +687,44 @@ mod tests {
                 .collect::<Vec<_>>(),
             ranges
         );
+    }
+
+    #[test]
+    fn alignment_changes_rebreak_shaped_runs_at_the_same_width() {
+        let mut fonts = FontContext::new();
+        fonts.collection.register_fonts(
+            crate::peniko::Blob::new(std::sync::Arc::new(masonry_testing::ROBOTO)),
+            None,
+        );
+        let mut context = LayoutContext::new();
+        let mut label = Label::new("first line\nshort")
+            .with_style(FontFamily::Single(FontFamilyName::named("Roboto")));
+        let width = 300.0;
+        let index = label.build_and_break(&mut fonts, &mut context, Some(width));
+        let entry = &mut label.layouts[index];
+        let ranges: Vec<_> = entry.layout.lines().map(|line| line.text_range()).collect();
+        let measured = entry.layout.width();
+        for (alignment, factor) in [
+            (TextAlign::Center, 0.5),
+            (TextAlign::End, 1.0),
+            (TextAlign::Start, 0.0),
+        ] {
+            entry.align(alignment, width);
+            assert_eq!(
+                entry
+                    .layout
+                    .lines()
+                    .map(|line| line.text_range())
+                    .collect::<Vec<_>>(),
+                ranges
+            );
+            for line in entry.layout.lines() {
+                let metrics = line.metrics();
+                let expected = (width - metrics.advance + metrics.hanging_advance) * factor;
+                assert!((metrics.offset - expected).abs() < 0.001);
+            }
+            assert_eq!(entry.layout.width(), measured);
+        }
     }
 
     #[test]

@@ -147,8 +147,8 @@ impl Widget for CustomWidget {
         text_layout_builder.push_default(StyleProperty::FontSize(24.0));
 
         let mut text_layout = text_layout_builder.build(&self.0);
-        text_layout.break_all_lines(None);
         text_layout.set_alignment(TextAlign::Start, TextAlignOptions::default());
+        text_layout.break_all_lines(None);
 
         // We can pass a transform matrix to rotate the text we render
         masonry::core::render_text(
