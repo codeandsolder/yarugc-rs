@@ -10,13 +10,19 @@ keywords = ["gui", "wgpu", "compositor"]
 categories = ["gui", "rendering"]
 readme = "README.md"
 
+[features]
+default = []
+readouts = ["dep:skrifa", "masonry_imaging/imaging_vello_hybrid"]
+
 [dependencies]
-skrifa.workspace = true
 bytemuck = "1.25.0"
 masonry_core.workspace = true
-masonry_imaging = { workspace = true, features = ["imaging_vello_hybrid"] }
+masonry_imaging.workspace = true
 wgpu.workspace = true
 peniko.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+skrifa = { workspace = true, optional = true }
 
 [dev-dependencies]
 masonry_imaging = { workspace = true, features = ["imaging_vello"] }

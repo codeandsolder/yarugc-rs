@@ -241,6 +241,7 @@ fn cached_window_and_dynamic_layer_on_host_device() {
     ));
 }
 
+#[cfg(feature = "readouts")]
 #[test]
 #[ignore = "requires a working wgpu adapter; run explicitly on GPU hosts"]
 fn fixed_readouts_share_one_dynamic_layer() {
@@ -572,6 +573,7 @@ fn fixed_readouts_share_one_dynamic_layer() {
 
 // Isolate GPU raster/composition using timestamps. Queue staging uploads happen
 // before the first encoder timestamp, and formatting is outside these intervals.
+#[cfg(feature = "readouts")]
 fn measure_readout_gpu(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

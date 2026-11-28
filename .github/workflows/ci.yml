@@ -319,6 +319,11 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           cargo check -p yarugc --locked --profile ci --lib
+          graph=$(cargo tree --locked -p yarugc --target x86_64-unknown-linux-gnu -e normal,build --prefix none --format '{p}')
+          if rg -q '^(imaging_vello|imaging_vello_hybrid|imaging_vello_cpu|imaging_skia|vello_gpu) v' <<< "$graph"; then
+            echo 'Backend-neutral YARUGC selected a concrete raster engine' >&2
+            exit 1
+          fi
           cargo test -p masonry_imaging --locked --profile ci --no-default-features --lib selection_tests
           tree=$(cargo tree --locked -p xilem_masonry --no-default-features -e normal,build --prefix none)
           ! rg "^tokio v" <<< "$tree"
