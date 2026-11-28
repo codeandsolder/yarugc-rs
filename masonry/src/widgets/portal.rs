@@ -169,6 +169,16 @@ pub(super) fn compute_pan_range(mut viewport: Range<f64>, target: Range<f64>) ->
 
 // --- MARK: METHODS
 impl<W: Widget + ?Sized> Portal<W> {
+    fn reveal_scrollbars(&mut self, ctx: &mut EventCtx<'_>) {
+        let reveal = |mut bar: WidgetMut<'_, ScrollBar>| {
+            ScrollBar::set_visibility(&mut bar, true, SCROLLBAR_ANIM_OVER_MILLIS);
+        };
+        ctx.mutate_child_later(&self.scrollbar_horizontal, reveal);
+        ctx.mutate_child_later(&self.scrollbar_vertical, reveal);
+        self.nanos_since_last_pointer_move = Some(0);
+        ctx.request_anim_frame();
+    }
+
     fn scrollbar_states(
         &self,
         portal: Size,
@@ -254,11 +264,11 @@ impl<W: Widget + ?Sized> Portal<W> {
             },
         );
 
-        if (pos - self.viewport_pos).hypot2() > 1e-12 {
+        if pos == self.viewport_pos {
+            false
+        } else {
             self.viewport_pos = pos;
             true
-        } else {
-            false
         }
     }
 
@@ -305,16 +315,22 @@ impl<W: Widget + FromDynWidget + ?Sized> Portal<W> {
     ///
     /// See [`Portal::constrain_horizontal`] for more details.
     pub fn set_constrain_horizontal(this: &mut WidgetMut<'_, Self>, constrain: bool) {
-        this.widget.constraints.constrain_horizontal = constrain;
-        this.ctx.request_layout();
+        if this.widget.constraints.constrain_horizontal != constrain {
+            this.widget.constraints.constrain_horizontal = constrain;
+            this.ctx.set_tab_focusable(this.widget.accepts_focus());
+            this.ctx.request_layout();
+        }
     }
 
     /// Sets whether to constrain the child vertically.
     ///
     /// See [`Portal::constrain_vertical`] for more details.
     pub fn set_constrain_vertical(this: &mut WidgetMut<'_, Self>, constrain: bool) {
-        this.widget.constraints.constrain_vertical = constrain;
-        this.ctx.request_layout();
+        if this.widget.constraints.constrain_vertical != constrain {
+            this.widget.constraints.constrain_vertical = constrain;
+            this.ctx.set_tab_focusable(this.widget.accepts_focus());
+            this.ctx.request_layout();
+        }
     }
 
     /// Sets whether the child's size must be greater than or equal the size of
@@ -324,8 +340,10 @@ impl<W: Widget + FromDynWidget + ?Sized> Portal<W> {
     ///
     /// [`content_must_fill`]: Portal::content_must_fill
     pub fn set_content_must_fill(this: &mut WidgetMut<'_, Self>, must_fill: bool) {
-        this.widget.constraints.must_fill = must_fill;
-        this.ctx.request_layout();
+        if this.widget.constraints.must_fill != must_fill {
+            this.widget.constraints.must_fill = must_fill;
+            this.ctx.request_layout();
+        }
     }
 
     /// Sets the scrolling "position" of the container.
@@ -420,20 +438,13 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
 
                 if self.pan_viewport_by_event_ctx(ctx, portal_size, content_size, delta) {
                     ctx.set_handled();
+                    if auto_hide_scroll_bar {
+                        self.reveal_scrollbars(ctx);
+                    }
                 }
             }
             PointerEvent::Move(_) if auto_hide_scroll_bar => {
-                let f = |mut bar: WidgetMut<'_, ScrollBar>| {
-                    if bar.widget.opacity.value() == 0. {
-                        bar.widget.opacity.move_to(1., SCROLLBAR_ANIM_OVER_MILLIS);
-                        bar.ctx.request_anim_frame();
-                    }
-                };
-                ctx.mutate_child_later(&self.scrollbar_horizontal, f);
-                ctx.mutate_child_later(&self.scrollbar_vertical, f);
-
-                self.nanos_since_last_pointer_move = Some(0);
-                ctx.request_anim_frame();
+                self.reveal_scrollbars(ctx);
             }
             _ => (),
         }
@@ -624,32 +635,30 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
         let cache = ctx.property_cache();
         let auto_hide_scroll_bar = props.get::<AutoHideScrollBar>(cache).0;
 
-        match self.nanos_since_last_pointer_move.take() {
-            None => {
-                let rest_opacity = if auto_hide_scroll_bar { 0. } else { 1. };
-                let f = move |bar: WidgetMut<'_, ScrollBar>| {
-                    bar.widget.opacity.move_to(rest_opacity, 0.);
-                };
-                ctx.mutate_child_later(&self.scrollbar_horizontal, f);
-                ctx.mutate_child_later(&self.scrollbar_vertical, f);
-            }
-            Some(mut since_last_move) if auto_hide_scroll_bar => {
-                since_last_move = since_last_move.saturating_add(interval);
-
-                if since_last_move >= VISIBILITY_TIMEOUT {
-                    let f = |mut bar: WidgetMut<'_, ScrollBar>| {
-                        bar.widget.opacity.move_to(0., SCROLLBAR_ANIM_OVER_MILLIS);
-                        bar.ctx.request_anim_frame();
-                    };
-                    ctx.mutate_child_later(&self.scrollbar_horizontal, f);
-                    ctx.mutate_child_later(&self.scrollbar_vertical, f);
-                } else {
-                    self.nanos_since_last_pointer_move = Some(since_last_move);
+        // Disabling autohide must cancel both the idle timer and any fade.
+        let (visible, millis) = match (
+            auto_hide_scroll_bar,
+            self.nanos_since_last_pointer_move.take(),
+        ) {
+            (false, _) => (true, 0.0),
+            (true, None) => (false, 0.0),
+            (true, Some(elapsed)) => {
+                let elapsed = elapsed.saturating_add(interval);
+                if elapsed < VISIBILITY_TIMEOUT {
+                    self.nanos_since_last_pointer_move = Some(elapsed);
                     ctx.request_anim_frame();
+                    return;
                 }
+                (false, SCROLLBAR_ANIM_OVER_MILLIS)
             }
-            Some(since_last_move) => self.nanos_since_last_pointer_move = Some(since_last_move),
-        }
+        };
+        // Apply after the current animation pass: the elapsed interval that
+        // triggered the timeout must not also advance the new fade.
+        let update = move |mut bar: WidgetMut<'_, ScrollBar>| {
+            ScrollBar::set_visibility(&mut bar, visible, millis);
+        };
+        ctx.mutate_child_later(&self.scrollbar_horizontal, update);
+        ctx.mutate_child_later(&self.scrollbar_vertical, update);
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
@@ -810,17 +819,17 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
         let content_size = self.content_size;
         let scroll_range = (content_size - portal_size).max(Size::ZERO);
 
-        let can_scroll_x = !self.constraints.constrain_horizontal && scroll_range.width > 1e-12;
-        let can_scroll_y = !self.constraints.constrain_vertical && scroll_range.height > 1e-12;
+        let can_scroll_x = !self.constraints.constrain_horizontal && scroll_range.width > 0.0;
+        let can_scroll_y = !self.constraints.constrain_vertical && scroll_range.height > 0.0;
 
         if can_scroll_x {
             node.set_scroll_x_min(0.0);
             node.set_scroll_x_max(scroll_range.width);
             node.set_scroll_x(self.viewport_pos.x);
-            if self.viewport_pos.x > 1e-12 {
+            if self.viewport_pos.x > 0.0 {
                 node.add_action(accesskit::Action::ScrollLeft);
             }
-            if self.viewport_pos.x + 1e-12 < scroll_range.width {
+            if self.viewport_pos.x < scroll_range.width {
                 node.add_action(accesskit::Action::ScrollRight);
             }
         }
@@ -829,10 +838,10 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
             node.set_scroll_y_min(0.0);
             node.set_scroll_y_max(scroll_range.height);
             node.set_scroll_y(self.viewport_pos.y);
-            if self.viewport_pos.y > 1e-12 {
+            if self.viewport_pos.y > 0.0 {
                 node.add_action(accesskit::Action::ScrollUp);
             }
-            if self.viewport_pos.y + 1e-12 < scroll_range.height {
+            if self.viewport_pos.y < scroll_range.height {
                 node.add_action(accesskit::Action::ScrollDown);
             }
         }
@@ -984,6 +993,78 @@ mod tests {
         harness.mouse_move((150., 50.));
         harness.animate_ms(300);
         assert_render_snapshot!(harness, "portal_scrollbar_shown_on_mouse_jiggle");
+    }
+
+    fn fade_opacity(harness: &TestHarness<Portal<SizedBox>>) -> f32 {
+        let id = harness.root_widget().unwrap().scrollbar_vertical.id();
+        harness
+            .get_widget_with_id(id)
+            .unwrap()
+            .downcast::<ScrollBar>()
+            .unwrap()
+            .fade_opacity()
+    }
+
+    #[test]
+    fn autohide_fade_reverses_without_restarting_and_can_be_disabled() {
+        let widget = Portal::new(SizedBox::empty().size(100.px(), 1000.px()).prepare())
+            .prepare()
+            .with_props(AutoHideScrollBar(true));
+        // No Collapsible property: width styling is independent of autohide.
+        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (200, 200));
+        assert_eq!(fade_opacity(&harness), 0.0);
+        harness.mouse_move((50., 50.));
+        harness.animate_ms(150);
+        assert_eq!(fade_opacity(&harness), 0.5);
+        harness.mouse_move((51., 50.));
+        harness.animate_ms(150);
+        assert_eq!(fade_opacity(&harness), 1.0);
+        harness.animate_ms(250); // idle timeout, not part of fade duration
+        assert_eq!(fade_opacity(&harness), 1.0);
+        harness.animate_ms(150);
+        assert_eq!(fade_opacity(&harness), 0.5);
+        harness.mouse_move((52., 50.));
+        harness.animate_ms(150);
+        assert_eq!(fade_opacity(&harness), 0.75);
+
+        harness
+            .edit_root_widget(|mut portal| {
+                portal.insert_prop(AutoHideScrollBar(false));
+            })
+            .unwrap();
+        harness.animate_ms(0);
+        assert_eq!(fade_opacity(&harness), 1.0);
+        harness.animate_ms(1000);
+        assert_eq!(fade_opacity(&harness), 1.0);
+        harness
+            .edit_root_widget(|mut portal| {
+                portal.insert_prop(AutoHideScrollBar(true));
+            })
+            .unwrap();
+        harness.animate_ms(0);
+        assert_eq!(fade_opacity(&harness), 0.0);
+    }
+
+    #[test]
+    fn autohidden_scrollbar_remains_visible_with_keyboard_focus() {
+        let widget = Portal::new(SizedBox::empty().size(100.px(), 1000.px()).prepare())
+            .prepare()
+            .with_props(AutoHideScrollBar(true));
+        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (200, 200));
+        let id = harness.root_widget().unwrap().scrollbar_vertical.id();
+        let hidden = harness.render().unwrap();
+        harness.focus_on(Some(id));
+        let focused = harness.render().unwrap();
+        assert_ne!(
+            focused, hidden,
+            "keyboard focus must reveal the hidden scrollbar"
+        );
+        harness.focus_on(None);
+        assert_eq!(
+            harness.render().unwrap(),
+            hidden,
+            "focus loss restores hidden state"
+        );
     }
 
     #[test]
@@ -1238,6 +1319,54 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    #[test]
+    fn constraints_update_focus_and_accessibility() {
+        let widget = Portal::new(SizedBox::empty().size(300.px(), 300.px()).prepare())
+            .constrain_horizontal(true)
+            .prepare();
+        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (100, 100));
+        let id = harness.root_id();
+        harness.focus_on(Some(id));
+        harness
+            .edit_root_widget(|mut portal| Portal::set_constrain_vertical(&mut portal, true))
+            .unwrap();
+        let _ = harness.redraw();
+        assert_eq!(harness.focused_widget_id(), None);
+        assert!(
+            !harness
+                .access_node(id)
+                .unwrap()
+                .data()
+                .supports_action(accesskit::Action::Focus)
+        );
+        harness
+            .edit_root_widget(|mut portal| Portal::set_constrain_horizontal(&mut portal, false))
+            .unwrap();
+        let _ = harness.redraw();
+        assert!(
+            harness
+                .access_node(id)
+                .unwrap()
+                .data()
+                .supports_action(accesskit::Action::Focus)
+        );
+        harness.focus_on(Some(id));
+        assert_eq!(harness.focused_widget_id(), Some(id));
+    }
+
+    #[test]
+    fn tiny_scroll_changes_and_range_shrink_preserve_exact_clamp() {
+        let mut portal = Portal::new(SizedBox::empty().prepare());
+        let viewport = Size::new(1.0, 1.0);
+        let content = Size::new(1.0, 1.0 + 1e-8);
+        let end = Point::new(0.0, content.height - viewport.height);
+        assert!(portal.set_viewport_pos_raw(viewport, content, Point::new(0.0, 1e-9)));
+        assert!(portal.set_viewport_pos_raw(viewport, content, Point::new(0.0, 1.0)));
+        assert_eq!(portal.viewport_pos, end);
+        assert!(portal.set_viewport_pos_raw(viewport, viewport, end));
+        assert_eq!(portal.viewport_pos, Point::ORIGIN);
     }
 
     // Helper function for panning tests

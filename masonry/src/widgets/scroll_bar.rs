@@ -48,7 +48,7 @@ pub struct ScrollBar {
     portal_size: Length,
     content_size: Length,
     focus_owner: Option<WidgetId>,
-    pub(crate) opacity: AnimatedF32,
+    opacity: AnimatedF32,
     grab_anchor: Option<f64>,
 }
 
@@ -163,11 +163,13 @@ impl ScrollBar {
 
     fn adjust_by_pixels(&mut self, delta_pixels: f64) -> bool {
         let scroll_range = self.scroll_range();
-        if scroll_range <= 1e-12 {
+        if scroll_range <= 0.0 || !delta_pixels.is_finite() {
             return false;
         }
         // Translate from a pixel delta in content space to a normalized cursor progress delta.
-        self.set_cursor_progress(self.cursor_progress + delta_pixels / scroll_range)
+        self.set_cursor_progress(
+            (self.cursor_progress + delta_pixels / scroll_range).clamp(0.0, 1.0),
+        )
     }
 
     /// Synchronizes model state without generating a user action. The parent
@@ -191,6 +193,28 @@ impl ScrollBar {
         {
             ctx.request_render();
         }
+    }
+
+    // The parent owns visibility policy; Collapsible only controls thumb width.
+    pub(super) fn set_visibility(this: &mut WidgetMut<'_, Self>, visible: bool, millis: f32) {
+        let target = f32::from(u8::from(visible));
+        let opacity = &mut this.widget.opacity;
+        if millis > 0.0 && opacity.target().to_bits() == target.to_bits() {
+            return;
+        }
+        let previous = opacity.value();
+        opacity.move_to(target, millis);
+        if opacity.value().to_bits() != previous.to_bits() {
+            this.ctx.request_paint_only();
+        }
+        if opacity.value().to_bits() != target.to_bits() {
+            this.ctx.request_anim_frame();
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) const fn fade_opacity(&self) -> f32 {
+        self.opacity.value()
     }
 
     fn emit_movement(&self, ctx: &mut EventCtx<'_>) {
@@ -404,20 +428,14 @@ impl Widget for ScrollBar {
     fn on_anim_frame(
         &mut self,
         ctx: &mut UpdateCtx<'_>,
-        props: &mut PropertiesMut<'_>,
+        _props: &mut PropertiesMut<'_>,
         interval: u64,
     ) {
-        let cache = ctx.property_cache();
-        let collapsible = props.get::<Collapsible>(cache).0;
-
-        if !collapsible {
-            self.opacity.move_to(1., 0.);
-            ctx.request_paint_only();
-            return;
-        }
-
+        let previous = self.opacity.value();
         let result = self.opacity.advance_nanos(interval);
-        ctx.request_paint_only();
+        if self.opacity.value().to_bits() != previous.to_bits() {
+            ctx.request_paint_only();
+        }
 
         if !result.is_completed() {
             ctx.request_anim_frame();
@@ -465,7 +483,7 @@ impl Widget for ScrollBar {
         let cache = ctx.property_cache();
         let collapsible = props.get::<Collapsible>(cache).0;
 
-        let opacity = if ctx.is_active() || ctx.is_hovered() {
+        let opacity = if ctx.is_active() || ctx.is_hovered() || ctx.is_focus_target() {
             1.0
         } else {
             self.opacity.value()
@@ -485,7 +503,11 @@ impl Widget for ScrollBar {
         let scrollbar_width = theme::SCROLLBAR_WIDTH;
 
         let size = ctx.content_box().size();
-        let inset_start = if !collapsible || ctx.is_hovered() || self.grab_anchor.is_some() {
+        let inset_start = if !collapsible
+            || ctx.is_hovered()
+            || ctx.is_focus_target()
+            || self.grab_anchor.is_some()
+        {
             cursor_padding
         } else {
             cursor_padding + scrollbar_width / 2.
@@ -539,10 +561,10 @@ impl Widget for ScrollBar {
                 node.set_scroll_x_min(0.0);
                 node.set_scroll_x_max(scroll_range);
                 node.set_scroll_x(value);
-                if self.cursor_progress > 1e-12 {
+                if self.cursor_progress > 0.0 {
                     node.add_action(accesskit::Action::ScrollLeft);
                 }
-                if scroll_range > 0.0 && self.cursor_progress + 1e-12 < 1.0 {
+                if scroll_range > 0.0 && self.cursor_progress < 1.0 {
                     node.add_action(accesskit::Action::ScrollRight);
                 }
             }
@@ -550,10 +572,10 @@ impl Widget for ScrollBar {
                 node.set_scroll_y_min(0.0);
                 node.set_scroll_y_max(scroll_range);
                 node.set_scroll_y(value);
-                if self.cursor_progress > 1e-12 {
+                if self.cursor_progress > 0.0 {
                     node.add_action(accesskit::Action::ScrollUp);
                 }
-                if scroll_range > 0.0 && self.cursor_progress + 1e-12 < 1.0 {
+                if scroll_range > 0.0 && self.cursor_progress < 1.0 {
                     node.add_action(accesskit::Action::ScrollDown);
                 }
             }
@@ -579,7 +601,10 @@ impl Widget for ScrollBar {
         ) {
             self.grab_anchor = None;
         }
-        if matches!(event, Update::HoveredChanged(_) | Update::ActiveChanged(_)) {
+        if matches!(
+            event,
+            Update::HoveredChanged(_) | Update::ActiveChanged(_) | Update::FocusChanged(_)
+        ) {
             ctx.request_paint_only();
         }
     }
@@ -735,6 +760,18 @@ mod tests {
             .mouse_click_on(id, Some(PointerButton::Secondary))
             .unwrap();
         assert!(harness.pop_action_erased().is_none());
+    }
+
+    #[test]
+    fn keyboard_scroll_can_reach_end_of_any_positive_range() {
+        for range in [f64::from_bits(1), 1e-300, 1e-13, 1.0, f64::MAX] {
+            let mut bar = ScrollBar::new(Axis::Vertical, Length::ZERO, range.px());
+            assert!(bar.adjust_by_pixels(f64::MAX));
+            assert_eq!(bar.cursor_progress(), 1.0);
+            assert!(bar.adjust_by_pixels(-f64::MAX));
+            assert_eq!(bar.cursor_progress(), 0.0);
+            assert!(!bar.adjust_by_pixels(f64::NAN));
+        }
     }
 
     #[test]
