@@ -162,3 +162,9 @@ inherits = "dev"
 debug = 0 # Don't compile debug info to reduce compilation artifact size for cache benefits.
 [profile.ci.package."*"]
 debug-assertions = true # Keep always on for dependencies for cache reuse.
+
+# Shared reviewed dependency-owner patches. Locked revisions track the generated families.
+[patch.crates-io]
+winit = { git = "https://github.com/codeandsolder/cargo-patches.git", branch = "generated/wayland-modernization" }
+wayland-backend = { git = "https://github.com/codeandsolder/cargo-patches.git", branch = "generated/wayland-modernization" }
+gpu-allocator = { git = "https://github.com/codeandsolder/cargo-patches.git", branch = "generated/hashbrown-017" }
