@@ -11,7 +11,7 @@
 //!
 //! If a `tracing` backend is already configured, this will not overwrite that.
 
-// TODO - Move this code out of masonry.
+// The widget engine emits tracing events; only a host may install a subscriber.
 
 use std::error::Error;
 use std::fmt;
@@ -177,7 +177,7 @@ impl Error for TracingSubscriberHasBeenSetError {}
 /// Verify that a tracing subscriber has not been set before or return with an error.
 fn verify_subscriber_has_not_been_set() -> Result<(), TracingSubscriberHasBeenSetError> {
     // The tracing_core::dispatcher::has_been_set function is doc(hidden).
-    // However, it is guaranteed to remain for the entire tracing_core 1.0 series,
+    // However, it is guaranteed to remain for the entire tracing-core 0.1 series,
     // as tracing depends on it, and it isn't documented as unsupported.
     if tracing_core::dispatcher::has_been_set() {
         return Err(TracingSubscriberHasBeenSetError);

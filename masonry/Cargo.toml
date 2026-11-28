@@ -19,7 +19,6 @@ targets = []
 [features]
 default = []
 svg = ["dep:resvg"]
-tracy = ["masonry_core/tracy"]
 testing = ["dep:masonry_testing"]
 
 [dependencies]

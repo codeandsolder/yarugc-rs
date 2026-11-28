@@ -36,7 +36,7 @@ use masonry_core::accesskit::{Action, ActionRequest, Node, Role, TreeId, TreeInf
 use masonry_core::anymore::AnyDebug;
 use masonry_core::app::{
     RenderRoot, RenderRootOptions, RenderRootSignal, VisualLayerKind, VisualLayerPlan,
-    WindowSizePolicy, try_init_test_tracing,
+    WindowSizePolicy,
 };
 use masonry_core::core::keyboard::{Code, Key, KeyState, NamedKey};
 use masonry_core::core::{
@@ -47,6 +47,10 @@ use masonry_core::core::{
 };
 use masonry_core::dpi::{LogicalPosition, LogicalSize, PhysicalSize};
 use masonry_core::kurbo::{Affine, Point, Rect, Vec2};
+use masonry_core::parley::{
+    FontContext,
+    fontique::{FallbackKey, Script},
+};
 use masonry_core::peniko::{Blob, Color};
 use masonry_core::util::Duration;
 
@@ -336,6 +340,21 @@ pub const ROBOTO: &[u8] = include_bytes!(concat!(
     "/resources/fonts/roboto/Roboto-Regular.ttf"
 ));
 
+/// Construct a deterministic font context with the bundled Roboto test font
+/// registered as the Latin-script fallback.
+#[must_use = "Pass the deterministic font context to the render root."]
+pub fn test_font_context() -> FontContext {
+    let mut context = masonry_core::app::empty_font_context();
+    let families = context
+        .collection
+        .register_fonts(Blob::new(Arc::new(ROBOTO)), None);
+    context.collection.append_fallbacks(
+        FallbackKey::new(Script::from_bytes(*b"Latn"), None),
+        families.iter().map(|(family, _)| *family),
+    );
+    context
+}
+
 impl<W: Widget> TestHarness<W> {
     // -- MARK: CREATE
     /// Builds harness with given root widget.
@@ -379,9 +398,7 @@ impl<W: Widget> TestHarness<W> {
         // Having a default subscriber is helpful for tests; swallowing errors means
         // we don't panic if the user has already set one, or a test creates multiple
         // harnesses.
-        let _ = try_init_test_tracing();
-
-        let data = Blob::new(Arc::new(ROBOTO));
+        let _ = masonry_diagnostics::try_init_test_tracing();
 
         let (signal_sender, signal_receiver) = mpsc::channel::<RenderRootSignal>();
 
@@ -405,11 +422,10 @@ impl<W: Widget> TestHarness<W> {
                 },
                 RenderRootOptions {
                     default_properties: Arc::new(default_props),
-                    use_system_fonts: false,
+                    font_context: test_font_context(),
                     size_policy: WindowSizePolicy::User,
                     size: window_size,
                     scale_factor: params.scale_factor,
-                    test_font: Some(data),
                 },
             ),
             access_tree: accesskit_consumer::Tree::new(dummy_tree_update, false),
@@ -1113,4 +1129,14 @@ impl accesskit_consumer::TreeChangeHandler for NoOpTreeChangeHandler {
     }
 
     fn node_removed(&mut self, _node: &accesskit_consumer::NodeRef<'_>) {}
+}
+
+#[cfg(test)]
+mod font_context_tests {
+    #[test]
+    fn deterministic_context_contains_only_the_test_font_family() {
+        let mut context = super::test_font_context();
+        assert_eq!(context.collection.family_names().count(), 1);
+        assert!(context.collection.family_id("Roboto").is_some());
+    }
 }

@@ -321,6 +321,29 @@ jobs:
           cargo check -p yarugc --locked --profile ci --lib
           cargo test -p masonry_imaging --locked --profile ci --no-default-features --lib selection_tests
 
+      - name: Verify host-owned font discovery and diagnostics
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          for package in masonry_core yarugc; do
+            graph=$(cargo tree --locked -p "$package" --target x86_64-unknown-linux-gnu -e normal,build --prefix none --format '{p}')
+            while read -r name _; do
+              case "$name" in
+                yeslogic-fontconfig-sys|masonry_diagnostics|tracing-subscriber|winit)
+                  echo "$package unexpectedly activates host-only dependency $name" >&2
+                  exit 1 ;;
+              esac
+            done <<< "$graph"
+          done
+          graph=$(cargo tree --locked -p xilem --target x86_64-unknown-linux-gnu -e normal,build --prefix none --format '{p}')
+          while read -r name _; do
+            case "$name" in
+              masonry_diagnostics|tracing-subscriber)
+                echo "Xilem activates diagnostics without an explicit request: $name" >&2
+                exit 1 ;;
+            esac
+          done <<< "$graph"
+
       - name: Run native window lifecycle regression
         if: runner.os == 'Linux'
         run: xvfb-run -a cargo test -p masonry_winit --locked --profile ci --lib native_window_lifecycle_and_gpu_recovery -- --ignored

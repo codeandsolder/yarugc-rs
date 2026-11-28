@@ -116,11 +116,10 @@ fn cached_window_and_dynamic_layer_on_host_device() {
             .with_props(Background::Color(Color::from_rgba8(255, 0, 0, 128))),
         RenderRootOptions {
             default_properties: Arc::new(DefaultProperties::new()),
-            use_system_fonts: false,
+            font_context: masonry_core::app::empty_font_context(),
             size_policy: WindowSizePolicy::User,
             size: PhysicalSize::new(4, 4),
             scale_factor: 1.0,
-            test_font: None,
         },
         |_| {},
     );
@@ -294,11 +293,10 @@ fn fixed_readouts_share_one_dynamic_layer() {
         NewWidget::new(grid).with_props(Dimensions::STRETCH),
         RenderRootOptions {
             default_properties: Arc::new(DefaultProperties::new()),
-            use_system_fonts: false,
+            font_context: masonry_core::app::empty_font_context(),
             size_policy: WindowSizePolicy::User,
             size: PhysicalSize::new(EXTENT[0], EXTENT[1]),
             scale_factor: 1.0,
-            test_font: None,
         },
         |_| {},
     );
@@ -639,11 +637,10 @@ fn content_window_refresh_uses_post_rewrite_extent() {
         NewWidget::new(SizedBox::empty().size(Length::ZERO, Length::ZERO)),
         RenderRootOptions {
             default_properties: Arc::new(DefaultProperties::new()),
-            use_system_fonts: false,
+            font_context: masonry_core::app::empty_font_context(),
             size_policy: WindowSizePolicy::Content,
             size: PhysicalSize::new(0, 0),
             scale_factor: 1.0,
-            test_font: None,
         },
         |_| {},
     );

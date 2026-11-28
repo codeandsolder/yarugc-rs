@@ -43,11 +43,10 @@ pub(crate) fn render_root(
         },
         RenderRootOptions {
             default_properties: Arc::new(masonry::theme::default_property_set()),
-            use_system_fonts: false,
+            font_context: masonry::app::empty_font_context(),
             size_policy: WindowSizePolicy::User,
             size: size.into(),
             scale_factor: 1.0,
-            test_font: None,
         },
     );
     (root, receive)
