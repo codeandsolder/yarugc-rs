@@ -668,7 +668,7 @@ mod tests {
         );
         let short_line = entry.layout.get(1).unwrap();
         let short = short_line.metrics();
-        let expected = (narrow - short.advance + short.trailing_whitespace) * 0.5;
+        let expected = (narrow - short.advance + short.hanging_advance) * 0.5;
         assert!(expected > 0.0);
         assert!((short.offset - expected).abs() < 0.001);
         assert_eq!(entry.layout.width(), long_width);

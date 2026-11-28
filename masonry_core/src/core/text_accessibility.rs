@@ -79,7 +79,7 @@ impl LayoutAccessibility {
             }
             runs.sort_by_key(|(run, _)| run.text_range().start);
             let mut previous = None;
-            for (run, run_offset) in runs.drain(..) {
+            for (run, run_offset) in runs.iter().cloned() {
                 let mut span = SpanData::new(run.text_range().start);
                 let mut node = text_run_node(&run, alignment, paragraph_rtl);
                 let mut span_offset = 0.0;
@@ -266,7 +266,7 @@ fn text_run_node<B: Brush>(
     if let Ok(font_ref) = FontRef::from_index(font.data.as_ref(), font.index)
         && let Ok(name) = font_ref.name()
     {
-        for n in name.name_record().iter() {
+        for n in name.name_record() {
             if n.name_id.get() == NameId::FAMILY_NAME {
                 if let Ok(string) = n.string(name.string_data()) {
                     node.set_font_family(string.to_string());
@@ -284,12 +284,10 @@ fn text_run_node<B: Brush>(
     if let Some(align) = alignment {
         node.set_text_align(match align {
             Alignment::Start if paragraph_rtl => TextAlign::Right,
-            Alignment::Start => TextAlign::Left,
+            Alignment::Start | Alignment::Left => TextAlign::Left,
             Alignment::End if paragraph_rtl => TextAlign::Left,
-            Alignment::End => TextAlign::Right,
-            Alignment::Left => TextAlign::Left,
+            Alignment::End | Alignment::Right => TextAlign::Right,
             Alignment::Center => TextAlign::Center,
-            Alignment::Right => TextAlign::Right,
             Alignment::Justify => TextAlign::Justify,
         });
     }
