@@ -336,7 +336,7 @@ jobs:
             graph=$(cargo tree --locked -p "$package" --target x86_64-unknown-linux-gnu -e normal,build --prefix none --format '{p}')
             while read -r name _; do
               case "$name" in
-                yeslogic-fontconfig-sys|masonry_diagnostics|tracing-subscriber|winit)
+                yeslogic-fontconfig-sys|masonry_diagnostics|tracing-subscriber|tracing-attributes|winit)
                   echo "$package unexpectedly activates host-only dependency $name" >&2
                   exit 1 ;;
               esac
