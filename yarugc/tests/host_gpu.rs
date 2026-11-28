@@ -331,11 +331,10 @@ fn fixed_readouts_share_one_dynamic_layer() {
         ),
         RenderRootOptions {
             default_properties: Arc::new(DefaultProperties::new()),
-            use_system_fonts: false,
+            font_context: masonry_core::app::empty_font_context(),
             size_policy: WindowSizePolicy::User,
             size: PhysicalSize::new(64, 32),
             scale_factor: 1.0,
-            test_font: None,
         },
         |_| {},
     );
