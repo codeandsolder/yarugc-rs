@@ -1,6 +1,7 @@
 // Copyright 2026 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
+//! Regression tests for text accessibility layout and selection.
 use std::sync::Arc;
 
 use masonry::accesskit::{Node, NodeId, Role, TextPosition, TreeId, TreeUpdate};
@@ -231,7 +232,7 @@ fn editor_ignores_accessible_selection_after_text_changes() {
         node: first_update.nodes[0].0,
         character_index: 2,
     };
-    let selection = masonry::accesskit::TextSelection {
+    let selection = accesskit::TextSelection {
         anchor: position,
         focus: position,
     };
