@@ -619,7 +619,7 @@ impl RenderRoot {
     /// The content widget must be a registered descendant of the base layer;
     /// its identity remains stable as host chrome is shown or hidden.
     /// Returns false for an absent widget or one in an overlay layer.
-    #[must_use]
+    #[must_use = "Check that the content root belongs to the base layer."]
     pub fn set_content_root(&mut self, content: WidgetId) -> bool {
         let Some(base) = self.layer_root_id(0) else {
             return false;
@@ -632,7 +632,7 @@ impl RenderRoot {
     }
 
     /// The application content widget, independent of host decorations.
-    #[must_use]
+    #[must_use = "Use the stable content widget identifier."]
     pub const fn content_root_id(&self) -> WidgetId {
         self.content_root
     }
