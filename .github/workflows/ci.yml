@@ -344,6 +344,16 @@ jobs:
             esac
           done <<< "$graph"
 
+      - name: Verify SVG does not discover system fonts
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          graph=$(cargo tree --locked -p masonry --features svg --target x86_64-unknown-linux-gnu -e normal,build --prefix none --format '{p} {f}')
+          if rg -q '^fontdb v[^ ]+ .*(fontconfig|memmap|fs)' <<< "$graph"; then
+            echo "SVG enabled host-owned font discovery" >&2
+            exit 1
+          fi
+
       - name: Run native window lifecycle regression
         if: runner.os == 'Linux'
         run: xvfb-run -a cargo test -p masonry_winit --locked --profile ci --lib native_window_lifecycle_and_gpu_recovery -- --ignored
