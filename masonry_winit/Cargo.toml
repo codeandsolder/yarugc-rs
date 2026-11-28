@@ -22,12 +22,15 @@ default = ["imaging_vello"]
 imaging_vello = ["masonry_imaging/imaging_vello"]
 imaging_vello_hybrid = ["masonry_imaging/imaging_vello_hybrid"]
 imaging_skia = ["masonry_imaging/imaging_skia"]
-# Enables tracing using tracy if the default Masonry tracing is used.
-# https://github.com/wolfpld/tracy can be connected to when this feature is enabled.
-tracy = ["dep:tracing-tracy", "masonry_core/tracy"]
+diagnostics = ["dep:masonry_diagnostics"]
+# Explicitly select a Tracy-enabled diagnostic subscriber and native frame markers.
+tracy = ["diagnostics", "dep:tracing-tracy", "masonry_diagnostics/tracy"]
 
 [dependencies]
+masonry.workspace = true
 masonry_core.workspace = true
+parley = { workspace = true, features = ["system"] }
+masonry_diagnostics = { workspace = true, optional = true }
 winit.workspace = true
 tracing = { workspace = true, features = ["default"] }
 tracing-tracy = { version = "0.11.4", optional = true }
@@ -36,7 +39,16 @@ pollster = "0.4.0"
 accesskit_winit.workspace = true
 masonry_imaging = { workspace = true, default-features = false }
 wgpu = { workspace = true, features = ["parking_lot"] }
-copypasta = "0.10.2"
+
+# Only the native host selects platform backends. Input translation does not
+# implicitly activate Winit defaults or a separate client-side title renderer.
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))'.dependencies]
+winit = { workspace = true, features = ["x11", "wayland", "wayland-dlopen"] }
+copypasta = { version = "0.10.2", default-features = false, features = ["x11"] }
+smithay-clipboard = { version = "0.7.3", default-features = false, features = ["dlopen"] }
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+copypasta = { version = "0.10.2", default-features = false }
 
 [target.'cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))'.dependencies]
 wgpu = { workspace = true, features = ["vulkan", "gles"] }
@@ -47,13 +59,6 @@ wgpu = { workspace = true, features = ["dx12", "vulkan", "gles"] }
 [target.'cfg(target_vendor = "apple")'.dependencies]
 # Metal also integrates with CoreAnimation during macOS window resizing.
 wgpu = { workspace = true, features = ["metal"] }
-
-[dev-dependencies]
-# We don't use the "workspace" dependency here, because this makes a loop in publishing.
-# This does mean that this dev-dependency edge won't be recorded in the uploaded Cargo.toml,
-# but that's only an issue for crater?
-# See https://github.com/rust-lang/cargo/issues/4242
-masonry = { path = "../masonry", default-features = false }
 
 [lints]
 workspace = true

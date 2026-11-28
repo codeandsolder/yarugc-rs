@@ -69,6 +69,7 @@ const fn try_event_position(event: &PointerEvent) -> Option<PhysicalPosition<f64
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum EventRoute {
+    Preview,
     Bubble,
     BubbleIncludingDisabled,
     TargetOnly,
@@ -96,7 +97,9 @@ fn run_event_pass<E>(
             break;
         };
 
-        if route == EventRoute::Bubble && node.item.state.is_disabled() {
+        if matches!(route, EventRoute::Bubble | EventRoute::Preview)
+            && node.item.state.is_disabled()
+        {
             // If the widget is disabled, we skip it and bubble to its parent.
             target_widget_id = parent_id;
             continue;
@@ -136,7 +139,7 @@ fn run_event_pass<E>(
                 class_set: &node.item.class_set,
             };
             pass_fn(widget, &mut ctx, &mut props, event);
-            is_handled = ctx.is_handled;
+            is_handled = route != EventRoute::Preview && ctx.is_handled;
         }
 
         merge_state_up(&mut root.widget_arena, widget_id);
@@ -207,6 +210,36 @@ fn capture_layer_pointer_events(root: &mut RenderRoot, event: &PointerEvent) {
     }
 }
 
+/// Update focus routing and notify containers before a press can be consumed.
+fn prepare_pointer_press(
+    root: &mut RenderRoot,
+    target: Option<WidgetId>,
+    press: &PointerButtonEvent,
+) {
+    let Some(target) = target else {
+        return;
+    };
+    root.global_state.focus_anchor = Some(target);
+    if let Some(focused) = root.global_state.focused_widget
+        && !root
+            .widget_arena
+            .nodes
+            .get_id_path(target)
+            .contains(&focused.to_raw())
+    {
+        root.global_state.next_focused_widget = None;
+    }
+    let _ = run_event_pass(
+        root,
+        Some(target),
+        press,
+        EventRoute::Preview,
+        None,
+        Widget::on_pointer_down_preview,
+        true,
+    );
+}
+
 /// See the [passes documentation](crate::doc::pass_system#event-passes).
 pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEvent) -> Handled {
     let _span = info_span!("dispatch_pointer_event").entered();
@@ -267,24 +300,8 @@ pub(crate) fn run_on_pointer_event_pass(root: &mut RenderRoot, event: &PointerEv
 
     let target_widget_id = get_pointer_target(root, event_pos);
 
-    if matches!(event, PointerEvent::Down { .. })
-        && let Some(target_widget_id) = target_widget_id
-    {
-        // The next tab event will assign focus around this widget.
-        root.global_state.focus_anchor = Some(target_widget_id);
-
-        // If we click outside of the focused widget, we clear the focus.
-        if let Some(focused_widget) = root.global_state.focused_widget {
-            // Focused_widget isn't ancestor of target_widget_id
-            if !root
-                .widget_arena
-                .nodes
-                .get_id_path(target_widget_id)
-                .contains(&focused_widget.to_raw())
-            {
-                root.global_state.next_focused_widget = None;
-            }
-        }
+    if let PointerEvent::Down(press) = event {
+        prepare_pointer_press(root, target_widget_id, press);
     }
 
     let route = if matches!(event, PointerEvent::Cancel { .. }) {

@@ -6,11 +6,10 @@
 use std::time::Duration;
 
 use masonry::layout::{AsUnit, Dim, Length};
-use xilem::RunError;
+use tokio::time;
 use xilem::core::{Resource, fork, provides, run_once, with_context, without_elements};
 use xilem::kurbo::{Axis, Size};
 use xilem::style::Style as _;
-use xilem::tokio::time;
 use xilem::view::{
     FlexExt as _, FlexSpacer, MainAxisAlignment, PointerButton, button_any_pointer, checkbox, flex,
     flex_col, flex_row, label, prose, resize_observer, task, text_button, text_input,
@@ -45,7 +44,10 @@ fn env_using() -> impl WidgetView<AppData> + use<> {
     })
 }
 
-fn app_logic(data: &mut AppData) -> impl WidgetView<AppData> + use<> {
+fn app_logic(
+    data: &mut AppData,
+    runtime: &tokio::runtime::Handle,
+) -> impl WidgetView<AppData> + use<> {
     // here's some logic, deriving state for the view from our state
     let count = data.count;
     let button_label = if count == 1 {
@@ -128,6 +130,7 @@ fn app_logic(data: &mut AppData) -> impl WidgetView<AppData> + use<> {
             // the updates it performs will only be running whilst we are in that state.
             data.active.then(|| {
                 task(
+                    runtime,
                     |proxy, _| async move {
                         let mut interval = time::interval(Duration::from_secs(1));
                         loop {
@@ -208,7 +211,9 @@ struct AppData {
     observed_size: Size,
 }
 
-pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
+pub(crate) fn run(event_loop: EventLoopBuilder) -> anyhow::Result<()> {
+    let runtime = tokio::runtime::Runtime::new()?;
+    let handle = runtime.handle().clone();
     let data = AppData {
         count: 0,
         text_input_contents: "Not quite a placeholder".into(),
@@ -219,11 +224,17 @@ pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
         },
     };
 
-    Xilem::new_simple(data, app_logic, WindowOptions::new("mason")).run_in(event_loop)
+    Xilem::new_simple(
+        data,
+        move |data| app_logic(data, &handle),
+        WindowOptions::new("mason"),
+    )
+    .run_in(event_loop)?;
+    Ok(())
 }
 
 // Boilerplate code: Identical across all applications which support Android
 
-fn main() -> Result<(), RunError> {
+fn main() -> anyhow::Result<()> {
     run(EventLoop::with_user_event())
 }

@@ -5,13 +5,13 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::mastodon::{Account, Status};
+use tokio::sync::mpsc::{Receiver, Sender};
 use xilem::core::one_of::{OneOf, OneOf3};
 use xilem::core::{NoElement, View};
 use xilem::masonry::core::ArcStr;
 use xilem::masonry::layout::AsUnit;
 use xilem::palette::css;
 use xilem::style::{Padding, Style};
-use xilem::tokio::sync::mpsc::{Receiver, Sender};
 use xilem::view::{
     MainAxisAlignment, flex_col, flex_row, prose, sized_box, spinner, virtual_scroll, worker_raw,
 };
@@ -123,8 +123,8 @@ impl Timeline {
                     if let Some(sender) = timeline.requests.as_ref() {
                         match sender.try_send(request) {
                             Ok(()) => timeline.page = PageState::Pending,
-                            Err(xilem::tokio::sync::mpsc::error::TrySendError::Full(_)) => {}
-                            Err(xilem::tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {}
+                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                                 timeline.page =
                                     PageState::Failed("Timeline worker stopped".to_owned());
                             }
@@ -164,9 +164,11 @@ impl Timeline {
     // visible timeline view. Changing accounts or hiding the view must not
     // lose its sender or capture the identity of an obsolete account.
     pub(crate) fn worker(
+        runtime: &tokio::runtime::Handle,
         mastodon: Mastodon,
     ) -> impl View<Self, (), ViewCtx, Element = NoElement> + use<> {
         worker_raw(
+            runtime,
             std::num::NonZeroUsize::MIN,
             move |proxy, mut recv: Receiver<TimelineContinuationRequest>| {
                 let mastodon = mastodon.clone();
@@ -251,7 +253,7 @@ mod tests {
 
     #[test]
     fn switching_accounts_preserves_worker_and_ignores_old_pages() {
-        let (sender, _receiver) = xilem::tokio::sync::mpsc::channel(1);
+        let (sender, _receiver) = tokio::sync::mpsc::channel(1);
         let mut timeline = Timeline {
             requests: Some(sender),
             ..Timeline::default()

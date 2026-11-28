@@ -22,13 +22,12 @@ use crate::{AppState, Color, ViewCtx};
 /// The composition root of Xilem's Masonry backend.
 ///
 /// Owns the root state, the root view (kind of), the window state, the event loop proxy,
-/// the tokio runtime, etc.
+/// and application callbacks.
 pub struct MasonryDriver<State: 'static, Logic> {
     state: State,
     logic: Logic,
     windows: HashMap<WindowId, Window<State>>,
     proxy: Arc<MasonryProxy>,
-    runtime: Arc<tokio::runtime::Runtime>,
     default_base_color: Color,
     // Fonts which will be registered on startup.
     fonts: Vec<Blob<u8>>,
@@ -54,7 +53,6 @@ where
         // TODO: narrow down MasonryUserEvent in event_sink once masonry_winit supports custom event types
         // (we only ever use it to send MasonryUserEvent::Action with ASYNC_MARKER_WIDGET)
         event_sink: impl Fn(MasonryUserEvent) -> Result<(), MasonryUserEvent> + Send + Sync + 'static,
-        runtime: Arc<tokio::runtime::Runtime>,
         default_base_color: Color,
         fonts: Vec<Blob<u8>>,
         start_callback: Option<StartCallback>,
@@ -64,7 +62,6 @@ where
             logic,
             windows: HashMap::new(),
             proxy: Arc::new(MasonryProxy(Box::new(event_sink))),
-            runtime,
             default_base_color,
             fonts,
             start_callback,
@@ -154,10 +151,7 @@ where
             .base_color
             .get_or_insert(self.default_base_color);
 
-        let mut view_ctx = ViewCtx::new(
-            Arc::new(WindowProxy(window_view.id, self.proxy.clone())),
-            self.runtime.clone(),
-        );
+        let mut view_ctx = ViewCtx::new(Arc::new(WindowProxy(window_view.id, self.proxy.clone())));
         let (new_window, view_state) = window_view.build(&mut view_ctx, &mut self.state);
         self.windows.insert(
             window_view.id,
@@ -379,7 +373,7 @@ where
     fn on_window_created(&mut self, _id: WindowId, window: &mut masonry_winit::app::Window) {
         let root = window.render_root();
         if let Some(root_widget) = root
-            .get_layer_root(0)
+            .get_content_root()
             .and_then(|root| root.downcast::<masonry::widgets::Passthrough>())
         {
             let fallback = root_widget.inner().inner_id();
@@ -438,11 +432,6 @@ mod tests {
     #[test]
     fn duplicate_initial_windows_are_not_built_twice() {
         let id = WindowId::next();
-        let runtime = Arc::new(
-            tokio::runtime::Builder::new_current_thread()
-                .build()
-                .unwrap(),
-        );
         let (driver, windows) = MasonryDriver::new(
             (),
             move |_: &mut ()| {
@@ -453,7 +442,6 @@ mod tests {
                 .into_iter()
             },
             |_| Ok(()),
-            runtime,
             Color::BLACK,
             Vec::new(),
             None,

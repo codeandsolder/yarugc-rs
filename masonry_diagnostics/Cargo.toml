@@ -1,0 +1,41 @@
+[package]
+name = "masonry_diagnostics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Host-owned optional tracing subscriber for Masonry applications."
+keywords = ["gui", "tracing", "diagnostics"]
+categories = ["development-tools::debugging", "gui"]
+
+[features]
+default = []
+tracy = ["dep:tracing-tracy"]
+
+[dependencies]
+tracing = { workspace = true, features = ["std"] }
+tracing-core = { version = "0.1.36", default-features = false }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tracing-subscriber = { version = "0.3.23", default-features = false, features = [
+    "env-filter",
+    "fmt",
+    "ansi",
+    "time",
+    "tracing-log",
+    "smallvec",
+] }
+time = { workspace = true, features = ["macros", "formatting"] }
+tracing-tracy = { version = "0.11.4", optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry"] }
+console_error_panic_hook.workspace = true
+tracing-wasm.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+tracing_android_trace = "0.1.1"
+
+[lints]
+workspace = true

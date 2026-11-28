@@ -19,7 +19,7 @@ impl AppDriver for Driver {
         &mut self,
         _: WindowId,
         _: &mut DriverCtx<'_>,
-        _: masonry_core::core::WidgetId,
+        _: WidgetId,
         _: ErasedAction,
     ) {
     }
@@ -273,7 +273,7 @@ impl Lifecycle {
         assert_eq!(
             window
                 .render_root()
-                .get_layer_root(0)
+                .get_content_root()
                 .unwrap()
                 .get_prop::<ContentColor>()
                 .color,
@@ -284,7 +284,7 @@ impl Lifecycle {
         assert_eq!(
             window
                 .render_root()
-                .get_layer_root(0)
+                .get_content_root()
                 .unwrap()
                 .get_prop::<ContentColor>()
                 .color,
@@ -392,6 +392,17 @@ fn native_window_lifecycle_and_gpu_recovery() {
         initial: initial_id,
         ran: false,
     };
+    assert!(
+        matches!(lifecycle.state.clipboard_cx, NativeClipboard::System(_)),
+        "An X11 display must select the X11 clipboard implementation"
+    );
+    let text = "Clipboard round trip — Unicode ✓".to_owned();
+    lifecycle
+        .state
+        .clipboard_cx
+        .set_contents(text.clone())
+        .unwrap();
+    assert_eq!(lifecycle.state.clipboard_cx.get_contents().unwrap(), text);
     event_loop.run_app(&mut lifecycle).unwrap();
     assert!(lifecycle.ran);
 }

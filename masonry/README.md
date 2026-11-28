@@ -182,8 +182,6 @@ Running this will open a window that looks like this:
 The following crate [feature flags](https://doc.rust-lang.org/cargo/reference/features.html#dependency-features) are available:
 
 - `svg`: Enables SVG image widgets. Renderer and window-system selection belongs to the host.
-- `tracy`: Enables creating output for the [Tracy](https://github.com/wolfpld/tracy) profiler using [`tracing-tracy`][tracing_tracy].
-  This can be used by installing Tracy and connecting to a Masonry with this feature enabled.
 - `testing`: Re-exports the test harness from [Masonry Testing][masonry_testing].
 
 ## Debugging features
@@ -192,14 +190,13 @@ Masonry apps currently ship with several debugging features built in:
 
 - A rudimentary widget inspector - toggled by the F11 key.
 - A debug mode painting widget layout rectangles - toggled by the F12 key.
-- Optional automatic registration of a [tracing] subscriber, which outputs to the console and to a file in the dev profile.
+- Host-selected tracing via `masonry_diagnostics` or the host’s own subscriber.
 
-If you want to use your own subscriber, simply set it before starting masonry - in this case masonry will not set a subscriber.
+Masonry Core does not install a subscriber. Native hosts can opt into `masonry_winit/diagnostics` or `masonry_winit/tracy`.
 
 [masonry_winit]: https://crates.io/crates/masonry_winit
 [Xilem]: https://github.com/linebender/xilem/tree/main/xilem
 [masonry_testing]: https://docs.rs/masonry_testing/latest/masonry_testing/
-[tracing_tracy]: https://crates.io/crates/tracing-tracy
 [vello]: https://crates.io/crates/vello
 [wgpu]: https://crates.io/crates/wgpu
 

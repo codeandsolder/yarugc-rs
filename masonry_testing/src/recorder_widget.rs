@@ -21,8 +21,9 @@ use std::rc::Rc;
 use masonry_core::accesskit::{Node, Role};
 use masonry_core::core::{
     AccessCtx, AccessEvent, ActionCtx, ChildrenIds, ComposeCtx, CursorIcon, ErasedAction, EventCtx,
-    Layer, LayoutCtx, MeasureCtx, NewWidget, PaintCtx, PointerEvent, PropertiesMut, PropertiesRef,
-    QueryCtx, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetRef,
+    Layer, LayoutCtx, MeasureCtx, NewWidget, PaintCtx, PointerButtonEvent, PointerEvent,
+    PropertiesMut, PropertiesRef, QueryCtx, RegisterCtx, TextEvent, Update, UpdateCtx, Widget,
+    WidgetId, WidgetRef,
 };
 use masonry_core::imaging::Painter;
 use masonry_core::kurbo::{Axis, Point, Size};
@@ -68,6 +69,8 @@ pub struct Recording(Rc<RefCell<VecDeque<Record>>>);
 /// Each member of the enum corresponds to one of the [`Widget`] trait methods.
 #[derive(Debug, Clone)]
 pub enum Record {
+    /// Pointer press preview.
+    PointerDownPreview(PointerButtonEvent),
     /// Pointer event.
     PointerEvent(PointerEvent),
     /// Text event.
@@ -165,6 +168,17 @@ impl<W: Widget> Recorder<W> {
 #[deny(clippy::missing_trait_methods)]
 impl<W: Widget> Widget for Recorder<W> {
     type Action = W::Action;
+
+    fn on_pointer_down_preview(
+        &mut self,
+        ctx: &mut EventCtx<'_>,
+        props: &mut PropertiesMut<'_>,
+        event: &PointerButtonEvent,
+    ) {
+        self.recording
+            .push(Record::PointerDownPreview(event.clone()));
+        self.child.on_pointer_down_preview(ctx, props, event);
+    }
 
     fn on_pointer_event(
         &mut self,

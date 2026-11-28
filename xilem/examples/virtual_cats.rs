@@ -25,6 +25,7 @@ use xilem::{
 
 /// The main state of the application.
 struct VirtualCats {
+    runtime: tokio::runtime::Handle,
     statuses: Vec<Status>,
     client: demo_support::Client,
 }
@@ -61,6 +62,7 @@ impl VirtualCats {
             // lot more complicated currently.
             // Note that if this item scrolls offscreen, the ongoing load will be cancelled.
             Some(xilem::view::task_raw(
+                &self.runtime,
                 move |proxy, state: &mut Self| {
                     let client = state.client.clone();
                     async move {
@@ -139,7 +141,9 @@ impl VirtualCats {
 }
 
 fn run(event_loop: EventLoopBuilder) -> anyhow::Result<()> {
+    let runtime = tokio::runtime::Runtime::new()?;
     let data = VirtualCats {
+        runtime: runtime.handle().clone(),
         statuses: Status::parse_file(),
         client: demo_support::client("Xilem HTTP cats")?,
     };

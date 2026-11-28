@@ -10,7 +10,6 @@ use masonry::theme::{BACKGROUND_COLOR, default_property_set};
 use masonry_winit::app::{
     Backend, EventLoopBuilder, MasonryState, MasonryUserEvent, NewWindow, WindowId,
 };
-use tokio::runtime::Runtime as TokioRuntime;
 use winit::error::EventLoopError;
 
 use crate::core::map_state;
@@ -20,8 +19,6 @@ use crate::{MasonryDriver, WidgetView, WindowOptions, WindowView};
 /// Error during application startup or execution.
 #[derive(Debug)]
 pub enum RunError {
-    /// Failed to create the async runtime.
-    Runtime(std::io::Error),
     /// The window event loop could not be started or run.
     EventLoop(EventLoopError),
     /// The native host could not initialize or run.
@@ -31,7 +28,6 @@ pub enum RunError {
 impl std::fmt::Display for RunError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Runtime(err) => write!(f, "Could not start async runtime: {err}"),
             Self::EventLoop(err) => err.fmt(f),
             Self::Host(err) => err.fmt(f),
         }
@@ -41,16 +37,9 @@ impl std::fmt::Display for RunError {
 impl std::error::Error for RunError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Runtime(err) => Some(err),
             Self::EventLoop(err) => Some(err),
             Self::Host(err) => Some(err),
         }
-    }
-}
-
-impl From<std::io::Error> for RunError {
-    fn from(err: std::io::Error) -> Self {
-        Self::Runtime(err)
     }
 }
 
@@ -75,7 +64,6 @@ pub(crate) type StartCallback = Box<dyn FnOnce(&mut MasonryState)>;
 pub struct Xilem<State, Logic> {
     state: State,
     logic: Logic,
-    runtime: Option<Arc<TokioRuntime>>,
     default_properties: Option<DefaultProperties>,
     default_base_color: Color,
     backend: Backend,
@@ -110,33 +98,8 @@ impl<State>
     /// on the state you should instead use [`Xilem::new`] (which this function wraps).
     pub fn new_simple<View>(
         state: State,
-        logic: impl FnMut(&mut State) -> View + 'static,
-        window_options: WindowOptions<State>,
-    ) -> Self
-    where
-        View: WidgetView<State>,
-    {
-        Self::new_simple_inner(state, logic, window_options, None)
-    }
-
-    /// Same as [`Self::new_simple`] but allows passing an existing tokio runtime.
-    pub fn new_simple_with_tokio<View>(
-        state: State,
-        logic: impl FnMut(&mut State) -> View + 'static,
-        window_options: WindowOptions<State>,
-        tokio_rt: Arc<TokioRuntime>,
-    ) -> Self
-    where
-        View: WidgetView<State>,
-    {
-        Self::new_simple_inner(state, logic, window_options, Some(tokio_rt))
-    }
-
-    fn new_simple_inner<View>(
-        state: State,
         mut logic: impl FnMut(&mut State) -> View + 'static,
         window_options: WindowOptions<State>,
-        tokio_rt: Option<Arc<TokioRuntime>>,
     ) -> Self
     where
         View: WidgetView<State>,
@@ -173,7 +136,6 @@ impl<State>
                     }),
                 )
             }),
-            tokio_rt,
         )
     }
 }
@@ -199,14 +161,13 @@ where
     where
         State: AppState,
     {
-        Self::new_inner(state, logic, None)
+        Self::new_inner(state, logic)
     }
 
-    fn new_inner(state: State, logic: Logic, runtime: Option<Arc<TokioRuntime>>) -> Self {
+    fn new_inner(state: State, logic: Logic) -> Self {
         Self {
             state,
             logic,
-            runtime,
             default_properties: None,
             default_base_color: BACKGROUND_COLOR,
             backend: Backend::Vello,
@@ -253,7 +214,7 @@ where
     /// Run app with custom window attributes.
     ///
     /// # Errors
-    /// Returns an error if the async runtime or event loop cannot be created or run.
+    /// Returns an error if the event loop cannot be created or run.
     pub fn run_in(mut self, mut event_loop: EventLoopBuilder) -> Result<(), RunError> {
         let event_loop = event_loop.build()?;
         let proxy = event_loop.create_proxy();
@@ -262,8 +223,8 @@ where
             .take()
             .unwrap_or_else(default_property_set);
         let backend = self.backend;
-        let (driver, windows) = self
-            .into_driver_and_windows(move |event| proxy.send_event(event).map_err(|err| err.0))?;
+        let (driver, windows) =
+            self.into_driver_and_windows(move |event| proxy.send_event(event).map_err(|err| err.0));
         Ok(masonry_winit::app::run_with(
             event_loop,
             windows,
@@ -278,24 +239,18 @@ where
     /// The given event sink function sends the given event to the event loop
     /// and returns the given event as an error in case the event loop is stopped.
     ///
-    /// # Errors
-    /// Returns an I/O error if creating the Tokio runtime fails.
+    /// The application owns any asynchronous execution runtime.
     pub fn into_driver_and_windows(
         self,
         proxy: impl Fn(MasonryUserEvent) -> Result<(), MasonryUserEvent> + Send + Sync + 'static,
-    ) -> std::io::Result<(MasonryDriver<State, Logic>, Vec<NewWindow>)> {
-        let runtime = match self.runtime {
-            Some(runtime) => runtime,
-            None => Arc::new(TokioRuntime::new()?),
-        };
-        Ok(MasonryDriver::new(
+    ) -> (MasonryDriver<State, Logic>, Vec<NewWindow>) {
+        MasonryDriver::new(
             self.state,
             self.logic,
             proxy,
-            runtime,
             self.default_base_color,
             self.fonts,
             self.on_start,
-        ))
+        )
     }
 }

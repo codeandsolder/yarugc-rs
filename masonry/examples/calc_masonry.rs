@@ -170,7 +170,7 @@ impl CalcState {
             CalcAction::None => (),
         }
 
-        let _ = render_root.edit_base_layer(|mut grid: masonry::core::WidgetMut<'_, Grid>| {
+        let _ = render_root.edit_content_root(|mut grid: masonry::core::WidgetMut<'_, Grid>| {
             let Some(mut flex) = Grid::get_mut::<Flex>(&mut grid, 0) else {
                 return;
             };

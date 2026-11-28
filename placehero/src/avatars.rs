@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use tokio::sync::mpsc::{Receiver, Sender};
 use xilem::core::one_of::Either;
 use xilem::core::{
     MessageResult, NoElement, Resource, View, fork, map_message_result, on_action_with_context,
@@ -12,7 +13,6 @@ use xilem::masonry::layout::AsUnit;
 use xilem::masonry::peniko::ImageData;
 use xilem::palette::css;
 use xilem::style::{Gradient, Style as _};
-use xilem::tokio::sync::mpsc::{Receiver, Sender};
 use xilem::view::{env_worker, flex_col, image, process_requests, sized_box, spinner};
 use xilem::{ViewCtx, WidgetView};
 
@@ -95,9 +95,10 @@ impl Avatars {
 
     /// Provide support for Mastodon Avatar display to the `child` view.
     pub(crate) fn provide<State, Action, Child>(
+        runtime: &tokio::runtime::Handle,
         client: reqwest::Client,
         child: Child,
-    ) -> impl WidgetView<State, Action, Element = Child::Element>
+    ) -> impl WidgetView<State, Action, Element = Child::Element> + use<State, Action, Child>
     where
         Child: WidgetView<State, Action>,
         State: 'static,
@@ -109,12 +110,13 @@ impl Avatars {
                 icons: HashMap::default(),
                 requester: None,
             },
-            fork(child, Self::worker()),
+            fork(child, Self::worker(runtime)),
         )
     }
 
-    fn worker<State, Action>()
-    -> impl View<State, Action, ViewCtx, Element = NoElement> + use<State, Action>
+    fn worker<State, Action>(
+        runtime: &tokio::runtime::Handle,
+    ) -> impl View<State, Action, ViewCtx, Element = NoElement> + use<State, Action>
     where
         State: 'static,
         Action: 'static,
@@ -135,6 +137,7 @@ impl Avatars {
                     }
                 },
                 env_worker(
+                    runtime,
                     std::num::NonZeroUsize::MIN.saturating_add(63),
                     |proxy, rx: Receiver<AvatarRequest>| {
                         process_requests(

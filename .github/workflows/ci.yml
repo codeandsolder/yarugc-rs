@@ -320,6 +320,41 @@ jobs:
         run: |
           cargo check -p yarugc --locked --profile ci --lib
           cargo test -p masonry_imaging --locked --profile ci --no-default-features --lib selection_tests
+          tree=$(cargo tree --locked -p xilem_masonry --no-default-features -e normal,build --prefix none)
+          ! rg "^tokio v" <<< "$tree"
+
+      - name: Verify host-owned font discovery and diagnostics
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          for package in masonry_core yarugc; do
+            graph=$(cargo tree --locked -p "$package" --target x86_64-unknown-linux-gnu -e normal,build --prefix none --format '{p}')
+            while read -r name _; do
+              case "$name" in
+                yeslogic-fontconfig-sys|masonry_diagnostics|tracing-subscriber|winit)
+                  echo "$package unexpectedly activates host-only dependency $name" >&2
+                  exit 1 ;;
+              esac
+            done <<< "$graph"
+          done
+          graph=$(cargo tree --locked -p xilem --target x86_64-unknown-linux-gnu -e normal,build --prefix none --format '{p}')
+          while read -r name _; do
+            case "$name" in
+              masonry_diagnostics|tracing-subscriber)
+                echo "Xilem activates diagnostics without an explicit request: $name" >&2
+                exit 1 ;;
+            esac
+          done <<< "$graph"
+
+      - name: Verify SVG does not discover system fonts
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          graph=$(cargo tree --locked -p masonry --features svg --target x86_64-unknown-linux-gnu -e normal,build --prefix none --format '{p} {f}')
+          if rg -q '^fontdb v[^ ]+ .*(fontconfig|memmap|fs)' <<< "$graph"; then
+            echo "SVG enabled host-owned font discovery" >&2
+            exit 1
+          fi
 
       - name: Run native window lifecycle regression
         if: runner.os == 'Linux'
@@ -452,7 +487,7 @@ jobs:
         run: cargo install cargo-apk
 
       - name: Run cargo apk check
-        run: cargo apk check ${{ env.ANDROID_TARGETS }}
+        run: cargo apk check --features async,svg ${{ env.ANDROID_TARGETS }}
 
       - name: Finalize mandatory sccache
         if: always()

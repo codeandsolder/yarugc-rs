@@ -57,7 +57,7 @@ impl AppDriver for Driver {
                 tracing::trace!("Got scroll action {action:?}");
                 return;
             };
-            let _ = render_root.edit_base_layer(
+            let _ = render_root.edit_content_root(
                 |mut scroll: masonry::core::WidgetMut<'_, VirtualScroll>| {
                     // We need to tell the `VirtualScroll` which request this is associated with
                     // This is so that the controller knows which actions have been handled.

@@ -8,9 +8,7 @@ use std::sync::Arc;
 use accesskit::{ActionRequest, NodeId, TreeId, TreeUpdate};
 use dpi::{LogicalPosition, LogicalSize, PhysicalSize};
 use kurbo::{Point, Rect, Size};
-use parley::fontique::{
-    Blob, Collection, CollectionOptions, FallbackKey, FamilyId, FontInfo, Script, SourceCache,
-};
+use parley::fontique::{Blob, Collection, CollectionOptions, FamilyId, FontInfo, SourceCache};
 use parley::{FontContext, LayoutContext};
 use tracing::{debug, info_span, warn};
 use tree_arena::{ArenaMut, TreeArena};
@@ -56,6 +54,8 @@ const INVALID_IME_AREA: Rect = Rect::new(f64::NAN, f64::NAN, f64::NAN, f64::NAN)
 ///
 /// This is also the type that owns the widget tree.
 pub struct RenderRoot {
+    /// Application content root, which may be inside host-owned chrome.
+    content_root: WidgetId,
     /// `WidgetPod` handle for the layer stack, which holds the root widget of each layer.
     pub(crate) layer_stack: WidgetPod<LayerStack>,
 
@@ -196,14 +196,12 @@ pub enum WindowSizePolicy {
 }
 
 /// Options for creating a [`RenderRoot`].
-#[derive(Debug)]
 pub struct RenderRootOptions {
     /// Default values that properties will have if not defined per-widget.
     pub default_properties: Arc<DefaultProperties>,
 
-    /// If true, `fontique` will provide access to system fonts
-    /// using platform-specific APIs.
-    pub use_system_fonts: bool,
+    /// Font collection and source cache selected and populated by the host.
+    pub font_context: FontContext,
 
     /// Defines how the window size should be determined.
     pub size_policy: WindowSizePolicy,
@@ -217,15 +215,32 @@ pub struct RenderRootOptions {
     ///
     /// `1.0` is a sensible default.
     pub scale_factor: f64,
+}
 
-    /// Add a font from its raw data for use in tests.
-    /// The font is added to the fallback chain for Latin scripts.
-    /// This is expected to be used with `use_system_fonts = false`
-    /// to ensure rendering is consistent cross-platform.
-    ///
-    /// We expect to develop a much more fully-featured font API in the future, but
-    /// this is necessary for our testing of Masonry.
-    pub test_font: Option<Blob<u8>>,
+impl std::fmt::Debug for RenderRootOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RenderRootOptions")
+            .field("default_properties", &self.default_properties)
+            .field("size_policy", &self.size_policy)
+            .field("size", &self.size)
+            .field("scale_factor", &self.scale_factor)
+            // Parley does not expose a Debug implementation for FontContext.
+            .finish_non_exhaustive()
+    }
+}
+
+/// Construct an initially empty font context, even when another crate enables
+/// system-font discovery. Hosts can register bundled fonts and fallback chains
+/// before constructing a render root.
+#[must_use = "Populate and pass this context to a render root."]
+pub fn empty_font_context() -> FontContext {
+    FontContext {
+        collection: Collection::new(CollectionOptions {
+            system_fonts: false,
+            ..Default::default()
+        }),
+        source_cache: SourceCache::default(),
+    }
 }
 
 /// Objects emitted by the [`RenderRoot`] to signal that something has changed or require external actions.
@@ -322,22 +337,23 @@ impl RenderRoot {
     ) -> Self {
         let RenderRootOptions {
             default_properties,
-            use_system_fonts,
+            font_context,
             size_policy,
             size,
             scale_factor,
-            test_font,
         } = options;
         let debug_paint = std::env::var("MASONRY_DEBUG_PAINT").is_ok_and(|it| !it.is_empty());
 
         // LayerStack can't use Dimensions::AUTO because it'll resolve to the window size.
         // Instead we want to always measure LayerStack, so it can measure its base layer.
+        let content_root = root_widget.id();
         let layer_stack = LayerStack::new(root_widget)
             .prepare()
             .with_props(Dimensions::MAX)
             .into_pod();
 
         let mut root = Self {
+            content_root,
             layer_stack,
             global_state: RenderRootState {
                 signal_sink: Box::new(signal_sink),
@@ -357,13 +373,7 @@ impl RenderRoot {
                 active_path: Vec::new(),
                 pointer_capture: None,
                 cursor_icon: CursorIcon::Default,
-                font_context: FontContext {
-                    collection: Collection::new(CollectionOptions {
-                        system_fonts: use_system_fonts,
-                        ..Default::default()
-                    }),
-                    source_cache: SourceCache::default(),
-                },
+                font_context,
                 text_layout_context: LayoutContext::new(),
                 mutate_callbacks: Vec::new(),
                 actions: Vec::new(),
@@ -383,24 +393,6 @@ impl RenderRoot {
                 nodes: TreeArena::new(),
             },
         };
-
-        if let Some(test_font_data) = test_font {
-            // We don't use `register_fonts` here because that requests a global relayout.
-            // However, because we are not yet fully initialised (we are before the below call
-            // to `run_rewrite_passes`), `request_layout_all` will panic, as the root hasn't
-            // been inserted into the arena yet.
-            let families = root
-                .global_state
-                .font_context
-                .collection
-                .register_fonts(test_font_data, None);
-            // Make sure that all of these fonts are in the fallback chain for the Latin script.
-            // <https://en.wikipedia.org/wiki/Script_(Unicode)#Latn>
-            root.global_state.font_context.collection.append_fallbacks(
-                FallbackKey::new(Script::from_bytes(*b"Latn"), None),
-                families.iter().map(|(family, _)| *family),
-            );
-        }
 
         // We run a set of passes to initialize the widget tree
         root.run_rewrite_passes();
@@ -611,6 +603,41 @@ impl RenderRoot {
     }
 
     // --- MARK: ACCESS WIDGETS
+    /// Identify the application content inside a host-owned base-layer widget.
+    /// The content widget must be a registered descendant of the base layer;
+    /// its identity remains stable as host chrome is shown or hidden.
+    /// Returns false for an absent widget or one in an overlay layer.
+    #[must_use = "Check that the content root belongs to the base layer."]
+    pub fn set_content_root(&mut self, content: WidgetId) -> bool {
+        let Some(base) = self.layer_root_id(0) else {
+            return false;
+        };
+        if !self.widget_path(content).contains(&base) {
+            return false;
+        }
+        self.content_root = content;
+        true
+    }
+
+    /// The application content widget, independent of host decorations.
+    #[must_use = "Use the stable content widget identifier."]
+    pub const fn content_root_id(&self) -> WidgetId {
+        self.content_root
+    }
+
+    /// Borrow the application content, rather than host-owned chrome.
+    pub fn get_content_root(&self) -> Option<WidgetRef<'_, dyn Widget>> {
+        self.get_widget(self.content_root)
+    }
+
+    /// Edit application content without depending on the host's root layout.
+    pub fn edit_content_root<R, W: Widget + FromDynWidget + ?Sized>(
+        &mut self,
+        f: impl FnOnce(WidgetMut<'_, W>) -> R,
+    ) -> Option<R> {
+        self.edit_widget(self.content_root, f)
+    }
+
     /// Returns a [`WidgetRef`] to the root widget of the given [layer](crate::doc::masonry_concepts#layers).
     pub fn get_layer_root(&self, layer_idx: usize) -> Option<WidgetRef<'_, dyn Widget>> {
         self.get_widget(self.layer_root_id(layer_idx)?)
@@ -1166,5 +1193,14 @@ impl RenderRootSignal {
                 height: area.size().height,
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod font_context_tests {
+    #[test]
+    fn empty_font_context_is_independent_of_system_font_feature_unification() {
+        let mut context = super::empty_font_context();
+        assert_eq!(context.collection.family_names().count(), 0);
     }
 }

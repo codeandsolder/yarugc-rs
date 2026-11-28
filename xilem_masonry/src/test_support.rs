@@ -19,12 +19,7 @@ impl RawProxy for ClosedProxy {
 }
 
 pub(crate) fn view_context() -> crate::ViewCtx {
-    let runtime = Arc::new(
-        tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap(),
-    );
-    crate::ViewCtx::new(Arc::new(ClosedProxy), runtime)
+    crate::ViewCtx::new(Arc::new(ClosedProxy))
 }
 
 pub(crate) fn render_root(
@@ -43,11 +38,10 @@ pub(crate) fn render_root(
         },
         RenderRootOptions {
             default_properties: Arc::new(masonry::theme::default_property_set()),
-            use_system_fonts: false,
+            font_context: masonry::app::empty_font_context(),
             size_policy: WindowSizePolicy::User,
             size: size.into(),
             scale_factor: 1.0,
-            test_font: None,
         },
     );
     (root, receive)

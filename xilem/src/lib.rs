@@ -80,7 +80,7 @@
 //! * [`progress_bar`][crate::view::progress_bar]: progress bar element
 //! * [`prose`][crate::view::prose]: displays immutable, selectable text
 //! * [`text_input`][crate::view::text_input]: allows text to be edited by the user
-//! * [`task`][crate::view::task]: launch an async task which will run until the view is no longer in the tree
+//! * `task` (with the `async` feature): launch an async task which will run until the view is no longer in the tree
 //! * [`zstack`][crate::view::zstack]: an element that lays out its children on top of each other
 //!
 //! You should also expect to use the adapters from Xilem Core, including:
@@ -114,6 +114,7 @@
 //!
 //! * `default`: Enables the Vello GPU renderer in the native window host.
 //! * `imaging_vello`, `imaging_vello_hybrid`, `imaging_skia`: Enable the corresponding host renderer.
+//! * `async`: Enables task and worker views on an application-owned Tokio runtime.
 //! * `svg`: Enables SVG image views.
 //!
 //! [accesskit_docs]: masonry::accesskit
@@ -148,7 +149,6 @@ pub use masonry;
 pub use masonry::dpi;
 pub use masonry::palette;
 pub use masonry::{kurbo, peniko};
-pub use tokio;
 pub use winit;
 pub use xilem_core as core;
 pub use xilem_masonry::style;
@@ -183,6 +183,7 @@ mod window_view;
 
 pub use app::{AppState, ExitOnClose, RunError, Xilem};
 pub use driver::{MasonryDriver, async_action};
+pub use masonry_winit::app::DecorationMode;
 pub use window_options::WindowOptions;
 pub use window_view::{PodWindow, WindowView, window};
 

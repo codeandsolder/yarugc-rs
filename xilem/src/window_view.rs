@@ -99,7 +99,8 @@ impl<State> View<State, (), ViewCtx> for WindowView<State> {
         });
         let mut window =
             NewWindow::new_with_id(self.id, initial_attributes, root_widget.new_widget.erased())
-                .with_base_color(base_color);
+                .with_base_color(base_color)
+                .with_decoration_mode(self.options.initial.decoration_mode);
         if let Some(properties) = &self.default_properties {
             window = window.with_default_properties(properties.clone());
         }
@@ -114,7 +115,7 @@ impl<State> View<State, (), ViewCtx> for WindowView<State> {
         window: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) {
-        self.options.rebuild(&prev.options, window.handle());
+        self.options.rebuild(&prev.options, window);
         if self.base_color != prev.base_color
             && let Some(base_color) = self.base_color
         {

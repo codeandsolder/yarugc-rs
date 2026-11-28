@@ -5,6 +5,7 @@ use std::future::Future;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 
 use crate::ViewCtx;
@@ -51,13 +52,17 @@ impl Drop for TaskLifetime {
 /// This `MessageProxy` can be used to send a message to `on_event`, which can then update
 /// the app's state.
 ///
-/// For example, this can be used with the time functions in [`tokio::time`].
+/// For example, this can be used with the time functions in `tokio::time` (when enabled by the application).
+///
+/// The host must keep the supplied runtime alive and driving tasks.
+/// The runtime is selected on build and remains fixed until teardown.
 ///
 /// Note that this task will not be updated if the view is rebuilt, so `init_future`
 /// cannot capture.
 // TODO: More thorough documentation.
 /// See [`run_once`](crate::core::run_once) for details.
 pub fn task<M, F, H, State, Action, Fut>(
+    runtime: &Handle,
     init_future: F,
     on_event: H,
 ) -> Task<State, Action, F, H, M>
@@ -76,6 +81,7 @@ where
         );
     };
     Task {
+        runtime: runtime.clone(),
         init_future,
         on_event,
         message: PhantomData,
@@ -87,6 +93,7 @@ where
 /// This is [`task`] without the capturing rules.
 /// See `task` for full documentation.
 pub fn task_raw<M, F, H, State, Action, Fut>(
+    runtime: &Handle,
     init_future: F,
     on_event: H,
 ) -> Task<State, Action, F, H, M>
@@ -98,6 +105,7 @@ where
     State: 'static,
 {
     Task {
+        runtime: runtime.clone(),
         init_future,
         on_event,
         message: PhantomData,
@@ -106,6 +114,7 @@ where
 
 /// A view representing a task which will run until the view is no longer in the tree.
 pub struct Task<State, Action, F, H, M> {
+    runtime: Handle,
     init_future: F,
     on_event: H,
     message: PhantomData<fn(State) -> (Action, M)>,
@@ -129,9 +138,11 @@ where
         let path: Arc<[ViewId]> = ctx.view_path().into();
 
         let proxy = ctx.proxy();
-        let handle = ctx
-            .runtime()
-            .spawn((self.init_future)(MessageProxy::new(proxy, path), state));
+        let future = {
+            let _runtime_context = self.runtime.enter();
+            (self.init_future)(MessageProxy::new(proxy, path), state)
+        };
+        let handle = self.runtime.spawn(future);
         (NoElement, TaskLifetime::new(handle))
     }
 
@@ -179,6 +190,39 @@ mod tests {
     use tokio::sync::oneshot;
 
     use super::*;
+
+    #[test]
+    fn task_runs_on_explicit_host_runtime_without_ambient_context() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let (started_tx, started_rx) = oneshot::channel();
+        let mut state = Some(started_tx);
+        let mut ctx = crate::test_support::view_context();
+        let view = task(
+            runtime.handle(),
+            |_: MessageProxy<()>, state: &mut Option<oneshot::Sender<()>>| {
+                let started = state.take().unwrap();
+                let timer = tokio::time::sleep(std::time::Duration::ZERO);
+                async move {
+                    timer.await;
+                    started.send(()).unwrap();
+                    pending::<()>().await;
+                }
+            },
+            |_, ()| (),
+        );
+        let (NoElement, lifetime) = view.build(&mut ctx, &mut state);
+        runtime.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(1), started_rx)
+                .await
+                .unwrap()
+                .unwrap();
+        });
+        assert!(lifetime.is_active(), "The view must own the spawned task");
+        drop(lifetime);
+    }
 
     #[test]
     fn dropping_view_state_cancels_task_without_teardown() {

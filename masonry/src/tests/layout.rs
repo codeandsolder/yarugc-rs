@@ -554,11 +554,10 @@ fn dpi_only_change_recomputes_user_and_content_sized_layout() {
             |_| {},
             RenderRootOptions {
                 default_properties: Arc::new(DefaultProperties::new()),
-                use_system_fonts: false,
+                font_context: crate::app::empty_font_context(),
                 size_policy: policy,
                 size: PhysicalSize::new(100, 80),
                 scale_factor: 1.0,
-                test_font: None,
             },
         );
         let _ = root.redraw();
