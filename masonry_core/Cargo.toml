@@ -30,6 +30,7 @@ dpi.workspace = true
 imaging.workspace = true
 kurbo.workspace = true
 parley.workspace = true
+skrifa.workspace = true
 peniko.workspace = true
 smallvec.workspace = true
 tracing = { workspace = true, features = ["default"] }

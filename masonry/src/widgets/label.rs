@@ -10,14 +10,15 @@ use smallvec::SmallVec;
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, ArcStr, BrushIndex, ChildrenIds, LayoutCtx, MeasureCtx, NoAction, PaintCtx,
-    PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, StyleSet, Update, UpdateCtx,
-    UsesProperty, Widget, WidgetId, WidgetMut, render_text, set_accesskit_brush_properties,
+    AccessCtx, ArcStr, BrushIndex, ChildrenIds, LayoutAccessibility, LayoutCtx, MeasureCtx,
+    NoAction, PaintCtx, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, StyleSet,
+    TextAccessibilityTarget, Update, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut,
+    render_text, set_accesskit_brush_properties,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Affine, Axis, Point, Size};
 use crate::layout::{AsUnit, LenReq, Length};
-use crate::parley::{FontContext, Layout, LayoutAccessibility, LayoutContext};
+use crate::parley::{FontContext, Layout, LayoutContext};
 use crate::properties::{ContentColor, LineBreaking};
 use crate::theme::default_text_styles;
 use crate::util::debug_panic;
@@ -105,7 +106,8 @@ impl TextLayout {
                 }
                 breaker.finish();
             }
-            self.layout.align(alignment, TextAlignOptions::default());
+            self.layout
+                .set_alignment(alignment, TextAlignOptions::default());
             self.alignment = parameters;
         }
     }
@@ -554,11 +556,12 @@ impl Widget for Label {
         self.accessibility.build_nodes(
             self.text.as_ref(),
             &layout.layout,
-            ctx.tree_update(),
-            node,
+            TextAccessibilityTarget {
+                update: ctx.tree_update(),
+                parent: node,
+                origin: text_origin_in_border_box_space,
+            },
             AccessCtx::next_node_id,
-            text_origin_in_border_box_space.x,
-            text_origin_in_border_box_space.y,
             |node, style| set_accesskit_brush_properties(node, style, &[text_color.color.into()]),
         );
     }
@@ -665,7 +668,7 @@ mod tests {
         );
         let short_line = entry.layout.get(1).unwrap();
         let short = short_line.metrics();
-        let expected = (narrow - short.advance + short.trailing_whitespace) * 0.5;
+        let expected = (narrow - short.advance + short.hanging_advance) * 0.5;
         assert!(expected > 0.0);
         assert!((short.offset - expected).abs() < 0.001);
         assert_eq!(entry.layout.width(), long_width);

@@ -11,9 +11,10 @@ use tracing::{Span, trace_span};
 use crate::core::keyboard::{Key, KeyState, NamedKey};
 use crate::core::{
     AccessCtx, AccessEvent, ArcStr, BrushIndex, ChildrenIds, CursorIcon, EventCtx, Ime, LayoutCtx,
-    MeasureCtx, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PointerUpdate,
-    PropertiesMut, PropertiesRef, Property, QueryCtx, RegisterCtx, StyleProperty, TextEvent,
-    Update, UpdateCtx, Widget, WidgetId, WidgetMut, render_text, set_accesskit_brush_properties,
+    MeasureCtx, PaintCtx, PlainEditorAccessibility, PointerButton, PointerButtonEvent,
+    PointerEvent, PointerUpdate, PropertiesMut, PropertiesRef, Property, QueryCtx, RegisterCtx,
+    StyleProperty, TextAccessibilityTarget, TextEvent, Update, UpdateCtx, Widget, WidgetId,
+    WidgetMut, render_text, set_accesskit_brush_properties,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Affine, Axis, Point, Rect, Size};
@@ -66,6 +67,7 @@ pub(super) fn inherit_property<
 pub struct TextArea<const USER_EDITABLE: bool> {
     /// The underlying `PlainEditor`, which provides a high-level interface for us to dispatch into.
     editor: PlainEditor<BrushIndex>,
+    accessibility: PlainEditorAccessibility,
     // Parley currently exposes only a setter for its alignment.
     text_alignment: TextAlign,
     // Parley replaces the selection when composition starts. Retain that
@@ -146,6 +148,7 @@ impl<const EDITABLE: bool> TextArea<EDITABLE> {
         editor.set_text(text);
         Self {
             editor,
+            accessibility: PlainEditorAccessibility::default(),
             text_alignment: TextAlign::default(),
             preedit_replaced: None,
             placeholder: "".into(),
@@ -949,9 +952,8 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
 
             if let Some(accesskit::ActionData::SetTextSelection(selection)) = &event.data {
                 let (fctx, lctx) = ctx.text_contexts();
-                self.editor
-                    .driver(fctx, lctx)
-                    .select_from_accesskit(selection);
+                self.accessibility
+                    .select_from_access_selection(&mut self.editor.driver(fctx, lctx), selection);
                 let new_generation = self.editor.generation();
                 if new_generation != self.rendered_generation {
                     ctx.request_render();
@@ -1153,12 +1155,14 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
         let text_color = props.get::<ContentColor>(cache);
         let text_origin_in_border_box_space = Point::ORIGIN + ctx.border_box_translation();
 
-        let updated = self.editor.try_accessibility(
-            ctx.tree_update(),
-            node,
+        let updated = self.accessibility.build_nodes(
+            &self.editor,
+            TextAccessibilityTarget {
+                update: ctx.tree_update(),
+                parent: node,
+                origin: text_origin_in_border_box_space,
+            },
             AccessCtx::next_node_id,
-            text_origin_in_border_box_space.x,
-            text_origin_in_border_box_space.y,
             |node, style| set_accesskit_brush_properties(node, style, &[text_color.color.into()]),
         );
 

@@ -11,7 +11,9 @@ env:
     --exclude xilem
     --exclude xilem_masonry
     --exclude placehero
+    --exclude demo_support
     --exclude yarugc
+    --exclude renderer-comparisons
   # Only some of our examples support Android (primarily due to extra required boilerplate).
   ANDROID_TARGETS: >-
     -p xilem
@@ -59,7 +61,7 @@ jobs:
     uses: codeandsolder/rust-skills2/.github/workflows/strict-rust.yml@535609a4878f34a6697afea7ba3da04a454cc5f4 # main
     with:
       rust-targets: wasm32-unknown-unknown
-      cargo-args: --locked --workspace --all-targets --all-features --target wasm32-unknown-unknown --exclude masonry_testing --exclude masonry --exclude masonry_winit --exclude xilem --exclude xilem_masonry --exclude placehero --exclude yarugc
+      cargo-args: --locked --workspace --all-targets --all-features --target wasm32-unknown-unknown --exclude masonry_testing --exclude masonry --exclude masonry_winit --exclude xilem --exclude xilem_masonry --exclude placehero --exclude demo_support --exclude yarugc --exclude renderer-comparisons
       allow-test-panics: true
       dependency-quality: false
 
@@ -321,6 +323,12 @@ jobs:
           SKIP_RENDER_TESTS: ${{ runner.os == 'Windows' && '1' || '' }}
           # Check that doc file paths are correct
           CHECK_DOC_PATHS: "true"
+
+      - name: Verify backend-free compositor and imaging adapter
+        if: runner.os == 'Linux'
+        run: |
+          cargo check -p yarugc --locked --profile ci --lib
+          cargo test -p masonry_imaging --locked --profile ci --no-default-features --lib selection_tests
 
       - name: Run native window lifecycle regression
         if: runner.os == 'Linux'

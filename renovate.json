@@ -21,18 +21,6 @@
       ],
       "groupName": "Imaging Git family",
       "groupSlug": "imaging-git-family"
-    },
-    {
-      "description": "Update SVG parser and renderer together to preserve the shared Tree type",
-      "matchManagers": [
-        "cargo"
-      ],
-      "matchPackageNames": [
-        "usvg",
-        "resvg"
-      ],
-      "groupName": "SVG parser and renderer",
-      "groupSlug": "svg-parser-renderer"
     }
   ]
 }

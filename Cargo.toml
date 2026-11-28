@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "yarugc",
+    "benchmarks/renderer-comparisons",
     "xilem",
     "xilem_core",
     "xilem_masonry",
@@ -25,6 +26,7 @@ members = [
     "xilem_web/web_examples/open_and_save_file",
     "tree_arena",
     "placehero",
+    "demo_support",
     "include_doc_path",
 ]
 
@@ -67,7 +69,8 @@ imaging_vello_hybrid = { git = "https://github.com/forest-rs/imaging.git", rev =
 imaging_vello_cpu = { git = "https://github.com/forest-rs/imaging.git", rev = "e9123c47b719f392a4803b1587a865fca3660be6" }
 wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl"] }
 kurbo = "0.13.1"
-parley = { version = "0.11.1", features = ["accesskit"] }
+parley = "0.13.0"
+skrifa = "0.49.0"
 # TODO: Use no_std correctly in Xilem Web.
 peniko = "0.6.1"
 winit = "0.30.13"
@@ -81,16 +84,15 @@ smallvec = "1.15.1"
 hashbrown = { version = "0.17.0", default-features = false, features = ["default-hasher"] }
 dpi = "0.1.2"
 image = { version = "0.25.10", default-features = false }
-resvg = "0.47.0"
-usvg = "0.47.0"
+resvg = "0.50.0"
 web-time = "1.1.0"
-accesskit = "0.24.0"
-accesskit_winit = { version = "0.32.2", default-features = false, features = [
+accesskit = "0.25.2"
+accesskit_winit = { version = "0.34.2", default-features = false, features = [
     "accesskit_unix",
     "tokio",
     "rwh_06",
 ] }
-accesskit_consumer = "0.35.0"
+accesskit_consumer = "0.39.2"
 time = "0.3.47"
 reqwest = { version = "0.12.28", default-features = false, features = [
     # We use rustls as Android doesn't ship with openssl
@@ -162,3 +164,9 @@ inherits = "dev"
 debug = 0 # Don't compile debug info to reduce compilation artifact size for cache benefits.
 [profile.ci.package."*"]
 debug-assertions = true # Keep always on for dependencies for cache reuse.
+
+# Shared reviewed dependency-owner patches. Locked revisions track the generated families.
+[patch.crates-io]
+winit = { git = "https://github.com/codeandsolder/cargo-patches.git", branch = "generated/wayland-modernization" }
+wayland-backend = { git = "https://github.com/codeandsolder/cargo-patches.git", branch = "generated/wayland-modernization" }
+gpu-allocator = { git = "https://github.com/codeandsolder/cargo-patches.git", branch = "generated/hashbrown-017" }
