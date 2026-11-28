@@ -37,6 +37,8 @@ imaging_vello = ["masonry_winit/imaging_vello"]
 imaging_vello_hybrid = ["masonry_winit/imaging_vello_hybrid"]
 imaging_skia = ["masonry_winit/imaging_skia"]
 svg = ["xilem_masonry/svg"]
+diagnostics = ["masonry_winit/diagnostics"]
+tracy = ["masonry_winit/tracy"]
 
 [dependencies]
 xilem_core.workspace = true

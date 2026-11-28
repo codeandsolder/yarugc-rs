@@ -310,6 +310,7 @@ pub struct MasonryState {
 
     signal_sender: Sender<(WindowId, RenderRootSignal)>,
     default_properties: Arc<DefaultProperties>,
+    font_context: parley::FontContext,
     pub(crate) exit: bool,
     /// Windows that are scheduled to be created in the next resumed event.
     new_windows: Vec<NewWindow>,
@@ -415,7 +416,8 @@ pub fn run_with(
     // already been set, we get an error which we swallow.
     // By now, we're about to take control of the event loop. The user is unlikely
     // to try to set their own subscriber once the event loop has started.
-    let _ = masonry_core::app::try_init_tracing();
+    #[cfg(feature = "diagnostics")]
+    let _ = masonry_diagnostics::try_init_tracing();
 
     let mut main_state = MainState {
         masonry_state: MasonryState::new(
@@ -543,6 +545,7 @@ impl MasonryState {
 
             signal_sender,
             default_properties: Arc::new(default_properties),
+            font_context: parley::FontContext::new(),
             exit: false,
             new_windows,
             need_first_frame: Vec::new(),
@@ -731,11 +734,10 @@ impl MasonryState {
             self.signal_sender.clone(),
             RenderRootOptions {
                 default_properties: self.default_properties.clone(),
-                use_system_fonts: true,
+                font_context: self.font_context.clone(),
                 size_policy: WindowSizePolicy::User,
                 size,
                 scale_factor,
-                test_font: None,
             },
         );
 

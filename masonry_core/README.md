@@ -68,16 +68,14 @@ Masonry Core provides a useful shared set of functionality to implement alternat
 Note that Masonry Core is currently focused primarily on the main Masonry crate itself, as we're
 not aware of any projects using Masonry Core as described in this paragraph.
 
-## Feature flags
+## Host-owned resources
 
-The following crate [feature flags](https://doc.rust-lang.org/cargo/reference/features.html#dependency-features) are available:
-
-- `tracy`: Enables creating output for the [Tracy](https://github.com/wolfpld/tracy) profiler using [`tracing-tracy`][tracing_tracy].
-  This can be used by installing Tracy and connecting to a Masonry with this feature enabled.
+The host supplies a configured Parley font context to each render root. System-font
+discovery is selected by the host, not by Masonry Core. Core emits tracing events
+without installing or depending on any tracing subscriber.
 
 [Masonry's documentation]: https://docs.rs/masonry/latest/
 [Masonry Winit]: https://docs.rs/masonry_winit/latest/
-[tracing_tracy]: https://crates.io/crates/tracing-tracy
 
 <!-- cargo-rdme end -->
 <!-- markdownlint-enable MD053 -->

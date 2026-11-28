@@ -5,13 +5,10 @@
 
 mod layer_stack;
 mod render_root;
-mod tracing_backend;
 mod visual_layers;
 
-pub use render_root::{RenderRoot, RenderRootOptions, RenderRootSignal, WindowSizePolicy};
-pub use tracing_backend::{
-    TracingSubscriberHasBeenSetError, default_tracing_subscriber, try_init_test_tracing,
-    try_init_tracing,
+pub use render_root::{
+    RenderRoot, RenderRootOptions, RenderRootSignal, WindowSizePolicy, empty_font_context,
 };
 pub use visual_layers::{VisualLayer, VisualLayerKind, VisualLayerPlan};
 

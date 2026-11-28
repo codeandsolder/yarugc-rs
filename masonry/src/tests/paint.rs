@@ -11,12 +11,12 @@ use crate::dpi::PhysicalSize;
 use crate::kurbo::{Circle, Dashes, Point, Stroke, Vec2};
 use crate::layout::{AsUnit, Length, SizeDef, UnitPoint};
 use crate::palette::css::{BLUE, GREEN, RED};
+use crate::peniko::Color;
 use crate::peniko::color::{AlphaColor, Srgb};
-use crate::peniko::{Blob, Color};
 use crate::properties::types::MainAxisAlignment;
 use crate::properties::{Background, Dimensions, Gap, Padding};
 use crate::testing::{
-    ModularWidget, ROBOTO, Record, TestHarness, TestWidgetExt, assert_render_snapshot,
+    ModularWidget, Record, TestHarness, TestWidgetExt, assert_render_snapshot, test_font_context,
 };
 use crate::theme::test_property_set;
 use crate::widgets::{Align, ChildAlignment, Flex, Grid, GridParams, Label, SizedBox, ZStack};
@@ -225,17 +225,15 @@ fn make_external_placeholder_tree() -> NewWidget<impl Widget> {
 }
 
 fn create_render_root(root_widget: NewWidget<impl Widget>) -> RenderRoot {
-    let test_font = Blob::new(Arc::new(ROBOTO));
     RenderRoot::new(
         root_widget,
         |_| {},
         RenderRootOptions {
             default_properties: Arc::new(test_property_set()),
-            use_system_fonts: false,
+            font_context: test_font_context(),
             size_policy: WindowSizePolicy::User,
             size: PhysicalSize::new(40, 20),
             scale_factor: 1.0,
-            test_font: Some(test_font),
         },
     )
 }

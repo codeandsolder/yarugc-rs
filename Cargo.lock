@@ -2688,7 +2688,6 @@ dependencies = [
  "accesskit",
  "anymap3",
  "anymore",
- "console_error_panic_hook",
  "cursor-icon",
  "dpi",
  "imaging",
@@ -2697,6 +2696,17 @@ dependencies = [
  "peniko",
  "skrifa 0.49.0",
  "smallvec",
+ "tracing",
+ "tree_arena",
+ "ui-events",
+ "web-time",
+]
+
+[[package]]
+name = "masonry_diagnostics"
+version = "0.4.0"
+dependencies = [
+ "console_error_panic_hook",
  "time",
  "tracing",
  "tracing-core",
@@ -2704,9 +2714,6 @@ dependencies = [
  "tracing-tracy",
  "tracing-wasm",
  "tracing_android_trace",
- "tree_arena",
- "ui-events",
- "web-time",
 ]
 
 [[package]]
@@ -2733,6 +2740,7 @@ dependencies = [
  "image",
  "imaging_vello_cpu",
  "masonry_core",
+ "masonry_diagnostics",
  "oxipng",
  "profiling",
  "tempfile",
@@ -2748,7 +2756,9 @@ dependencies = [
  "copypasta",
  "masonry",
  "masonry_core",
+ "masonry_diagnostics",
  "masonry_imaging",
+ "parley",
  "pollster",
  "tracing",
  "tracing-tracy",
