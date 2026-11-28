@@ -47,6 +47,10 @@ pub enum ChromeAction {
 
 /// Capabilities and presentation state supplied by the window controller.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Host capability and presentation flags are independent; collapsed windows retain their underlying maximized state for restoration."
+)]
 pub struct ChromeState {
     /// Whether to show chrome at all.
     pub visible: bool,
@@ -503,7 +507,7 @@ impl WindowChrome {
         this.ctx.request_render();
     }
 
-    fn border(&self) -> f64 {
+    const fn border(&self) -> f64 {
         if self.state.visible
             && self.state.resizable
             && !self.state.maximized
@@ -515,7 +519,7 @@ impl WindowChrome {
         }
     }
 
-    fn title_height(&self) -> f64 {
+    const fn title_height(&self) -> f64 {
         if self.state.visible {
             self.metrics.title_height.get()
         } else {
@@ -546,7 +550,7 @@ impl WindowChrome {
 }
 
 fn resize_direction(size: Size, pos: Point, border: f64) -> Option<ResizeDirection> {
-    use ResizeDirection::*;
+    use ResizeDirection::{East, North, NorthEast, NorthWest, South, SouthEast, SouthWest, West};
     if border <= 0.0 || !Rect::from_origin_size(Point::ORIGIN, size).contains(pos) {
         return None;
     }
@@ -554,17 +558,13 @@ fn resize_direction(size: Size, pos: Point, border: f64) -> Option<ResizeDirecti
     let by = border.min(size.height * 0.5);
     let x = if pos.x < bx {
         -1
-    } else if pos.x >= size.width - bx {
-        1
     } else {
-        0
+        i32::from(pos.x >= size.width - bx)
     };
     let y = if pos.y < by {
         -1
-    } else if pos.y >= size.height - by {
-        1
     } else {
-        0
+        i32::from(pos.y >= size.height - by)
     };
     match (x, y) {
         (-1, -1) => Some(NorthWest),
@@ -635,9 +635,16 @@ impl Widget for WindowChrome {
         if self.state.visible && axis == Axis::Horizontal {
             let controls = self.buttons().into_iter().map(u32::from).sum::<u32>();
             length.max(
-                (border
-                    + self.metrics.button_width.get() * f64::from(controls)
-                    + self.metrics.title_padding.get() * 2.0)
+                self.metrics
+                    .title_padding
+                    .get()
+                    .mul_add(
+                        2.0,
+                        self.metrics
+                            .button_width
+                            .get()
+                            .mul_add(f64::from(controls), border),
+                    )
                     .px(),
             )
         } else {
@@ -647,11 +654,14 @@ impl Widget for WindowChrome {
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _: &PropertiesRef<'_>, size: Size) {
         let border = self.border().min(size.width * 0.5).min(size.height * 0.5);
-        let width = (size.width - 2.0 * border).max(0.0);
+        let width = 2.0f64.mul_add(-border, size.width).max(0.0);
         let title_height = self
             .title_height()
-            .min((size.height - 2.0 * border).max(0.0));
-        let content_size = Size::new(width, (size.height - 2.0 * border - title_height).max(0.0));
+            .min(2.0f64.mul_add(-border, size.height).max(0.0));
+        let content_size = Size::new(
+            width,
+            (2.0f64.mul_add(-border, size.height) - title_height).max(0.0),
+        );
         ctx.set_stashed(&self.content, self.state.minimized);
         if !self.state.minimized {
             ctx.run_layout(&self.content, content_size);
@@ -710,7 +720,7 @@ impl Widget for WindowChrome {
         ctx.run_layout(&self.title, Size::new(title_width, label_height));
         ctx.place_child(
             &self.title,
-            Point::new(start, border + (title_height - label_height) * 0.5),
+            Point::new(start, (title_height - label_height).mul_add(0.5, border)),
         );
         if let Some(header) = &self.header {
             ctx.run_layout(header, Size::new(header_width, title_height));
@@ -831,7 +841,9 @@ impl Widget for WindowChrome {
     }
 
     fn get_cursor(&self, ctx: &QueryCtx<'_>, pos: Point) -> CursorIcon {
-        use ResizeDirection::*;
+        use ResizeDirection::{
+            East, North, NorthEast, NorthWest, South, SouthEast, SouthWest, West,
+        };
         match self.resize_direction(ctx.content_box().size(), ctx.window_to_local(pos)) {
             Some(North | South) => CursorIcon::NsResize,
             Some(East | West) => CursorIcon::EwResize,
@@ -952,7 +964,9 @@ fn drag_bounds(drag: ToolDrag, position: Point, minimum: Size, workspace: Size) 
     match drag.kind {
         DragKind::Move => fit_window(rect + delta, minimum, workspace),
         DragKind::Resize(direction) => {
-            use ResizeDirection::*;
+            use ResizeDirection::{
+                East, North, NorthEast, NorthWest, South, SouthEast, SouthWest, West,
+            };
             let w = minimum.width.min(workspace.width).min(rect.width());
             let h = minimum.height.min(workspace.height).min(rect.height());
             if matches!(direction, West | NorthWest | SouthWest) {
@@ -982,6 +996,7 @@ pub enum ToolWorkspaceAction {
 }
 
 /// A base widget with independently movable and resizable embedded windows.
+///
 /// Children are laid out in workspace coordinates and painted in z-order.
 /// Geometry changes do not replace the content widgets. Use
 /// [`Dimensions::STRETCH`](crate::properties::Dimensions::STRETCH) to fill
@@ -1114,8 +1129,8 @@ impl ToolWorkspace {
                     entry.normal_bounds = fit_window(
                         Rect::from_origin_size(
                             Point::new(
-                                position.x - restored.width() * relative,
-                                position.y - entry.metrics.title_height.get() * 0.5,
+                                restored.width().mul_add(-relative, position.x),
+                                entry.metrics.title_height.get().mul_add(-0.5, position.y),
                             ),
                             restored.size(),
                         ),
@@ -1285,7 +1300,7 @@ impl Widget for ToolWorkspace {
         ctx.set_handled();
         match action {
             ChromeAction::Close => {
-                ctx.submit_action::<ToolWorkspaceAction>(ToolWorkspaceAction::CloseRequested(id))
+                ctx.submit_action::<ToolWorkspaceAction>(ToolWorkspaceAction::CloseRequested(id));
             }
             ChromeAction::ShowMenu(point) => ctx.submit_action::<ToolWorkspaceAction>(
                 ToolWorkspaceAction::MenuRequested(id, point),
@@ -1293,7 +1308,7 @@ impl Widget for ToolWorkspace {
             _ => {
                 let workspace = ctx.content_box().size();
                 ctx.mutate_self_later(move |mut widget| {
-                    Self::apply_action(&mut widget, id, action, workspace)
+                    Self::apply_action(&mut widget, id, action, workspace);
                 });
             }
         }
@@ -1317,7 +1332,9 @@ mod tests {
     #[test]
     fn edges_have_disjoint_hit_regions_even_on_small_windows() {
         let size = Size::new(100.0, 80.0);
-        use ResizeDirection::*;
+        use ResizeDirection::{
+            East, North, NorthEast, NorthWest, South, SouthEast, SouthWest, West,
+        };
         for (x, y, expected) in [
             (0., 0., NorthWest),
             (50., 0., North),
