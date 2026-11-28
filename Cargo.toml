@@ -85,13 +85,13 @@ dpi = "0.1.2"
 image = { version = "0.25.10", default-features = false }
 resvg = "0.50.0"
 web-time = "1.1.0"
-accesskit = "0.24.0"
-accesskit_winit = { version = "0.32.2", default-features = false, features = [
+accesskit = "0.25.2"
+accesskit_winit = { version = "0.34.2", default-features = false, features = [
     "accesskit_unix",
     "tokio",
     "rwh_06",
 ] }
-accesskit_consumer = "0.35.0"
+accesskit_consumer = "0.39.2"
 time = "0.3.47"
 reqwest = { version = "0.12.28", default-features = false, features = [
     # We use rustls as Android doesn't ship with openssl

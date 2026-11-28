@@ -32,7 +32,7 @@ use masonry_core::imaging::{ImageRenderer as _, Painter};
 
 use tracing::debug;
 
-use masonry_core::accesskit::{Action, ActionRequest, Node, Role, Tree, TreeId, TreeUpdate};
+use masonry_core::accesskit::{Action, ActionRequest, Node, Role, TreeId, TreeInfo, TreeUpdate};
 use masonry_core::anymore::AnyDebug;
 use masonry_core::app::{
     RenderRoot, RenderRootOptions, RenderRootSignal, VisualLayerKind, VisualLayerPlan,
@@ -388,7 +388,7 @@ impl<W: Widget> TestHarness<W> {
         let dummy_tree_update = TreeUpdate {
             tree_id: TreeId::ROOT,
             nodes: vec![(0.into(), Node::new(Role::Window))],
-            tree: Some(Tree {
+            tree: Some(TreeInfo {
                 root: 0.into(),
                 toolkit_name: None,
                 toolkit_version: None,
@@ -629,18 +629,10 @@ impl<W: Widget> TestHarness<W> {
     }
 
     /// Returns a reference to the current value of a node of the accessibility tree.
-    pub fn access_node(&self, id: WidgetId) -> Option<accesskit_consumer::Node<'_>> {
-        // AccessKit 0.35 exposes the local ID through its public u128 conversion.
-        // The harness owns a single root tree, so match the full local ID by walking
-        // the exposed nodes rather than constructing a private NodeId.
-        let mut pending = vec![self.access_tree.state().root()];
-        while let Some(node) = pending.pop() {
-            if u128::from(node.id()) >> 64 == u128::from(id.to_raw()) {
-                return Some(node);
-            }
-            pending.extend(node.children());
-        }
-        None
+    pub fn access_node(&self, id: WidgetId) -> Option<accesskit_consumer::NodeRef<'_>> {
+        self.access_tree
+            .state()
+            .node_by_tree_local_id(id.into(), TreeId::ROOT)
     }
 
     // --- MARK: EVENT HELPERS
@@ -1104,21 +1096,21 @@ impl<W: Widget> TestHarness<W> {
 struct NoOpTreeChangeHandler;
 
 impl accesskit_consumer::TreeChangeHandler for NoOpTreeChangeHandler {
-    fn node_added(&mut self, _node: &accesskit_consumer::Node<'_>) {}
+    fn node_added(&mut self, _node: &accesskit_consumer::NodeRef<'_>) {}
 
     fn node_updated(
         &mut self,
-        _old_node: &accesskit_consumer::Node<'_>,
-        _new_node: &accesskit_consumer::Node<'_>,
+        _old_node: &accesskit_consumer::NodeRef<'_>,
+        _new_node: &accesskit_consumer::NodeRef<'_>,
     ) {
     }
 
     fn focus_moved(
         &mut self,
-        _old_node: Option<&accesskit_consumer::Node<'_>>,
-        _new_node: Option<&accesskit_consumer::Node<'_>>,
+        _old_node: Option<&accesskit_consumer::NodeRef<'_>>,
+        _new_node: Option<&accesskit_consumer::NodeRef<'_>>,
     ) {
     }
 
-    fn node_removed(&mut self, _node: &accesskit_consumer::Node<'_>) {}
+    fn node_removed(&mut self, _node: &accesskit_consumer::NodeRef<'_>) {}
 }
