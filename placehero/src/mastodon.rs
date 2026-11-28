@@ -191,6 +191,80 @@ pub(crate) struct AttachmentDimensions {
 mod tests {
     use super::*;
 
+    use xilem::tokio::{
+        self,
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
+    async fn serve_once(
+        response: &'static [u8],
+    ) -> Result<(Mastodon, tokio::task::JoinHandle<Result<String>>)> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let mut api = Mastodon::new(&format!("http://{}", listener.local_addr()?))?;
+        api.client = Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()?;
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await?;
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let size = stream.read(&mut buffer).await?;
+                ensure!(
+                    size > 0 && request.len() + size <= 8192,
+                    "Invalid test HTTP request"
+                );
+                request.extend_from_slice(&buffer[..size]);
+            }
+            stream.write_all(response).await?;
+            Ok(String::from_utf8(request)?)
+        });
+        Ok((api, server))
+    }
+
+    #[test]
+    fn lookup_encodes_query_and_distinguishes_http_status_errors() -> Result<()> {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(async {
+                let (api, server) = serve_once(
+                    b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await?;
+                let error = api.account("alice+&@example.test").await.unwrap_err();
+                assert_eq!(
+                    error
+                        .downcast_ref::<reqwest::Error>()
+                        .and_then(reqwest::Error::status),
+                    Some(reqwest::StatusCode::NOT_FOUND)
+                );
+                let request = tokio::time::timeout(Duration::from_secs(5), server).await???;
+                assert!(
+                    request.starts_with(
+                        "GET /api/v1/accounts/lookup?acct=alice%2B%26%40example.test HTTP/1.1\r\n"
+                    ),
+                    "{request}"
+                );
+                Ok(())
+            })
+    }
+
+    #[test]
+    fn streaming_body_limit_checks_actual_bytes_without_content_length() -> Result<()> {
+        tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
+            let (api, server) = serve_once(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n").await?;
+            let response = api.client.get(api.base.clone()).send().await?;
+            assert!(response.content_length().is_none());
+            let error = read_body(response, 5).await.unwrap_err();
+            assert!(error.to_string().contains("exceeds 5 bytes"));
+            tokio::time::timeout(Duration::from_secs(5), server).await???;
+            Ok(())
+        })
+    }
+
     #[test]
     fn endpoint_preserves_origin_and_encodes_resource_ids() -> Result<()> {
         let api = Mastodon::new("https://example.test/mastodon/")?;
