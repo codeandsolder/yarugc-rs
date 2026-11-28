@@ -52,7 +52,7 @@ impl Drop for TaskLifetime {
 /// This `MessageProxy` can be used to send a message to `on_event`, which can then update
 /// the app's state.
 ///
-/// For example, this can be used with the time functions in [`tokio::time`].
+/// For example, this can be used with the time functions in `tokio::time` (when enabled by the application).
 ///
 /// The host must keep the supplied runtime alive and driving tasks.
 /// The runtime is selected on build and remains fixed until teardown.
@@ -220,7 +220,7 @@ mod tests {
                 .unwrap()
                 .unwrap();
         });
-        assert!(lifetime.is_active());
+        assert!(lifetime.is_active(), "The view must own the spawned task");
         drop(lifetime);
     }
 
