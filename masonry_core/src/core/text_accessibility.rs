@@ -67,6 +67,7 @@ impl LayoutAccessibility {
         let mut spans_started = 0;
         let mut runs = Vec::new();
         let alignment = layout.alignment();
+        let paragraph_rtl = layout.is_rtl();
         for line in layout.lines() {
             let metrics = line.metrics();
             // Compute physical run locations before sorting into logical text order.
@@ -80,7 +81,7 @@ impl LayoutAccessibility {
             let mut previous = None;
             for (run, run_offset) in runs.drain(..) {
                 let mut span = SpanData::new(run.text_range().start);
-                let mut node = text_run_node(&run, alignment);
+                let mut node = text_run_node(&run, alignment, paragraph_rtl);
                 let mut span_offset = 0.0;
                 let mut style_index = None;
                 for cluster in run.clusters() {
@@ -91,7 +92,10 @@ impl LayoutAccessibility {
                         let next = SpanData::new(cluster.text_range().start);
                         self.publish_span(
                             std::mem::replace(&mut span, next),
-                            std::mem::replace(&mut node, text_run_node(&run, alignment)),
+                            std::mem::replace(
+                                &mut node,
+                                text_run_node(&run, alignment, paragraph_rtl),
+                            ),
                             SpanGeometry::new(&run, metrics, run_offset, span_offset, advance),
                             &mut target,
                             &mut spans_started,
@@ -246,7 +250,11 @@ impl LayoutAccessibility {
     }
 }
 
-fn text_run_node<B: Brush>(run: &Run<'_, B>, alignment: Option<Alignment>) -> Node {
+fn text_run_node<B: Brush>(
+    run: &Run<'_, B>,
+    alignment: Option<Alignment>,
+    paragraph_rtl: bool,
+) -> Node {
     let mut node = Node::new(Role::TextRun);
     node.set_text_direction(if run.is_rtl() {
         TextDirection::RightToLeft
@@ -270,14 +278,14 @@ fn text_run_node<B: Brush>(run: &Run<'_, B>, alignment: Option<Alignment>) -> No
     node.set_font_size(run.font_size());
     let attrs = run.font_attrs();
     node.set_font_weight(attrs.weight.value());
-    if matches!(attrs.style, FontStyle::Italic) {
+    if matches!(attrs.style, FontStyle::Italic | FontStyle::Oblique(_)) {
         node.set_italic();
     }
     if let Some(align) = alignment {
         node.set_text_align(match align {
-            Alignment::Start if run.is_rtl() => TextAlign::Right,
+            Alignment::Start if paragraph_rtl => TextAlign::Right,
             Alignment::Start => TextAlign::Left,
-            Alignment::End if run.is_rtl() => TextAlign::Left,
+            Alignment::End if paragraph_rtl => TextAlign::Left,
             Alignment::End => TextAlign::Right,
             Alignment::Left => TextAlign::Left,
             Alignment::Center => TextAlign::Center,

@@ -323,6 +323,12 @@ jobs:
           # Check that doc file paths are correct
           CHECK_DOC_PATHS: "true"
 
+      - name: Verify backend-free compositor and imaging adapter
+        if: runner.os == 'Linux'
+        run: |
+          cargo check -p yarugc --locked --profile ci --lib
+          cargo test -p masonry_imaging --locked --profile ci --no-default-features --lib selection_tests
+
       - name: Run native window lifecycle regression
         if: runner.os == 'Linux'
         run: xvfb-run -a cargo test -p masonry_winit --locked --profile ci --lib native_window_lifecycle_and_gpu_recovery -- --ignored
