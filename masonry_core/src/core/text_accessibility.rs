@@ -71,7 +71,7 @@ impl LayoutAccessibility {
         for line in layout.lines() {
             let metrics = line.metrics();
             // Compute physical run locations before sorting into logical text order.
-            let mut run_offset = metrics.offset;
+            let mut run_offset = metrics.inline_min_coord + metrics.offset;
             runs.clear();
             for run in line.runs() {
                 runs.push((run, run_offset));
@@ -79,7 +79,7 @@ impl LayoutAccessibility {
             }
             runs.sort_by_key(|(run, _)| run.text_range().start);
             let mut previous = None;
-            for (run, run_offset) in runs.iter().cloned() {
+            for &(run, run_offset) in &runs {
                 let mut span = SpanData::new(run.text_range().start);
                 let mut node = text_run_node(&run, alignment, paragraph_rtl);
                 let mut span_offset = 0.0;

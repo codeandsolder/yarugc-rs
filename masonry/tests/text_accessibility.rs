@@ -165,6 +165,44 @@ fn wrapped_bidi_runs_have_valid_geometry_and_logical_text() {
 }
 
 #[test]
+fn accessible_bounds_match_positioned_clusters_in_offset_lines() {
+    let text = "left שלום right";
+    let mut layout = layout(text, None);
+    let mut breaker = layout.break_lines();
+    breaker.state_mut().set_layout_max_advance(400.0);
+    breaker.state_mut().set_line_max_advance(400.0);
+    breaker.state_mut().set_line_x(37.0);
+    while breaker.break_next().is_some() {}
+    breaker.finish();
+    let mut bridge = LayoutAccessibility::default();
+    let (update, _) = publish(&mut bridge, text, &layout, &mut 0);
+    let mut start = 0;
+    for (_, node) in update.nodes {
+        let value = node.value().unwrap_or_default();
+        let end = start + value.len();
+        let mut left = f32::INFINITY;
+        let mut right = f32::NEG_INFINITY;
+        for cluster in layout
+            .lines()
+            .flat_map(|line| line.runs().flat_map(|run| run.clusters()))
+        {
+            if (start..end).contains(&cluster.text_range().start) {
+                let offset = cluster.visual_offset().unwrap();
+                left = left.min(offset);
+                right = right.max(offset + cluster.advance());
+            }
+        }
+        if !value.is_empty() {
+            let bounds = node.bounds().unwrap();
+            assert!((bounds.x0 - (7.0 + f64::from(left))).abs() < 0.001);
+            assert!((bounds.x1 - (7.0 + f64::from(right))).abs() < 0.001);
+        }
+        start = end;
+    }
+    assert_eq!(start, text.len());
+}
+
+#[test]
 fn editor_ignores_accessible_selection_after_text_changes() {
     let (mut fonts, mut context) = text_contexts();
     let mut editor = PlainEditor::<BrushIndex>::new(16.0);
