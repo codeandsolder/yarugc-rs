@@ -385,7 +385,7 @@ where
     ) {
         for (&idx, child) in &mut view_state.children {
             with_child_path(ctx, idx, child.generation, |ctx| {
-                if let Some(child_element) = widgets::VirtualScroll::child_mut(&mut element, idx) {
+                if let Some(child_element) = widgets::VirtualScroll::child_mut_for_teardown(&mut element, idx) {
                     child.view.teardown(&mut child.state, ctx, child_element);
                 } else {
                     ctx.remove_action_sources_under_current_path();
@@ -526,6 +526,38 @@ mod tests {
             request.target().start > 0,
             "jump must leave the initial range"
         );
+    }
+
+    #[test]
+    fn shrink_regrow_rejects_messages_from_retired_generation() {
+        let mut ctx = view_context();
+        let component = |_: &mut (), _| spinner();
+        let original = virtual_scroll::<_, (), _, _>(3, component);
+        let smaller = virtual_scroll::<_, (), _, _>(1, component);
+        let (pod, mut state) = original.build(&mut ctx, &mut ());
+        let (mut root, receive) = render_root(pod.new_widget, (100, 200));
+        let initial = next_fetch(&receive);
+        root.edit_base_layer(|mut element: masonry::core::WidgetMut<'_, widgets::VirtualScroll>| {
+            assert!(matches!(original.message(&mut state, &mut message(initial), element.reborrow_mut(), &mut ()), MessageResult::RequestRebuild));
+            original.rebuild(&original, &mut state, &mut ctx, element, &mut ());
+        }).unwrap();
+        let generation = state.children[&1].generation;
+        let retained = state.children[&0].generation;
+        let stale_message = || MessageCtx::new(Environment::default(), vec![view_id_for_index(1), ViewId::new(generation)], DynMessage::new(()));
+        root.edit_base_layer(|mut element: masonry::core::WidgetMut<'_, widgets::VirtualScroll>| {
+            smaller.rebuild(&original, &mut state, &mut ctx, element.reborrow_mut(), &mut ());
+            original.rebuild(&smaller, &mut state, &mut ctx, element.reborrow_mut(), &mut ());
+            assert!(matches!(original.message(&mut state, &mut stale_message(), element, &mut ()), MessageResult::Stale));
+        }).unwrap();
+        let replacement = next_fetch(&receive);
+        assert_eq!(replacement.target(), replacement.old_active());
+        root.edit_base_layer(|mut element: masonry::core::WidgetMut<'_, widgets::VirtualScroll>| {
+            assert!(matches!(original.message(&mut state, &mut message(replacement), element.reborrow_mut(), &mut ()), MessageResult::RequestRebuild));
+            original.rebuild(&original, &mut state, &mut ctx, element.reborrow_mut(), &mut ());
+            assert_ne!(state.children[&1].generation, generation);
+            assert_eq!(state.children[&0].generation, retained);
+            assert!(matches!(original.message(&mut state, &mut stale_message(), element, &mut ()), MessageResult::Stale));
+        }).unwrap();
     }
 
     #[test]
