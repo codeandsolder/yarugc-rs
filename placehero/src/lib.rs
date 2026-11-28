@@ -201,7 +201,8 @@ impl Placehero {
                 self.loading_timeline.then(|| spinner().dims(50.px())),
                 text_button("Go", |state: &mut Self| {
                     Navigation::LoadUser(state.timeline_box_contents.clone())
-                }),
+                })
+                .disabled(self.loading_timeline),
             ))))
         };
         Either::A(flex_col((
