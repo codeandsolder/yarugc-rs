@@ -8,6 +8,7 @@
 //!
 //! You probably shouldn't depend on this crate directly, unless you're trying to embed Xilem into a non-Winit platform.
 //! See [Xilem][] or [Xilem Web][] instead.
+//! Enable `async` for task and worker views using an application-owned Tokio runtime.
 //! Enable `svg` for SVG image views; the embedding host selects its own renderer.
 //!
 //! [Xilem Core]: xilem_core

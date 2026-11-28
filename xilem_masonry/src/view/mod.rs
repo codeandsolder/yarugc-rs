@@ -499,11 +499,13 @@ export_views! {
     #[cfg(feature = "svg")]
     svg,
     switch,
+    #[cfg(feature = "async")]
     task,
     text_input,
     transform,
     variable_label,
     virtual_scroll,
+    #[cfg(feature = "async")]
     worker,
     zstack,
 }
