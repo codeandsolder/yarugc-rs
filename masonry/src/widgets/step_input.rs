@@ -2025,7 +2025,7 @@ impl<T: Steppable> StepInput<T> {
             Self::flow_arrow(size, arrow_width, arrow_height, arrow_edge_pad, extra_y_pad);
 
         // We want the arrow to move within three full widths of itself,
-        // i.e. [AWW] -> [WWA] where A is the arrow and W is empty sapce of the same width.
+        // i.e. [AWW] -> [WWA] where A is the arrow and W is empty space of the same width.
         let arrow_move_range = 3.;
         // Actual available space for arrow movement depends on the label and our total size.
         let label_width = self.label_x_end - self.label_x_start;
