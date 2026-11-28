@@ -93,6 +93,7 @@ impl Avatars {
 
     /// Provide support for Mastodon Avatar display to the `child` view.
     pub(crate) fn provide<State, Action, Child>(
+        client: reqwest::Client,
         child: Child,
     ) -> impl WidgetView<State, Action, Element = Child::Element>
     where
@@ -105,12 +106,13 @@ impl Avatars {
                 icons: HashMap::default(),
                 requester: None,
             },
-            fork(child, Self::worker()),
+            fork(child, Self::worker(client)),
         )
     }
 
-    fn worker<State, Action>()
-    -> impl View<State, Action, ViewCtx, Element = NoElement> + use<State, Action>
+    fn worker<State, Action>(
+        client: reqwest::Client,
+    ) -> impl View<State, Action, ViewCtx, Element = NoElement> + use<State, Action>
     where
         State: 'static,
         Action: 'static,
@@ -132,16 +134,21 @@ impl Avatars {
                 },
                 env_worker(
                     std::num::NonZeroUsize::MIN.saturating_add(63),
-                    |proxy, rx: Receiver<AvatarRequest>| {
+                    move |proxy, rx: Receiver<AvatarRequest>| {
+                        let client = client.clone();
                         process_requests(
                             proxy,
                             rx,
                             std::num::NonZeroUsize::MIN.saturating_add(7),
-                            |request| async move {
-                                let url = request.avatar_url;
-                                let result =
-                                    image_from_url(&url).await.map_err(|err| err.to_string());
-                                AvatarResponse { url, result }
+                            move |request| {
+                                let client = client.clone();
+                                async move {
+                                    let url = request.avatar_url;
+                                    let result = image_from_url(&client, &url)
+                                        .await
+                                        .map_err(|err| err.to_string());
+                                    AvatarResponse { url, result }
+                                }
                             },
                         )
                     },
@@ -171,10 +178,19 @@ impl Avatars {
 /// Load the [`ImageData`] from the given url.
 ///
 /// N.B. This is functionality shared with `http_cats`
-pub(crate) async fn image_from_url(url: &str) -> anyhow::Result<ImageData> {
-    let response = reqwest::get(url).await?.error_for_status()?;
-    let bytes = response.bytes().await?;
-    let image = image::load_from_memory(&bytes)?.into_rgba8();
+pub(crate) async fn image_from_url(
+    client: &reqwest::Client,
+    url: &str,
+) -> anyhow::Result<ImageData> {
+    let response = client.get(url).send().await?.error_for_status()?;
+    let bytes = crate::mastodon::read_body(response, 8 * 1024 * 1024).await?;
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(4096);
+    limits.max_image_height = Some(4096);
+    limits.max_alloc = Some(64 * 1024 * 1024);
+    reader.limits(limits);
+    let image = reader.decode()?.thumbnail(256, 256).into_rgba8();
     let width = image.width();
     let height = image.height();
     let data = image.into_vec();

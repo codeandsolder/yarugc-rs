@@ -19,9 +19,7 @@
 
 use std::sync::Arc;
 
-use megalodon::entities::{Context, Instance, Status};
-use megalodon::error::{Kind, OwnError};
-use megalodon::{Megalodon, mastodon};
+use crate::mastodon::{Context, Instance, Mastodon, Status};
 use xilem::RunError;
 use xilem::core::one_of::{Either, OneOf, OneOf3, OneOf6};
 use xilem::core::{NoElement, View, fork, lens, map_action, map_state};
@@ -67,15 +65,11 @@ use crate::actions::Navigation;
 use crate::components::{Timeline, thread};
 use crate::login_flow::PlaceheroWithLogin;
 
-/// Our shared API client type.
-///
-/// Megalodon suggests using `dyn Megaldon`, but specifying Mastodon here specifically
-/// has the advantage that go-to-definition works.
-///
-/// We also do not plan to support non-Mastodon servers at the moment.
-/// However, keeping this type definition means a greater chance of a port to
-/// outside Mastodon working.
-type Mastodon = Arc<mastodon::Mastodon>;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "Internal types must remain crate-visible, not public API."
+)]
+mod mastodon;
 
 /// Execute the app in the given winit event loop.
 ///
@@ -144,7 +138,7 @@ struct Placehero {
     mastodon: Mastodon,
     instance: Option<Instance>,
     timeline: Timeline,
-    show_context: Option<Status>,
+    show_context: Option<Arc<Status>>,
     context: Option<Context>,
     context_sender: Option<Sender<String>>,
     account_sender: Option<Sender<String>>,
@@ -159,15 +153,10 @@ struct Placehero {
 impl Placehero {
     fn new() -> anyhow::Result<Self> {
         // TODO: Configurable server?
-        let base_url = "https://mastodon.online".to_string();
-        // TODO: Determine what user agent we want to send.
-        // Currently we send "megalodon", as that is the default in the library.
-        let user_agent = None;
-
-        let mastodon = mastodon::Mastodon::new(base_url, None, user_agent)?;
+        let mastodon = Mastodon::new("https://mastodon.online")?;
 
         Ok(Self {
-            mastodon: Arc::new(mastodon),
+            mastodon,
             instance: None,
             timeline: Timeline::default(),
             show_context: None,
@@ -246,10 +235,9 @@ impl Placehero {
                  You might need to include the server name of the account, if it's on a different server."
             )))
         } else if self.timeline.has_account() {
-            OneOf::E(map_state(
-                self.timeline.view(self.mastodon.clone()),
-                |this: &mut Self| &mut this.timeline,
-            ))
+            OneOf::E(map_state(self.timeline.view(), |this: &mut Self| {
+                &mut this.timeline
+            }))
         } else {
             OneOf::F(prose("No statuses yet loaded"))
         }
@@ -257,48 +245,55 @@ impl Placehero {
 }
 
 fn app_logic(app_state: &mut Placehero) -> impl WidgetView<Placehero> + use<> {
-    Avatars::provide(fork(
-        map_action(
-            split(app_state.sidebar(), app_state.main_view()).split_point(0.2),
-            |state, action| match action {
-                Navigation::LoadContext(status) => {
-                    let requested = state
-                        .context_sender
-                        .as_ref()
-                        .is_some_and(|sender| sender.try_send(status.id.clone()).is_ok());
-                    state.show_context = Some(status);
-                    state.context_error =
-                        (!requested).then(|| "Thread worker is unavailable".to_owned());
-                    state.context = None;
-                }
-                Navigation::LoadUser(user) => {
-                    // It's fine to set `timeline_box_contents` manually here, because we
-                    // set state.loading_timeline (i.e. the box will become disabled).
-                    state.timeline_box_contents.clone_from(&user);
-                    let requested = state
-                        .account_sender
-                        .as_ref()
-                        .is_some_and(|sender| sender.try_send(user).is_ok());
-                    state.loading_timeline = requested;
-                    state.account_error =
-                        (!requested).then(|| "Account worker is unavailable".to_owned());
-                    state.not_found_acct = None;
-                    state.context = None;
-                    state.show_context = None;
-                }
-                Navigation::Home => {
-                    state.context = None;
-                    state.show_context = None;
-                }
-                Navigation::None => {}
-            },
+    Avatars::provide(
+        app_state.mastodon.client().clone(),
+        fork(
+            map_action(
+                split(app_state.sidebar(), app_state.main_view()).split_point(0.2),
+                |state, action| match action {
+                    Navigation::LoadContext(status) => {
+                        let requested = state
+                            .context_sender
+                            .as_ref()
+                            .is_some_and(|sender| sender.try_send(status.id.clone()).is_ok());
+                        state.show_context = Some(status);
+                        state.context_error =
+                            (!requested).then(|| "Thread worker is unavailable".to_owned());
+                        state.context = None;
+                    }
+                    Navigation::LoadUser(user) => {
+                        // It's fine to set `timeline_box_contents` manually here, because we
+                        // set state.loading_timeline (i.e. the box will become disabled).
+                        state.timeline_box_contents.clone_from(&user);
+                        let requested = state
+                            .account_sender
+                            .as_ref()
+                            .is_some_and(|sender| sender.try_send(user).is_ok());
+                        state.loading_timeline = requested;
+                        state.account_error =
+                            (!requested).then(|| "Account worker is unavailable".to_owned());
+                        state.not_found_acct = None;
+                        state.context = None;
+                        state.show_context = None;
+                    }
+                    Navigation::Home => {
+                        state.context = None;
+                        state.show_context = None;
+                    }
+                    Navigation::None => {}
+                },
+            ),
+            (
+                load_instance(app_state.mastodon.clone()),
+                load_account(app_state.mastodon.clone()),
+                load_contexts(app_state.mastodon.clone()),
+                map_state(
+                    Timeline::worker(app_state.mastodon.clone()),
+                    |state: &mut Placehero| &mut state.timeline,
+                ),
+            ),
         ),
-        (
-            load_instance(app_state.mastodon.clone()),
-            load_account(app_state.mastodon.clone()),
-            load_contexts(app_state.mastodon.clone()),
-        ),
-    ))
+    )
 }
 
 fn load_contexts(
@@ -317,7 +312,7 @@ fn load_contexts(
                     let mastodon = mastodon.clone();
                     let result = result.clone();
                     task.spawn(async move {
-                        let context_result = mastodon.get_status_context(req.clone(), None).await;
+                        let context_result = mastodon.context(&req).await;
                         drop(result.message((context_result, req)));
                     });
                 }
@@ -331,7 +326,7 @@ fn load_contexts(
                     .as_ref()
                     .is_some_and(|it| it.id == id) =>
             {
-                app_state.context = Some(context.json);
+                app_state.context = Some(context);
                 app_state.context_error = None;
             }
             Ok(_) => {
@@ -359,13 +354,13 @@ fn load_instance(
             let mastodon = mastodon.clone();
             async move {
                 // We choose not to handle the case where the event loop has ended
-                let instance_result = mastodon.get_instance().await;
+                let instance_result = mastodon.instance().await;
                 // Note that error handling is deferred to the on_event handler
                 drop(result.message(instance_result));
             }
         },
         |app_state: &mut Placehero, event| match event {
-            Ok(instance) => app_state.instance = Some(instance.json),
+            Ok(instance) => app_state.instance = Some(instance),
             Err(error) => {
                 tracing::warn!(%error, "Could not load instance");
                 app_state.instance_error = Some(format!("Could not connect: {error}"));
@@ -383,7 +378,7 @@ fn load_account(
             let mastodon = mastodon.clone();
             async move {
                 while let Some(req) = recv.recv().await {
-                    let instance_result = mastodon.lookup_account(req.clone()).await;
+                    let instance_result = mastodon.account(&req).await;
                     // We choose not to handle the case where the event loop has ended
                     // Note that error handling is deferred to the on_event handler
                     drop(result.message((instance_result, req)));
@@ -391,30 +386,34 @@ fn load_account(
             }
         },
         |app_state: &mut Placehero, sender| app_state.account_sender = Some(sender),
-        |app_state: &mut Placehero, (event, acct)| match event {
-            Ok(instance) => {
-                app_state.timeline = Timeline::new_for_account(instance.json);
-                app_state.loading_timeline = false;
-                app_state.not_found_acct = None;
+        |app_state: &mut Placehero, (event, acct)| {
+            if !app_state.loading_timeline || app_state.timeline_box_contents != acct {
+                return;
             }
-            Err(megalodon::error::Error::OwnError(
-                e @ OwnError {
-                    kind: Kind::HTTPStatusError,
-                    ..
-                },
-            )) => {
-                tracing::error!("Failure to to load account: {e}.");
-                // TODO: Handle more gracefully/surface to the user.
-                // This at least lets the user retry.
-                // Note that we don't unset the timeline here, because it's technically
-                // possible for this response to arrive extremely quickly
-                app_state.loading_timeline = false;
-                app_state.not_found_acct = Some(acct);
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "Could not load account");
-                app_state.loading_timeline = false;
-                app_state.account_error = Some(format!("Could not load @{acct}: {e}"));
+            match event {
+                Ok(instance) => {
+                    app_state.timeline.set_account(instance);
+                    app_state.loading_timeline = false;
+                    app_state.not_found_acct = None;
+                }
+                Err(e)
+                    if e.downcast_ref::<reqwest::Error>()
+                        .and_then(reqwest::Error::status)
+                        == Some(reqwest::StatusCode::NOT_FOUND) =>
+                {
+                    tracing::warn!(error = %e, "Account not found");
+                    // TODO: Handle more gracefully/surface to the user.
+                    // This at least lets the user retry.
+                    // Note that we don't unset the timeline here, because it's technically
+                    // possible for this response to arrive extremely quickly
+                    app_state.loading_timeline = false;
+                    app_state.not_found_acct = Some(acct);
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Could not load account");
+                    app_state.loading_timeline = false;
+                    app_state.account_error = Some(format!("Could not load @{acct}: {e}"));
+                }
             }
         },
     )

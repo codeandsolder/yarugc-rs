@@ -1,7 +1,9 @@
 // Copyright 2025 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use megalodon::entities::Status;
+use std::sync::Arc;
+
+use crate::mastodon::Status;
 use xilem::masonry::layout::AsUnit;
 use xilem::style::Style;
 use xilem::view::{
@@ -28,10 +30,9 @@ mod media;
 // In particular, do we want to have the same design as "normal" Mastodon, where the
 // avatar for the booster is shown in the "child" avatar.
 fn base_status<State: 'static>(
-    status: &Status,
+    status: &Arc<Status>,
 ) -> impl FlexSequence<State, Navigation> + use<State> {
-    // TODO: This really should be Arced or something.
-    let status_clone: Status = status.clone();
+    let status_clone = Arc::clone(status);
     let acct_clone = status.account.acct.clone();
     // TODO: In theory, it's possible to reblog a reblog; it's not clear what happens in this case.
     debug_assert!(status.reblog.is_none(), "`base_status` can't show reblogs.");
@@ -59,8 +60,7 @@ fn base_status<State: 'static>(
                 // short-circuit re-loading the account?
                 Navigation::LoadUser(acct_clone.clone())
             }),
-            inline_prose(status.created_at.format("%Y-%m-%d %H:%M:%S").to_string())
-                .text_alignment(TextAlign::End),
+            inline_prose(display_timestamp(status.created_at)).text_alignment(TextAlign::End),
         )),
         prose(status_html_to_plaintext(status.content.as_str())).flex(CrossAxisAlignment::Start),
         status
@@ -80,5 +80,18 @@ fn base_status<State: 'static>(
         ))
         .main_axis_alignment(MainAxisAlignment::SpaceEvenly)
         .flex(CrossAxisAlignment::Start),
+    )
+}
+
+fn display_timestamp(timestamp: time::OffsetDateTime) -> String {
+    let utc = timestamp.to_offset(time::UtcOffset::UTC);
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        utc.year(),
+        u8::from(utc.month()),
+        utc.day(),
+        utc.hour(),
+        utc.minute(),
+        utc.second()
     )
 }
