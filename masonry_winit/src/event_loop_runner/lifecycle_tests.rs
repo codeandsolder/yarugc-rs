@@ -385,7 +385,9 @@ fn native_window_lifecycle_and_gpu_recovery() {
             event_loop.owned_display_handle(),
             vec![initial],
             properties,
-        ),
+            Backend::Vello,
+        )
+        .unwrap(),
         driver: Driver::default(),
         initial: initial_id,
         ran: false,

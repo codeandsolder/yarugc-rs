@@ -324,7 +324,7 @@ jobs:
 
       - name: Run native window lifecycle regression
         if: runner.os == 'Linux'
-        run: xvfb-run -a cargo test -p masonry_winit --locked --profile ci --all-features --lib native_window_lifecycle_and_gpu_recovery -- --ignored
+        run: xvfb-run -a cargo test -p masonry_winit --locked --profile ci --lib native_window_lifecycle_and_gpu_recovery -- --ignored
 
       - name: Run retained GPU integration tests
         if: runner.os == 'Linux'

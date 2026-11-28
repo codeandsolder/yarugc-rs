@@ -338,6 +338,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )],
         calc_state,
         custom_property_set(),
+        masonry_winit::app::Backend::Vello,
     )?;
     Ok(())
 }

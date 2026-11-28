@@ -167,6 +167,7 @@ fn main() {
         ],
         driver,
         default_property_set(),
+        masonry_winit::app::Backend::Vello,
     )
     .unwrap();
 }
@@ -180,8 +181,7 @@ Running this will open a window that looks like this:
 
 The following crate [feature flags](https://doc.rust-lang.org/cargo/reference/features.html#dependency-features) are available:
 
-- `default`: Enables the default features of [Masonry Core][masonry_core], [Masonry Testing][masonry_testing]
-  (if enabled via the `testing` feature).
+- `svg`: Enables SVG image widgets. Renderer and window-system selection belongs to the host.
 - `tracy`: Enables creating output for the [Tracy](https://github.com/wolfpld/tracy) profiler using [`tracing-tracy`][tracing_tracy].
   This can be used by installing Tracy and connecting to a Masonry with this feature enabled.
 - `testing`: Re-exports the test harness from [Masonry Testing][masonry_testing].

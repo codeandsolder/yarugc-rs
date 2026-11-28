@@ -16,18 +16,16 @@ default-target = "x86_64-unknown-linux-gnu"
 targets = []
 
 [features]
-default = ["masonry/default", "imaging_vello"]
-imaging_vello = ["masonry/imaging_vello"]
-imaging_vello_hybrid = ["masonry/imaging_vello_hybrid"]
-imaging_skia = ["masonry/imaging_skia"]
+default = []
+svg = ["masonry/svg", "dep:usvg"]
 
 [dependencies]
 xilem_core.workspace = true
-masonry = { workspace = true, features = ["svg"] }
+masonry.workspace = true
 smallvec.workspace = true
 tracing.workspace = true
 tokio = { version = "1.50.0", features = ["rt", "rt-multi-thread", "time", "sync"] }
-usvg.workspace = true
+usvg = { workspace = true, optional = true }
 
 [lints]
 workspace = true

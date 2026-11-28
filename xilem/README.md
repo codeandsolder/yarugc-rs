@@ -154,7 +154,9 @@ That is a simplifying assumption for most Rust code, but this is mismatched with
 
 The following crate [feature flags](https://doc.rust-lang.org/cargo/reference/features.html#dependency-features) are available:
 
-* `default`: Enables the default features of [Masonry][masonry] and [Masonry Winit][masonry_winit].
+* `default`: Enables the Vello GPU renderer in the native window host.
+* `imaging_vello`, `imaging_vello_hybrid`, `imaging_skia`: Enable the corresponding host renderer.
+* `svg`: Enables SVG image views.
 
 [accesskit_docs]: masonry::accesskit
 [Parley]: masonry::parley

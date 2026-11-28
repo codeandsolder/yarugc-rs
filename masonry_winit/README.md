@@ -82,6 +82,7 @@ fn main() {
         )],
         driver,
         default_property_set(),
+        masonry_winit::app::Backend::Vello,
     )
     .unwrap();
 }

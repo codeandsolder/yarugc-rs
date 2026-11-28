@@ -61,6 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         vec![NewWindow::new(window_attributes, make_image()?.erased())],
         Driver,
         default_property_set(),
+        masonry_winit::app::Backend::Vello,
     )?;
     Ok(())
 }

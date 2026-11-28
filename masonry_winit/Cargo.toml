@@ -35,19 +35,25 @@ ui-events-winit.workspace = true
 pollster = "0.4.0"
 accesskit_winit.workspace = true
 masonry_imaging = { workspace = true, default-features = false }
-wgpu.workspace = true
+wgpu = { workspace = true, features = ["parking_lot"] }
 copypasta = "0.10.2"
 
-[target.'cfg(target_os = "macos")'.dependencies]
-# We need Metal to interact with CoreAnimation during window resizing.
-wgpu = { workspace = true, features = ["vulkan", "metal", "dx12", "gles", "webgpu", "parking_lot"] }
+[target.'cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))'.dependencies]
+wgpu = { workspace = true, features = ["vulkan", "gles"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+wgpu = { workspace = true, features = ["dx12", "vulkan", "gles"] }
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+# Metal also integrates with CoreAnimation during macOS window resizing.
+wgpu = { workspace = true, features = ["metal"] }
 
 [dev-dependencies]
 # We don't use the "workspace" dependency here, because this makes a loop in publishing.
 # This does mean that this dev-dependency edge won't be recorded in the uploaded Cargo.toml,
 # but that's only an issue for crater?
 # See https://github.com/rust-lang/cargo/issues/4242
-masonry = { path = "../masonry" }
+masonry = { path = "../masonry", default-features = false }
 
 [lints]
 workspace = true

@@ -8,6 +8,8 @@ use std::task::{Context, Poll, Wake, Waker};
 /// Errors that can occur while creating a headless WGPU device.
 #[derive(Debug)]
 pub enum InitError {
+    /// No native WGPU backend was compiled into this build.
+    NoBackend,
     /// No compatible adapter was available.
     NoAdapter(wgpu::RequestAdapterError),
     /// The selected adapter could not create a device.
@@ -17,6 +19,7 @@ pub enum InitError {
 impl core::fmt::Display for InitError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::NoBackend => f.write_str("no WGPU backend compiled into this build"),
             Self::NoAdapter(err) => write!(f, "no compatible WGPU adapter found: {err}"),
             Self::RequestDevice(err) => write!(f, "requesting WGPU device failed: {err}"),
         }
@@ -26,6 +29,7 @@ impl core::fmt::Display for InitError {
 impl std::error::Error for InitError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::NoBackend => None,
             Self::NoAdapter(err) => Some(err),
             Self::RequestDevice(err) => Some(err),
         }
@@ -33,6 +37,9 @@ impl std::error::Error for InitError {
 }
 
 pub(super) fn try_init_device_and_queue() -> Result<(wgpu::Device, wgpu::Queue), InitError> {
+    if wgpu::Instance::enabled_backend_features().is_empty() {
+        return Err(InitError::NoBackend);
+    }
     block_on(async {
         let instance = wgpu::Instance::default();
         let adapter = instance
