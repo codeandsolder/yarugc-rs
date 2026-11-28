@@ -103,7 +103,7 @@ fn main() -> Result<(), RunError> {
     let event_loop = EventLoop::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
     let (driver, windows) =
-        xilem.into_driver_and_windows(move |event| proxy.send_event(event).map_err(|err| err.0))?;
+        xilem.into_driver_and_windows(move |event| proxy.send_event(event).map_err(|err| err.0));
     let masonry_state = masonry_winit::app::MasonryState::new(
         event_loop.create_proxy(),
         event_loop.owned_display_handle(),

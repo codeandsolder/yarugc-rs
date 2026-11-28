@@ -20,17 +20,16 @@
 use std::sync::Arc;
 
 use crate::mastodon::{Context, Instance, Mastodon, Status};
-use xilem::RunError;
+use tokio::sync::mpsc::{Receiver, Sender};
 use xilem::core::one_of::{Either, OneOf, OneOf3, OneOf6};
 use xilem::core::{NoElement, View, fork, lens, map_action, map_state};
 use xilem::masonry::layout::AsUnit;
 use xilem::style::Style;
-use xilem::tokio::sync::mpsc::{Receiver, Sender};
 use xilem::view::{
     CrossAxisAlignment, FlexExt, MainAxisAlignment, flex_col, flex_row, label, prose, sized_box,
     spinner, split, task_raw, text_button, text_input, worker_raw,
 };
-use xilem::{EventLoopBuilder, ViewCtx, WidgetView, WindowOptions, Xilem, tokio};
+use xilem::{EventLoopBuilder, ViewCtx, WidgetView, WindowOptions, Xilem};
 
 #[expect(
     clippy::redundant_pub_crate,
@@ -75,13 +74,16 @@ mod mastodon;
 ///
 /// # Errors
 /// Returns an error if the application runtime or window event loop fails.
-pub fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
+pub fn run(event_loop: EventLoopBuilder) -> anyhow::Result<()> {
+    let runtime = tokio::runtime::Runtime::new()?;
+    let handle = runtime.handle().clone();
     Xilem::new_simple(
         MainState::Selecting(None),
-        select_app,
+        move |state| select_app(state, &handle),
         WindowOptions::new("Placehero: A placeholder named Mastodon client"),
     )
-    .run_in(event_loop)
+    .run_in(event_loop)?;
+    Ok(())
 }
 
 /// We are developing a version of Placehero which supports login.
@@ -95,7 +97,10 @@ enum MainState {
     New(PlaceheroWithLogin),
 }
 
-fn select_app(state: &mut MainState) -> impl WidgetView<MainState> + use<> {
+fn select_app(
+    state: &mut MainState,
+    runtime: &tokio::runtime::Handle,
+) -> impl WidgetView<MainState> + use<> {
     match state {
         MainState::Selecting(error) => OneOf3::A(
             flex_col((
@@ -119,12 +124,15 @@ fn select_app(state: &mut MainState) -> impl WidgetView<MainState> + use<> {
             ))
             .main_axis_alignment(MainAxisAlignment::Center),
         ),
-        MainState::Old(_) => OneOf::B(lens(app_logic, |state: &mut MainState| {
+        MainState::Old(_) => {
+            let runtime = runtime.clone();
+            OneOf::B(lens(move |state| app_logic(state, &runtime), |state: &mut MainState| {
             let MainState::Old(placehero) = state else {
                 unreachable!()
             };
             placehero
-        })),
+        }))
+        },
         MainState::New(_) => OneOf::C(lens(login_flow::app_logic, |state: &mut MainState| {
             let MainState::New(placehero) = state else {
                 unreachable!()
@@ -245,8 +253,12 @@ impl Placehero {
     }
 }
 
-fn app_logic(app_state: &mut Placehero) -> impl WidgetView<Placehero> + use<> {
+fn app_logic(
+    app_state: &mut Placehero,
+    runtime: &tokio::runtime::Handle,
+) -> impl WidgetView<Placehero> + use<> {
     Avatars::provide(
+        runtime,
         app_state.mastodon.client().clone(),
         fork(
             map_action(
@@ -285,11 +297,11 @@ fn app_logic(app_state: &mut Placehero) -> impl WidgetView<Placehero> + use<> {
                 },
             ),
             (
-                load_instance(app_state.mastodon.clone()),
-                load_account(app_state.mastodon.clone()),
-                load_contexts(app_state.mastodon.clone()),
+                load_instance(runtime, app_state.mastodon.clone()),
+                load_account(runtime, app_state.mastodon.clone()),
+                load_contexts(runtime, app_state.mastodon.clone()),
                 map_state(
-                    Timeline::worker(app_state.mastodon.clone()),
+                    Timeline::worker(runtime, app_state.mastodon.clone()),
                     |state: &mut Placehero| &mut state.timeline,
                 ),
             ),
@@ -298,9 +310,11 @@ fn app_logic(app_state: &mut Placehero) -> impl WidgetView<Placehero> + use<> {
 }
 
 fn load_contexts(
+    runtime: &tokio::runtime::Handle,
     mastodon: Mastodon,
 ) -> impl View<Placehero, (), ViewCtx, Element = NoElement> + use<> {
     worker_raw(
+        runtime,
         std::num::NonZeroUsize::MIN,
         move |result, mut recv: Receiver<String>| {
             let mastodon = mastodon.clone();
@@ -348,9 +362,11 @@ fn load_contexts(
 }
 
 fn load_instance(
+    runtime: &tokio::runtime::Handle,
     mastodon: Mastodon,
 ) -> impl View<Placehero, (), ViewCtx, Element = NoElement> + use<> {
     task_raw(
+        runtime,
         move |result, _| {
             let mastodon = mastodon.clone();
             async move {
@@ -371,9 +387,11 @@ fn load_instance(
 }
 
 fn load_account(
+    runtime: &tokio::runtime::Handle,
     mastodon: Mastodon,
 ) -> impl View<Placehero, (), ViewCtx, Element = NoElement> + use<> {
     worker_raw(
+        runtime,
         std::num::NonZeroUsize::MIN,
         move |result, mut recv: Receiver<String>| {
             let mastodon = mastodon.clone();

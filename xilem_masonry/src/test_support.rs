@@ -19,12 +19,7 @@ impl RawProxy for ClosedProxy {
 }
 
 pub(crate) fn view_context() -> crate::ViewCtx {
-    let runtime = Arc::new(
-        tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap(),
-    );
-    crate::ViewCtx::new(Arc::new(ClosedProxy), runtime)
+    crate::ViewCtx::new(Arc::new(ClosedProxy))
 }
 
 pub(crate) fn render_root(

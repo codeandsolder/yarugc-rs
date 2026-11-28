@@ -6,6 +6,7 @@ use std::marker::PhantomData;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
+use tokio::runtime::Handle;
 use tokio::sync::Semaphore;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::task::JoinSet;
@@ -32,16 +33,20 @@ use crate::core::{
 ///
 /// For example, this can be used with the time functions in [`tokio::time`].
 ///
+/// The host must keep the supplied runtime alive and driving tasks.
+/// The runtime is selected on build and remains fixed until teardown.
+///
 /// Note that this task will not be updated if the view is rebuilt, so `init_future`
 /// cannot capture.
 // TODO: More thorough documentation.
 /// See [`run_once`](crate::core::run_once) for details.
 pub fn worker<F, H, M, S, V, State, Action, Fut>(
+    runtime: &Handle,
     capacity: NonZeroUsize,
     init_future: F,
     store_sender: S,
     on_response: H,
-) -> impl View<State, Action, ViewCtx, Element = NoElement>
+) -> impl View<State, Action, ViewCtx, Element = NoElement> + use<F, H, M, S, V, State, Action, Fut>
 where
     F: Fn(MessageProxy<M>, Receiver<V>) -> Fut + 'static,
     Fut: Future<Output = ()> + Send + 'static,
@@ -59,7 +64,7 @@ where
             To ignore this warning, use `worker_raw`."
         );
     };
-    worker_raw(capacity, init_future, store_sender, on_response)
+    worker_raw(runtime, capacity, init_future, store_sender, on_response)
 }
 
 /// A version of [`worker`] which can store its message sender in the environment.
@@ -67,11 +72,12 @@ where
 /// This is an interim solution until we work out nicer
 /// interactions with environment values in callbacks and the like.
 pub fn env_worker<F, H, M, S, V, Res, State, Action, Fut>(
+    runtime: &Handle,
     capacity: NonZeroUsize,
     init_future: F,
     store_sender: S,
     on_response: H,
-) -> impl View<State, Action, ViewCtx, Element = NoElement>
+) -> impl View<State, Action, ViewCtx, Element = NoElement> + use<F, H, M, S, V, Res, State, Action, Fut>
 where
     F: Fn(MessageProxy<M>, Receiver<V>) -> Fut + 'static,
     Fut: Future<Output = ()> + Send + 'static,
@@ -91,6 +97,7 @@ where
         );
     };
     Worker {
+        runtime: runtime.clone(),
         capacity,
         init_future,
         store_sender: move |state: &mut State, environment: &mut Environment, sender: Sender<V>| {
@@ -110,11 +117,12 @@ where
 /// This is [`worker`] without the capturing rules.
 /// See `worker` for full documentation.
 pub fn worker_raw<M, V, S, F, H, State, Action, Fut>(
+    runtime: &Handle,
     capacity: NonZeroUsize,
     init_future: F,
     store_sender: S,
     on_response: H,
-) -> impl View<State, Action, ViewCtx, Element = NoElement>
+) -> impl View<State, Action, ViewCtx, Element = NoElement> + use<M, V, S, F, H, State, Action, Fut>
 where
     // TODO(DJMcNab): Accept app_state here
     F: Fn(MessageProxy<M>, Receiver<V>) -> Fut + 'static,
@@ -127,6 +135,7 @@ where
     V: Send + 'static,
 {
     Worker {
+        runtime: runtime.clone(),
         capacity,
         init_future,
         on_response,
@@ -142,6 +151,7 @@ where
 
 /// The View type for [`worker`], [`env_worker`] and [`worker_raw`]. See its documentation for details.
 pub struct Worker<State, Action, F, H, M, S, V> {
+    runtime: Handle,
     capacity: NonZeroUsize,
     init_future: F,
     store_sender: S,
@@ -176,9 +186,11 @@ where
         if !(self.store_sender)(app_state, ctx.environment(), tx) {
             return (NoElement, TaskLifetime::default());
         }
-        let handle = ctx
-            .runtime()
-            .spawn((self.init_future)(MessageProxy::new(proxy, path), rx));
+        let future = {
+            let _runtime_context = self.runtime.enter();
+            (self.init_future)(MessageProxy::new(proxy, path), rx)
+        };
+        let handle = self.runtime.spawn(future);
         (NoElement, TaskLifetime::new(handle))
     }
 

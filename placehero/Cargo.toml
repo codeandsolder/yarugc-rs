@@ -13,7 +13,8 @@ reqwest = { workspace = true }
 html5gum = "0.8.3"
 time = { workspace = true, features = ["serde-well-known"] }
 tracing.workspace = true
-xilem = { workspace = true }
+xilem = { workspace = true, features = ["async"] }
+tokio = { version = "1.50.0", features = ["rt-multi-thread", "time", "net", "sync", "io-util"] }
 demo_support = { path = "../demo_support" }
 anyhow = "1.0.102"
 blurhash = "0.2.3"

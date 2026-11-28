@@ -320,6 +320,8 @@ jobs:
         run: |
           cargo check -p yarugc --locked --profile ci --lib
           cargo test -p masonry_imaging --locked --profile ci --no-default-features --lib selection_tests
+          tree=$(cargo tree --locked -p xilem_masonry --no-default-features -e normal,build --prefix none)
+          ! rg "^tokio v" <<< "$tree"
 
       - name: Run native window lifecycle regression
         if: runner.os == 'Linux'
@@ -452,7 +454,7 @@ jobs:
         run: cargo install cargo-apk
 
       - name: Run cargo apk check
-        run: cargo apk check ${{ env.ANDROID_TARGETS }}
+        run: cargo apk check --features async,svg ${{ env.ANDROID_TARGETS }}
 
       - name: Finalize mandatory sccache
         if: always()

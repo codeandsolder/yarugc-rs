@@ -11,7 +11,6 @@ use masonry::layout::AsUnit;
 use masonry::properties::types::{CrossAxisAlignment, MainAxisAlignment};
 use masonry_winit::app::{EventLoop, EventLoopBuilder};
 use tokio::time;
-use xilem::RunError;
 use xilem::core::fork;
 use xilem::core::one_of::Either;
 use xilem::masonry::usvg::{self, Tree};
@@ -103,7 +102,10 @@ fn get_formatted_duration(dur: Duration) -> String {
     format!("{hours}:{minutes:0>2}:{seconds:0>4.1}")
 }
 
-fn app_logic(data: &mut Stopwatch) -> impl WidgetView<Stopwatch> + use<> {
+fn app_logic(
+    data: &mut Stopwatch,
+    runtime: &tokio::runtime::Handle,
+) -> impl WidgetView<Stopwatch> + use<> {
     fork(
         flex_col((
             FlexSpacer::Fixed(5.px()),
@@ -123,6 +125,7 @@ fn app_logic(data: &mut Stopwatch) -> impl WidgetView<Stopwatch> + use<> {
         data.active.then(|| {
             // Only update while active.
             task(
+                runtime,
                 |proxy, _| async move {
                     let mut interval = time::interval(Duration::from_millis(50));
                     loop {
@@ -200,7 +203,9 @@ fn lap_reset_button(data: &Stopwatch) -> impl WidgetView<Stopwatch> + use<> {
     }
 }
 
-pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
+pub(crate) fn run(event_loop: EventLoopBuilder) -> anyhow::Result<()> {
+    let runtime = tokio::runtime::Runtime::new()?;
+    let handle = runtime.handle().clone();
     let tree = Tree::from_str(STOPWATCH_SVG, &usvg::Options::default())
         .map(Arc::new)
         .map_err(|err| tracing::warn!(%err, "Could not load stopwatch icon"))
@@ -219,13 +224,13 @@ pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
     let window_options = WindowOptions::new("Stopwatch")
         .with_min_inner_size(LogicalSize::new(300., 200.))
         .with_initial_inner_size(LogicalSize::new(450., 300.));
-    let app = Xilem::new_simple(data, app_logic, window_options);
+    let app = Xilem::new_simple(data, move |data| app_logic(data, &handle), window_options);
     app.run_in(event_loop)?;
     Ok(())
 }
 
 // Boilerplate code: Identical across all applications which support Android
 
-fn main() -> Result<(), RunError> {
+fn main() -> anyhow::Result<()> {
     run(EventLoop::with_user_event())
 }

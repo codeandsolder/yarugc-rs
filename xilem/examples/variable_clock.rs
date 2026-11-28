@@ -10,7 +10,6 @@ use masonry::layout::{AsUnit, Dim};
 use time::error::IndeterminateOffset;
 use time::macros::format_description;
 use time::{OffsetDateTime, UtcOffset};
-use xilem::RunError;
 use xilem::core::fork;
 use xilem::style::Style as _;
 use xilem::view::{
@@ -39,7 +38,10 @@ struct TimeZone {
     offset: UtcOffset,
 }
 
-fn app_logic(data: &mut Clocks) -> impl WidgetView<Clocks> + use<> {
+fn app_logic(
+    data: &mut Clocks,
+    runtime: &tokio::runtime::Handle,
+) -> impl WidgetView<Clocks> + use<> {
     let view = flex_col((
         // HACK: We add a spacer at the top for Android. See https://github.com/rust-windowing/winit/issues/2308
         FlexSpacer::Fixed(40.px()),
@@ -66,6 +68,7 @@ fn app_logic(data: &mut Clocks) -> impl WidgetView<Clocks> + use<> {
     fork(
         view,
         task(
+            runtime,
             |proxy, _| async move {
                 // TODO: Synchronise with the actual "second" interval. This is expected to show the wrong second
                 // ~50% of the time.
@@ -198,7 +201,9 @@ const ROBOTO_FLEX: &[u8] = include_bytes!(concat!(
     "RobotoFlex-Subset.ttf"
 ));
 
-pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
+pub(crate) fn run(event_loop: EventLoopBuilder) -> anyhow::Result<()> {
+    let runtime = tokio::runtime::Runtime::new()?;
+    let handle = runtime.handle().clone();
     let data = Clocks {
         weight: FontWeight::BLACK.value(),
         // TODO: We can't get this on Android, because
@@ -207,8 +212,12 @@ pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
     };
 
     // Load Roboto Flex so that it can be used at runtime.
-    let app = Xilem::new_simple(data, app_logic, WindowOptions::new("Clocks"))
-        .with_font(Blob::new(Arc::new(ROBOTO_FLEX)));
+    let app = Xilem::new_simple(
+        data,
+        move |data| app_logic(data, &handle),
+        WindowOptions::new("Clocks"),
+    )
+    .with_font(Blob::new(Arc::new(ROBOTO_FLEX)));
 
     app.run_in(event_loop)?;
     Ok(())
@@ -242,6 +251,6 @@ const TIMEZONES: &[(&str, i8)] = &[
 
 // Boilerplate code: Identical across all applications which support Android
 
-fn main() -> Result<(), RunError> {
+fn main() -> anyhow::Result<()> {
     run(EventLoop::with_user_event())
 }

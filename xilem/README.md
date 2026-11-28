@@ -34,7 +34,6 @@ See https://linebender.org/blog/doc-include/ for related discussion. -->
 [crate::view::prose]: https://docs.rs/xilem/latest/xilem/view/fn.prose.html
 [crate::view::sized_box]: https://docs.rs/xilem/latest/xilem/view/fn.sized_box.html
 [crate::view::split]: https://docs.rs/xilem/latest/xilem/view/fn.split.html
-[crate::view::task]: https://docs.rs/xilem/latest/xilem/view/fn.task.html
 [crate::view::text_input]: https://docs.rs/xilem/latest/xilem/view/fn.text_input.html
 [crate::view::zstack]: https://docs.rs/xilem/latest/xilem/view/fn.zstack.html
 [xilem_core]: https://docs.rs/xilem_core/latest/xilem_core
@@ -125,7 +124,7 @@ The primitives your `Xilem` app’s view tree will generally be constructed from
 * [`progress_bar`][crate::view::progress_bar]: progress bar element
 * [`prose`][crate::view::prose]: displays immutable, selectable text
 * [`text_input`][crate::view::text_input]: allows text to be edited by the user
-* [`task`][crate::view::task]: launch an async task which will run until the view is no longer in the tree
+* `task` (with the `async` feature): launch an async task which will run until the view is no longer in the tree
 * [`zstack`][crate::view::zstack]: an element that lays out its children on top of each other
 
 You should also expect to use the adapters from Xilem Core, including:
@@ -156,6 +155,7 @@ The following crate [feature flags](https://doc.rust-lang.org/cargo/reference/fe
 
 * `default`: Enables the Vello GPU renderer in the native window host.
 * `imaging_vello`, `imaging_vello_hybrid`, `imaging_skia`: Enable the corresponding host renderer.
+* `async`: Enables task and worker views on an application-owned Tokio runtime.
 * `svg`: Enables SVG image views.
 
 [accesskit_docs]: masonry::accesskit

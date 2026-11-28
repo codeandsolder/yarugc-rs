@@ -45,7 +45,7 @@ enum ImageState {
 }
 
 impl HttpCats {
-    fn view(&mut self) -> impl WidgetView<Self> + use<> {
+    fn view(&mut self, runtime: &tokio::runtime::Handle) -> impl WidgetView<Self> + use<> {
         let left_column = flex_col((
             prose("Status"),
             self.statuses
@@ -92,6 +92,7 @@ impl HttpCats {
                     .flex(1.),
             )),
             worker(
+                runtime,
                 std::num::NonZeroUsize::MIN.saturating_add(31),
                 |proxy, rx| {
                     xilem::view::process_requests(
@@ -210,6 +211,8 @@ impl Status {
 }
 
 pub(crate) fn run(event_loop: EventLoopBuilder) -> anyhow::Result<()> {
+    let runtime = tokio::runtime::Runtime::new()?;
+    let handle = runtime.handle().clone();
     let data = HttpCats {
         statuses: Status::parse_file(),
         client: demo_support::client("Xilem HTTP cats")?,
@@ -219,7 +222,7 @@ pub(crate) fn run(event_loop: EventLoopBuilder) -> anyhow::Result<()> {
 
     let app = Xilem::new_simple(
         data,
-        HttpCats::view,
+        move |data| data.view(&handle),
         WindowOptions::new("HTTP cats").with_min_inner_size(LogicalSize::new(200., 200.)),
     );
 
