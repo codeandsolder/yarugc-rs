@@ -264,11 +264,11 @@ impl<W: Widget + ?Sized> Portal<W> {
             },
         );
 
-        if pos != self.viewport_pos {
+        if pos == self.viewport_pos {
+            false
+        } else {
             self.viewport_pos = pos;
             true
-        } else {
-            false
         }
     }
 
