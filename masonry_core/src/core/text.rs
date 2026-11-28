@@ -75,8 +75,12 @@ pub fn render_text(
             let glyph_xform = synthesis
                 .skew()
                 .map(|angle| Affine::skew(f64::from(angle.to_radians().tan()), 0.0));
-            let coords = run.normalized_coords();
             if let Some(brush) = brushes.get(style.brush.0) {
+                let coords: SmallVec<[i16; 8]> = run
+                    .normalized_coords()
+                    .iter()
+                    .map(|coord| coord.to_bits())
+                    .collect();
                 let glyphs: SmallVec<[Glyph; 16]> = glyph_run
                     .positioned_glyphs()
                     .map(|glyph| Glyph {
@@ -91,7 +95,7 @@ pub fn render_text(
                     .transform(transform)
                     .glyph_transform(glyph_xform)
                     .font_size(font_size)
-                    .normalized_coords(coords)
+                    .normalized_coords(&coords)
                     .draw(&peniko::Style::Fill(Fill::NonZero), &glyphs);
             }
             if let Some(strikethrough) = &style.strikethrough {
@@ -118,7 +122,7 @@ impl DecorationKind {
     fn resolve(
         self,
         decoration: &Decoration<BrushIndex>,
-        metrics: &parley::RunMetrics,
+        metrics: &parley::FontMetrics,
         baseline: f32,
     ) -> (f64, f64) {
         let (default_offset, default_width) = match self {
@@ -151,7 +155,7 @@ fn paint_decoration(
     let Some(brush) = brushes.get(decoration.brush.0) else {
         return;
     };
-    let (y, width) = kind.resolve(decoration, run.run().metrics(), run.baseline());
+    let (y, width) = kind.resolve(decoration, run.run().font_metrics(), run.baseline());
     let line = Line::new(
         (f64::from(run.offset()), y),
         (f64::from(run.offset() + run.advance()), y),
@@ -214,12 +218,12 @@ mod tests {
 
     #[test]
     fn decoration_thickness_preserves_underline_edge_and_strike_center() {
-        let metrics = parley::RunMetrics {
+        let metrics = parley::FontMetrics {
             underline_offset: -2.0,
             underline_size: 2.0,
             strikethrough_offset: 8.0,
             strikethrough_size: 2.0,
-            ..Default::default()
+            ..parley::FontMetrics::fallback(20.0)
         };
         let mut deco = Decoration {
             brush: BrushIndex(0),

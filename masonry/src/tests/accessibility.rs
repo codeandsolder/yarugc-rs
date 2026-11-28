@@ -3,7 +3,6 @@
 
 use std::assert_matches;
 
-use accesskit_consumer::NodeId;
 use masonry_testing::{ModularWidget, Record, TestHarness, TestWidgetExt, assert_any, assert_none};
 
 use crate::core::{NewWidget, Widget, WidgetTag};
@@ -69,7 +68,7 @@ fn access_node_children() {
 
     let parent_node = harness.access_node(parent_node_id).unwrap();
     assert_eq!(
-        Vec::<u64>::from_iter(parent_node.child_ids().map(node_local_id_to_u64)),
+        Vec::<u64>::from_iter(parent_node.children().map(|node| node.locate().0.0)),
         vec![id_1.to_raw(), id_2.to_raw(), id_3.to_raw()]
     );
 
@@ -84,7 +83,7 @@ fn access_node_children() {
     // Stash child is not included
     let parent_node = harness.access_node(parent_node_id).unwrap();
     assert_eq!(
-        Vec::<u64>::from_iter(parent_node.child_ids().map(node_local_id_to_u64)),
+        Vec::<u64>::from_iter(parent_node.children().map(|node| node.locate().0.0)),
         vec![id_1.to_raw(), id_3.to_raw()]
     );
 
@@ -96,12 +95,7 @@ fn access_node_children() {
     let _ = harness.render().unwrap();
     let parent_node = harness.access_node(parent_node_id).unwrap();
     assert_eq!(
-        Vec::<u64>::from_iter(parent_node.child_ids().map(node_local_id_to_u64)),
+        Vec::<u64>::from_iter(parent_node.children().map(|node| node.locate().0.0)),
         vec![id_1.to_raw(), id_2.to_raw(), id_3.to_raw()]
     );
-}
-
-fn node_local_id_to_u64(node_id: NodeId) -> u64 {
-    let node_id: u128 = node_id.into();
-    (node_id >> 64) as u64
 }

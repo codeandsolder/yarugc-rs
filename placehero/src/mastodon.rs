@@ -5,10 +5,10 @@
 //! or unrelated service models are needed by the current application.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{Context as _, Result, ensure};
-use reqwest::{Client, Response, Url};
+use demo_support::read_body;
+use reqwest::{Client, Url};
 use serde::{Deserialize, de::DeserializeOwned};
 use time::OffsetDateTime;
 
@@ -32,11 +32,7 @@ impl Mastodon {
                 && base.fragment().is_none(),
             "Expected a Mastodon HTTP(S) server URL without credentials, query or fragment"
         );
-        let client = Client::builder()
-            .user_agent("Placehero")
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(30))
-            .build()?;
+        let client = demo_support::client("Placehero")?;
         Ok(Self { client, base })
     }
 
@@ -97,25 +93,6 @@ impl Mastodon {
         }
         self.get(url).await
     }
-}
-
-/// Bound the actual streamed bytes even when Content-Length is absent or misleading.
-pub(crate) async fn read_body(mut response: Response, max_bytes: usize) -> Result<Vec<u8>> {
-    ensure!(
-        response
-            .content_length()
-            .is_none_or(|length| length <= max_bytes as u64),
-        "HTTP response exceeds {max_bytes} bytes"
-    );
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await? {
-        ensure!(
-            chunk.len() <= max_bytes - body.len(),
-            "HTTP response exceeds {max_bytes} bytes"
-        );
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
 }
 
 #[derive(Debug, Deserialize)]
@@ -190,6 +167,7 @@ pub(crate) struct AttachmentDimensions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     use xilem::tokio::{
         self,

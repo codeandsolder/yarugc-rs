@@ -4,16 +4,13 @@
 //! An example demonstrating the use of Async web requests in Xilem to access the <https://http.cat/> API.
 //! This also demonstrates image loading.
 
-use std::sync::Arc;
-
 use masonry::layout::{AsUnit, Length, UnitPoint};
 use masonry::properties::{LineBreaking, Padding};
 use tokio::sync::mpsc::Sender;
 use winit::dpi::LogicalSize;
-use xilem::RunError;
 use xilem::core::fork;
 use xilem::core::one_of::OneOf3;
-use xilem::peniko::{Blob, ImageAlphaType, ImageData, ImageFormat};
+use xilem::peniko::ImageData;
 use xilem::style::Style as _;
 use xilem::view::{
     FlexExt, FlexSpacer, ZStackExt, flex_col, flex_row, image, inline_prose, portal, prose,
@@ -24,10 +21,11 @@ use xilem::{EventLoop, EventLoopBuilder, TextAlign, WidgetView, WindowOptions, X
 /// The main state of the application.
 struct HttpCats {
     statuses: Vec<Status>,
+    client: demo_support::Client,
     // The currently active (http status) code.
     selected_code: Option<u32>,
     /// Send a status code to download the image for it.
-    download_sender: Option<Sender<u32>>,
+    download_sender: Option<Sender<(demo_support::Client, u32)>>,
 }
 
 #[derive(Debug)]
@@ -100,9 +98,15 @@ impl HttpCats {
                         proxy,
                         rx,
                         std::num::NonZeroUsize::MIN.saturating_add(7),
-                        |code| async move {
+                        |(client, code)| async move {
                             let url = format!("https://http.cat/{code}");
-                            let result = image_from_url(&url).await.map_err(|err| err.to_string());
+                            let result = demo_support::fetch_image(
+                                &client,
+                                &url,
+                                demo_support::ImagePolicy::Illustration,
+                            )
+                            .await
+                            .map_err(|err| err.to_string());
                             (code, result)
                         },
                     )
@@ -125,25 +129,6 @@ impl HttpCats {
     }
 }
 
-/// Load the [`ImageData`] from the given url.
-///
-/// N.B. This is functionality shared with Placehero and `virtual_cats`.
-async fn image_from_url(url: &str) -> anyhow::Result<ImageData> {
-    let response = reqwest::get(url).await?.error_for_status()?;
-    let bytes = response.bytes().await?;
-    let image = image::load_from_memory(&bytes)?.into_rgba8();
-    let width = image.width();
-    let height = image.height();
-    let data = image.into_vec();
-    Ok(ImageData {
-        data: Blob::new(Arc::new(data)),
-        format: ImageFormat::Rgba8,
-        alpha_type: ImageAlphaType::Alpha,
-        width,
-        height,
-    })
-}
-
 impl Status {
     fn list_view(&self) -> impl WidgetView<HttpCats> + use<> {
         let code = self.code;
@@ -162,10 +147,9 @@ impl Status {
                     status.image,
                     ImageState::NotRequested | ImageState::Error(_)
                 ) {
-                    let requested = state
-                        .download_sender
-                        .as_ref()
-                        .is_some_and(|sender| sender.try_send(code).is_ok());
+                    let requested = state.download_sender.as_ref().is_some_and(|sender| {
+                        sender.try_send((state.client.clone(), code)).is_ok()
+                    });
                     status.image = if requested {
                         ImageState::Pending
                     } else {
@@ -225,9 +209,10 @@ impl Status {
     }
 }
 
-pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
+pub(crate) fn run(event_loop: EventLoopBuilder) -> anyhow::Result<()> {
     let data = HttpCats {
         statuses: Status::parse_file(),
+        client: demo_support::client("Xilem HTTP cats")?,
         selected_code: None,
         download_sender: None,
     };
@@ -238,7 +223,8 @@ pub(crate) fn run(event_loop: EventLoopBuilder) -> Result<(), RunError> {
         WindowOptions::new("HTTP cats").with_min_inner_size(LogicalSize::new(200., 200.)),
     );
 
-    app.run_in(event_loop)
+    app.run_in(event_loop)?;
+    Ok(())
 }
 
 impl Status {
@@ -273,6 +259,6 @@ const STATUS_CODES_CSV: &str = include_str!(concat!(
 
 // Boilerplate code: Identical across all applications which support Android
 
-fn main() -> Result<(), RunError> {
+fn main() -> anyhow::Result<()> {
     run(EventLoop::with_user_event())
 }
