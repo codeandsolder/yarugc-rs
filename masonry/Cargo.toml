@@ -38,7 +38,6 @@ understory_virtual_list = "0.1.2"
 [dev-dependencies]
 accesskit_consumer.workspace = true
 divan.workspace = true
-float-cmp = { version = "0.10.0", features = ["std"], default-features = false }
 image = { workspace = true, features = ["png"] }
 insta = { version = "1.46.3" }
 masonry_testing = { workspace = true, default-features = false }
