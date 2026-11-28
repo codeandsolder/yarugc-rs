@@ -11,15 +11,17 @@ use std::any::TypeId;
 use masonry_core::accesskit::{Node, Role};
 use masonry_core::core::{
     AccessCtx, AccessEvent, ActionCtx, ChildrenIds, ComposeCtx, CursorIcon, ErasedAction, EventCtx,
-    Layer, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PointerEvent, PropertiesMut,
-    PropertiesRef, QueryCtx, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetId,
-    WidgetPod, WidgetRef, find_widget_under_pointer, pre_paint,
+    Layer, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PointerButtonEvent, PointerEvent,
+    PropertiesMut, PropertiesRef, QueryCtx, RegisterCtx, TextEvent, Update, UpdateCtx, Widget,
+    WidgetId, WidgetPod, WidgetRef, find_widget_under_pointer, pre_paint,
 };
 use masonry_core::imaging::Painter;
 use masonry_core::kurbo::{Axis, Point, Size};
 use masonry_core::layout::{LayoutSize, LenReq, Length, SizeDef, UnitPoint};
 use tracing::trace_span;
 
+type PointerDownPreviewFn<S> =
+    dyn FnMut(&mut S, &mut EventCtx<'_>, &mut PropertiesMut<'_>, &PointerButtonEvent);
 type PointerEventFn<S> =
     dyn FnMut(&mut S, &mut EventCtx<'_>, &mut PropertiesMut<'_>, &PointerEvent);
 type TextEventFn<S> = dyn FnMut(&mut S, &mut EventCtx<'_>, &mut PropertiesMut<'_>, &TextEvent);
@@ -54,6 +56,7 @@ pub struct ModularWidget<S> {
     pub state: S,
     icon: CursorIcon,
     interaction: u8,
+    on_pointer_down_preview: Option<Box<PointerDownPreviewFn<S>>>,
     on_pointer_event: Option<Box<PointerEventFn<S>>>,
     on_text_event: Option<Box<TextEventFn<S>>>,
     on_access_event: Option<Box<AccessEventFn<S>>>,
@@ -87,6 +90,7 @@ impl<S> ModularWidget<S> {
             state,
             icon: CursorIcon::Default,
             interaction: 0b0011,
+            on_pointer_down_preview: None,
             on_pointer_event: None,
             on_text_event: None,
             on_access_event: None,
@@ -237,6 +241,15 @@ impl<S> ModularWidget<S> {
 ///
 /// Each method takes a callback that matches the behavior of the matching [`Widget`] method.
 impl<S> ModularWidget<S> {
+    /// See [`Widget::on_pointer_down_preview`]
+    pub fn pointer_down_preview_fn(
+        mut self,
+        f: impl FnMut(&mut S, &mut EventCtx<'_>, &mut PropertiesMut<'_>, &PointerButtonEvent) + 'static,
+    ) -> Self {
+        self.on_pointer_down_preview = Some(Box::new(f));
+        self
+    }
+
     /// See [`Widget::on_pointer_event`]
     pub fn pointer_event_fn(
         mut self,
@@ -394,6 +407,17 @@ impl<S> ModularWidget<S> {
 #[deny(clippy::missing_trait_methods)]
 impl<S: 'static> Widget for ModularWidget<S> {
     type Action = NoAction;
+
+    fn on_pointer_down_preview(
+        &mut self,
+        ctx: &mut EventCtx<'_>,
+        props: &mut PropertiesMut<'_>,
+        event: &PointerButtonEvent,
+    ) {
+        if let Some(f) = self.on_pointer_down_preview.as_mut() {
+            f(&mut self.state, ctx, props, event);
+        }
+    }
 
     fn on_pointer_event(
         &mut self,
