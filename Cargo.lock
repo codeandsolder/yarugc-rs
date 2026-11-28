@@ -4212,6 +4212,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
+name = "renderer-comparisons"
+version = "0.4.0"
+dependencies = [
+ "bytemuck",
+ "glyphon",
+ "masonry_core",
+ "peniko",
+ "pollster",
+ "sluggrs_skylines",
+ "vello",
+ "wgpu",
+ "wgpu-font-renderer",
+ "yarugc",
+]
+
+[[package]]
 name = "reqwest"
 version = "0.12.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7110,17 +7126,13 @@ version = "0.4.0"
 dependencies = [
  "ab_glyph_rasterizer",
  "bytemuck",
- "glyphon",
  "masonry",
  "masonry_core",
  "masonry_imaging",
  "peniko",
  "pollster",
  "skrifa 0.49.0",
- "sluggrs_skylines",
- "vello",
  "wgpu",
- "wgpu-font-renderer",
 ]
 
 [[package]]

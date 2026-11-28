@@ -19,7 +19,8 @@
 //!
 //! # Feature flags
 //!
-//! - `default`: Enables the `vello` module.
+//! No rendering backend is enabled by default. Hosts opt into the implementations they use.
+//!
 //! - `imaging_vello`: Enables the `vello` module and texture rendering support.
 //! - `imaging_vello_hybrid`: Enables the `vello_hybrid` module and texture rendering support.
 //! - `imaging_vello_cpu`: Enables the `vello_cpu` module for headless image rendering only.

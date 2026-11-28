@@ -4,6 +4,7 @@
 //! Host-owned GPU surfaces and retained window composition.
 //!
 //! No surface, adapter selection, event loop, or presentation is owned by this crate.
+//! The host also chooses and enables a Masonry imaging backend.
 
 mod compositor;
 mod geometry;

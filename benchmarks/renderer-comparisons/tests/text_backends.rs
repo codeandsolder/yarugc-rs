@@ -24,7 +24,7 @@ const CELL_HEIGHT: u32 = 32;
 const SIZE: f32 = 18.0;
 const SAMPLES: u32 = 48;
 const FONT: &[u8] =
-    include_bytes!("../../masonry_testing/resources/fonts/roboto/Roboto-Regular.ttf");
+    include_bytes!("../../../masonry_testing/resources/fonts/roboto/Roboto-Regular.ttf");
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const ALPHABET: &str = "0123456789.-+− kmµ/s°";
 
