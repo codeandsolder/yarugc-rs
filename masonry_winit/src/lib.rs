@@ -87,6 +87,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod app_driver;
+mod clipboard;
 #[expect(
     clippy::redundant_pub_crate,
     reason = "Conversion helpers remain private to the crate under unreachable_pub."

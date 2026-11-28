@@ -6,9 +6,8 @@ use std::fmt::Debug;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, mpsc};
 
+use crate::clipboard::NativeClipboard;
 use accesskit_winit::Adapter;
-use copypasta::nop_clipboard::NopClipboardContext;
-use copypasta::{ClipboardContext, ClipboardProvider};
 use masonry::widgets::{ChromeAction, ChromePalette, ChromeState, WindowChrome};
 use masonry_core::app::{
     RenderRoot, RenderRootOptions, RenderRootSignal, VisualLayerKind, WindowSizePolicy,
@@ -497,7 +496,7 @@ pub struct MasonryState {
     #[cfg(target_os = "macos")]
     resized_window: Option<HandleId>,
 
-    clipboard_cx: Box<dyn ClipboardProvider>,
+    clipboard_cx: NativeClipboard,
 
     signal_receiver: mpsc::Receiver<(WindowId, RenderRootSignal)>,
 
@@ -706,16 +705,10 @@ impl MasonryState {
             backend = backend.name(),
             "selected Masonry Winit render backend"
         );
+        let clipboard_cx = NativeClipboard::new(&display);
         let render_cx = RenderContext::new(display, event_loop_proxy.clone(), backend);
 
         let (signal_sender, signal_receiver) = mpsc::channel::<(WindowId, RenderRootSignal)>();
-
-        let clipboard_cx =
-            ClipboardContext::new().map(|cx| -> Box<dyn ClipboardProvider> { Box::new(cx) });
-        let clipboard_cx = clipboard_cx.unwrap_or_else(|err| {
-            tracing::warn!(?err, "Clipboard unavailable");
-            Box::new(NopClipboardContext)
-        });
 
         Ok(Self {
             is_suspended: true,
@@ -1265,7 +1258,7 @@ impl MasonryState {
             .accesskit_adapter
             .process_event(&window.handle, &event);
 
-        Self::translate_input(window, &event, self.clipboard_cx.as_mut());
+        Self::translate_input(window, &event, &mut self.clipboard_cx);
 
         // On macOS, interactive resizing needs special presentation behavior on Metal to avoid
         // visible jitter.
@@ -1338,7 +1331,7 @@ impl MasonryState {
     fn translate_input(
         window: &mut Window,
         event: &WinitWindowEvent,
-        clipboard: &mut dyn ClipboardProvider,
+        clipboard: &mut NativeClipboard,
     ) {
         if !matches!(
             event,
