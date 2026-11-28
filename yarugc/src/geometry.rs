@@ -186,11 +186,13 @@ impl SubrectMesh {
         self.bounds
     }
 
+    // The clipping bounds and the original texture-coordinate domain are
+    // independent. Tight ink rectangles retain their original cell UVs.
     #[expect(
         clippy::cast_possible_truncation,
         reason = "GPU vertex coordinates are f32"
     )]
-    pub(crate) fn vertices(&mut self, rect: Rect) -> &[[f32; 4]] {
+    pub(crate) fn vertices(&mut self, rect: Rect, uv_rect: Rect) -> &[[f32; 4]] {
         self.vertices.clear();
         let Some(edges) = corners(Affine::IDENTITY, rect) else {
             return &self.vertices;
@@ -205,8 +207,8 @@ impl SubrectMesh {
             let v = [
                 (2.0 * target.x / width - 1.0) as f32,
                 (1.0 - 2.0 * target.y / height) as f32,
-                ((p.x - rect.x0) / rect.width()) as f32,
-                ((p.y - rect.y0) / rect.height()) as f32,
+                ((p.x - uv_rect.x0) / uv_rect.width()) as f32,
+                ((p.y - uv_rect.y0) / uv_rect.height()) as f32,
             ];
             v.iter().all(|v| v.is_finite()).then_some(v)
         };
@@ -475,15 +477,16 @@ mod tests {
                 let left = f64::from(i) / 10.0;
                 let rect = Rect::new(left, -0.1, left + 0.1, 0.85);
                 let reference = placement.subrect(rect).vertices(extent);
-                let actual = mesh.vertices(rect);
+                let uv_rect = rect.inflate(0.25, 0.25);
+                let actual = mesh.vertices(rect, uv_rect);
                 assert!((area(actual) - area(&reference)).abs() < 1e-6);
                 for &[x, y, u, v] in actual {
                     assert!((-1e-5..=1.0 + 1e-5).contains(&u));
                     assert!((-1e-5..=1.0 + 1e-5).contains(&v));
                     let target = transform
                         * Point::new(
-                            f64::from(u).mul_add(rect.width(), rect.x0),
-                            f64::from(v).mul_add(rect.height(), rect.y0),
+                            f64::from(u).mul_add(uv_rect.width(), uv_rect.x0),
+                            f64::from(v).mul_add(uv_rect.height(), uv_rect.y0),
                         );
                     assert!((target.x - (f64::from(x) + 1.0) * 50.0).abs() < 1e-4);
                     assert!((target.y - (1.0 - f64::from(y)) * 50.0).abs() < 1e-4);

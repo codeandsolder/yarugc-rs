@@ -430,10 +430,6 @@ impl ReadoutRenderer {
     }
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "GPU UV coordinates are f32; the ink envelope is bounded by the validated cell size."
-)]
 fn append_slot_vertices(
     vertices: &mut Vec<[u32; 9]>,
     slot: &ReadoutSlot,
@@ -473,7 +469,10 @@ fn append_slot_vertices(
         let left = edge(cell);
         let ink_left = (ink.x0 / cell_w).mul_add(dx, left);
         let ink_right = (ink.x1 / cell_w).mul_add(dx, left);
-        let quad = mesh.vertices(Rect::new(ink_left, ink_top, ink_right, ink_bottom));
+        let quad = mesh.vertices(
+            Rect::new(ink_left, ink_top, ink_right, ink_bottom),
+            Rect::new(left, top, edge(cell + 1), top + dy),
+        );
         let next_len = vertices
             .len()
             .checked_add(quad.len())
@@ -489,8 +488,8 @@ fn append_slot_vertices(
             [
                 x.to_bits(),
                 y.to_bits(),
-                (f64::from(*u).mul_add(ink.width(), ink.x0) as f32).to_bits(),
-                (f64::from(*v).mul_add(ink.height(), ink.y0) as f32).to_bits(),
+                (u * cell_size[0]).to_bits(),
+                (v * cell_size[1]).to_bits(),
                 cell,
                 r,
                 g,
