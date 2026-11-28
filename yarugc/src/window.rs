@@ -12,7 +12,7 @@ use masonry_imaging::PreparedFrame;
 use masonry_imaging::texture_render::{RenderTarget, Renderer};
 use peniko::Color;
 
-use crate::{AlphaMode, Compositor, Surface};
+use crate::{Compositor, Surface};
 
 /// Result of refreshing a cached window.
 #[derive(Debug)]
